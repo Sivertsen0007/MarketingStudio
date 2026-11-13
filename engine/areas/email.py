@@ -1200,9 +1200,13 @@ def p_preview(body):
 
 def p_checks(body):
     a = adapter()
-    merged = {**_merged(a, body["id"])[0], **{k: v for k, v in (body.get("fields") or {}).items() if k in EDITABLE}}
+    base, orig, _dr = _merged(a, body["id"])
+    merged = {**base, **{k: v for k, v in (body.get("fields") or {}).items() if k in EDITABLE}}
     probs = run_checks(merged, links=body.get("links", True))
-    if a.source == "api" and not _drafts()["drafts"].get(str(body["id"])) and not body.get("fields"):
+    unsaved = any((merged.get(k) or "") != (orig.get(k) or "") for k in EDITABLE)
+    if a.source == "api" and unsaved:
+        probs.append({"level": "info", "message": f"{PLATFORM}'s own checks (audience, tracking) run when you save or send."})
+    if a.source == "api" and not unsaved:
         try:
             probs += [{"level": x.get("level", "warn"), "message": "Platform: " + x.get("message", "")} for x in a.server_checks(body["id"]).get("problems", [])]
         except AdapterError as ex:
@@ -1348,6 +1352,10 @@ def _prepare(a, cid, kind, extra_lines):
             probs += [{"level": x.get("level", "warn"), "message": "Platform: " + x.get("message", "")} for x in a.server_checks(cid).get("problems", [])]
         except AdapterError:
             pass
+    if kind == "test":  # a test goes to the test inbox only: the audience does not matter for it
+        for x in probs:
+            if x["level"] == "error" and x["message"].startswith("Platform:") and any(w in x["message"].lower() for w in ("audience", "subscriber", "recipient")):
+                x["level"], x["message"] = "warn", x["message"] + " (fine for a test)"
     bad = _blocking(probs)
     if bad:
         progress.mark(KEY, "check", "failed")

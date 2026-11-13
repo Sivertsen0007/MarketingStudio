@@ -79,8 +79,8 @@ function londonToDate(v){
 const num = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
 const pct = v => v == null ? "" : Number(v).toFixed(1) + "%";
 const statusPill = s => s ? `<span class="pill em-${esc(s)}"><i></i>${esc(s[0].toUpperCase() + s.slice(1))}</span>` : "";
-const probsHTML = probs => !probs ? "" : !probs.length ? `<div class="okline">All checks passed.</div>`
-  : probs.map(p => `<div class="p ${esc(p.level)}"><b>${p.level === "error" ? "Error" : "Warning"}:</b> ${esc(p.message)}</div>`).join("");
+const probsHTML = probs => !probs ? "" : !probs.filter(p => p.level !== "info").length ? `<div class="okline">All checks passed.</div>` + probs.map(p => `<div class="p info">${esc(p.message)}</div>`).join("")
+  : probs.map(p => `<div class="p ${esc(p.level)}">${p.level === "info" ? "" : `<b>${p.level === "error" ? "Error" : "Warning"}:</b> `}${esc(p.message)}</div>`).join("");
 
 const COLS = {
   name:{label:"Name"}, status:{label:"Status", fmt:statusPill}, audience:{label:"List or segment", fmt:(v, r) => v ? `${esc(v)} <span class="chip">${r.audience_kind}</span>` : ""},

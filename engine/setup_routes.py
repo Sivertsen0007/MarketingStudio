@@ -1,9 +1,9 @@
-"""Setup: the keys each person gives Marketing Studio, Sign in with Google, and the one-time move from AI-Hub.
+"""Setup: the keys each person gives Marketing Studio, Sign in with Google, and importing a .env file.
 
 Routes (wired in server.py):
   GET  /api/setup                    status of every key (secrets: set / not set only)
   POST /api/setup/save               {"values": {NAME: value}}  blank secret = keep, null = remove
-  POST /api/setup/import_aihub       copy keys (+ data, once) from an AI-Hub checkout on this Mac
+  POST /api/setup/import_env         {"text": .env file contents} -> which keys were saved (never the values)
   POST /api/setup/google/start       -> {"url": Google's consent page}; the UI opens it in the browser
   POST /api/setup/google/sign_out
   GET  /oauth/google/callback        Google sends the browser back here (state nonce checked)
@@ -17,7 +17,7 @@ ALLOWED = {k[0] for k in appconfig.KEYS}
 
 def status():
     s = appconfig.status()
-    s["aihub"] = str(appconfig.aihub_path() or "")
+    s["mcp_command"] = mcp_command()
     return s
 
 
@@ -27,9 +27,16 @@ def save(body):
     return status()
 
 
-def import_aihub(body):
-    r = appconfig.import_from_aihub(copy_data=bool(body.get("copy_data", True)))
+def import_env(body):
+    r = appconfig.import_env(str(body.get("text") or ""))
     return {**r, "status": status()}
+
+
+def mcp_command():
+    """The one line that connects Claude Code to this Studio (same drafts as the app)."""
+    from pathlib import Path
+    eng = Path(__file__).resolve().parent / "mcp_server.py"
+    return f'claude mcp add marketing-studio -s user -- python3 "{eng}"'
 
 
 def google_start(port):

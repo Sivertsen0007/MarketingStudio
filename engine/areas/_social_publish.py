@@ -143,10 +143,9 @@ class R2Host:
         import sys
         from pathlib import Path
         import appconfig  # noqa: PLC0415
-        hub = appconfig.aihub_path()
-        if not hub:
-            raise NotSupported("Uploading local media needs the R2 image library (AI-Hub) on this Mac.")
-        lib = hub / "shared" / "image_library"
+        lib = Path(appconfig.get("STUDIO_IMAGE_LIBRARY") or "/nonexistent").expanduser()
+        if not (lib / "r2_client.py").exists():
+            raise NotSupported("Uploading local media needs an R2 image library (STUDIO_IMAGE_LIBRARY in the .env import).")
         if str(lib.parent) not in sys.path:
             sys.path.insert(0, str(lib.parent))
         from image_library.r2_client import R2Client  # noqa: PLC0415 - boto3 only when really needed

@@ -60,6 +60,8 @@ KEYS = [
     ("WP_STUDIO_APP_PASSWORD", "Application password", "WordPress (SEO)", True, "Users > Profile > Application passwords."),
     ("LINKEDIN_ACCESS_TOKEN", "Access token", "LinkedIn", True, "Optional."),
     ("LINKEDIN_ORG_URN", "Organisation URN", "LinkedIn", False, "urn:li:organization:<id>"),
+    ("STUDIO_EMAIL_FOLDER", "Folder for saved email HTML", "Advanced", False, "Where Save HTML to folder writes. Default: Studio's data folder."),
+    ("STUDIO_IMAGE_LIBRARY", "R2 image library folder", "Advanced", False, "Optional: a folder with r2_client.py, for uploading local SoMe media."),
 ]
 # set by Sign in with Google / Import, not typed in the form
 HIDDEN_SECRETS = ("GOOGLE_REFRESH_TOKEN", "GOOGLE_SA_JSON")
@@ -298,49 +300,68 @@ def google_sign_out():
     _notify()
 
 
-# ---------- moving over from AI-Hub (the person who built Studio there) ----------
+# ---------- importing keys from a .env file (Setup button, MCP tool, CLI) ----------
 
-def aihub_path():
-    p = Path(os.environ.get("MSTUDIO_AIHUB") or Path.home() / "Documents/AI-Hub")
-    return p if (p / "shared/.env").exists() else None
+ALIASES = {  # other common spellings -> Studio's key
+    "FB_ACCESS_TOKEN": "META_ACCESS_TOKEN", "FACEBOOK_ACCESS_TOKEN": "META_ACCESS_TOKEN",
+    "META_ACCOUNT_ID": "META_AD_ACCOUNT_ID", "FB_AD_ACCOUNT_ID": "META_AD_ACCOUNT_ID",
+    "GOOGLE_ADS_DEVELOPER_TOKEN": "GADS_DEVELOPER_TOKEN", "GOOGLE_ADS_LOGIN_CUSTOMER_ID": "GADS_LOGIN_CUSTOMER_ID",
+    "GOOGLE_ADS_CUSTOMER_ID": "GADS_OPERATING_CUSTOMER_ID", "GOOGLE_ADS_CLIENT_ID": "GOOGLE_CLIENT_ID",
+    "GOOGLE_ADS_CLIENT_SECRET": "GOOGLE_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN": "GOOGLE_REFRESH_TOKEN",
+}
+FILE_KEYS = ("GOOGLE_SERVICE_ACCOUNT_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "GADS_DM_SA_KEY")  # path to a service-account JSON
 
 
-def _env_file(p):
+def parse_env(text):
     out = {}
-    try:
-        for line in Path(p).read_text().splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                out[k.strip()] = v.strip().strip('"').strip("'")
-    except OSError:
-        pass
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[7:]
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip('"').strip("'")
     return out
 
 
-def import_from_aihub(copy_data=True):
-    """Copy the keys Studio used in AI-Hub into the Keychain, and (once) Studio's data folder. Returns a summary."""
-    hub = aihub_path()
-    if not hub:
-        raise ValueError("No AI-Hub folder found on this Mac.")
-    env = {**_env_file(hub / "shared/.env"), **_env_file(Path.home() / ".claude/secrets/marketing-studio.env")}
-    names = [k[0] for k in KEYS if k[0] in env and env[k[0]]]
-    set_many({k: env[k] for k in names})
-    sa = Path(env.get("GADS_DM_SA_KEY") or hub / "shared/secrets/gtm-service-account.json")
-    if sa.exists():
-        _secret_set("GOOGLE_SA_JSON", json.dumps(json.loads(sa.read_text())))
-        names.append("GOOGLE_SA_JSON")
+def import_env(text, base_dir=None):
+    """Save every key Studio knows from .env text into the Keychain / config.json.
+    -> {"imported": [names], "ignored": [names]}. Values are never returned."""
+    env, vals, ignored = parse_env(text), {}, []
+    known = {k[0] for k in KEYS} | {"GOOGLE_REFRESH_TOKEN"}
+    for k, v in env.items():
+        name = ALIASES.get(k, k)
+        if not v:
+            continue
+        if name in known:
+            vals[name] = v
+        elif k in FILE_KEYS:
+            f = Path(v).expanduser()
+            if not f.is_absolute() and base_dir:
+                f = Path(base_dir) / f
+            try:
+                info = json.loads(f.read_text())
+                if info.get("type") == "service_account":
+                    vals["GOOGLE_SA_JSON"] = json.dumps(info)
+                    continue
+            except (OSError, ValueError):
+                pass
+            ignored.append(k)
+        else:
+            ignored.append(k)
+    hidden = {k: vals.pop(k) for k in list(vals) if k in HIDDEN_SECRETS}
+    set_many(vals)
+    for k, v in hidden.items():
+        _secret_set(k, v)
     with _lock:
         _cache.clear()
     _notify()
-    copied = False
-    src = hub / "clients/master-liveaboards/Work/marketing/Google-Ads/editor-changes"
-    if copy_data and src.exists() and not (DATA / "studio").exists():
-        DATA.mkdir(parents=True, exist_ok=True)
-        for item in ("studio", "plans", "changelog.jsonl"):
-            s = src / item
-            if s.is_dir():
-                shutil.copytree(s, DATA / item, ignore=shutil.ignore_patterns("*.lock"))
-            elif s.exists():
-                shutil.copy2(s, DATA / item)
-        copied = True
-    return {"keys": len(names), "data_copied": copied}
+    return {"imported": sorted(list(vals) + list(hidden)), "ignored": sorted(ignored)}
+
+
+def import_env_file(path):
+    f = Path(path).expanduser()
+    if not f.is_file():
+        raise ValueError(f"No file at {f}")
+    return import_env(f.read_text(), base_dir=f.parent)

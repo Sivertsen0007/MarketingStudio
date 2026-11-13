@@ -70,10 +70,7 @@ def _data_dir():
 
 def campaigns_root():
     import appconfig
-    hub = appconfig.aihub_path()
-    if hub and (hub / "clients/master-liveaboards/Work/marketing/Email/campaigns").exists():
-        return hub / "clients/master-liveaboards/Work/marketing/Email/campaigns"
-    return appconfig.DATA / "email-campaigns"
+    return Path(appconfig.get("STUDIO_EMAIL_FOLDER") or appconfig.DATA / "email-campaigns").expanduser()
 
 
 def _now():

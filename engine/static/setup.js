@@ -32,8 +32,10 @@
     page.innerHTML = `<div class="su-wrap">
       <div class="su-top"><div><h2>Setup</h2><p class="su-sub">Your keys stay on this Mac: secrets in the macOS Keychain, the rest in ${esc(S.home)}. Nothing is sent anywhere else.</p></div>
         <span class="sp"></span><button id="suClose">${S.ready ? "Done" : "Later"}</button></div>
-      ${S.aihub ? `<div class="su-card"><h3>Move over from AI-Hub</h3><p class="su-help" style="margin:0 0 8px">AI-Hub was found at ${esc(S.aihub)}. Copy the keys Studio used there into the Keychain, and (the first time) your drafts, push history and settings.</p>
-        <div class="su-acts"><button id="suImport" class="primary">Copy from AI-Hub</button><span id="suImportMsg" class="su-help"></span></div></div>` : ""}
+      <div class="su-card"><h3>Import from a .env file</h3><p class="su-help" style="margin:0 0 8px">Have your keys in a .env file (KEY=value lines)? Pick it and Studio saves every key it knows: secrets into the Keychain. The file itself is not kept.</p>
+        <div class="su-acts"><input type="file" id="suEnvFile" accept=".env,text/plain,*" style="max-width:320px"><span id="suEnvMsg" class="su-help"></span></div></div>
+      <div class="su-card"><h3>Use with Claude Code</h3><p class="su-help" style="margin:0 0 8px">Run this once in Terminal. Claude then sees the same accounts and drafts as this app, can add changes to the draft (you still press Push), and can load keys from a .env file with the tool setup_import_env_file.</p>
+        <div class="su-acts"><code id="suMcp" style="font-size:12px;background:var(--hover,#f1f3f4);padding:6px 8px;border-radius:4px;word-break:break-all;flex:1">${esc(S.mcp_command)}</code><button id="suMcpCopy">Copy</button></div></div>
       <div class="su-card"><h3><span class="su-dot ${gOk ? "ok" : ""}"></span>Google (Ads, Search Console, GA4)</h3>
         <p class="su-help" style="margin:0 0 8px">${S.google_signed_in ? `Signed in${S.google_account ? " as <b>" + esc(S.google_account) + "</b>" : ""}.` : S.google_service_account ? "Using the service-account key copied from AI-Hub." : "Fill in the OAuth client below, save, then sign in. Your Google user needs access to the Ads accounts."}</p>
         <div class="su-acts"><button id="suGoogle" class="primary">${S.google_signed_in ? "Sign in again" : "Sign in with Google"}</button>${S.google_signed_in ? `<button id="suGoogleOut" class="danger">Sign out</button>` : ""}<span id="suGMsg" class="su-help"></span></div></div>
@@ -50,9 +52,11 @@
     };
     page.querySelectorAll("[data-rm]").forEach(a => a.onclick = async e => { e.preventDefault(); if (!confirm("Remove this key from the Keychain?")) return;
       try { S = await call("/api/setup/save", {values:{[a.dataset.rm]: null}}); draw() } catch(err) { alert(err.message) } });
-    if ($("suImport")) $("suImport").onclick = async () => { $("suImport").disabled = true; $("suImportMsg").textContent = "Copying ...";
-      try { const r = await call("/api/setup/import_aihub", {copy_data:true}); S = r.status; draw(); document.getElementById("suImportMsg").textContent = `Copied ${r.keys} keys${r.data_copied ? " and your Studio data" : ""}. Restart the app to load everything.` }
-      catch(e) { $("suImport").disabled = false; $("suImportMsg").textContent = e.message } };
+    $("suEnvFile").onchange = async e => { const f = e.target.files[0]; if (!f) return; $("suEnvMsg").textContent = "Importing ...";
+      try { const r = await call("/api/setup/import_env", {text: await f.text()}); S = r.status; draw();
+        document.getElementById("suEnvMsg").textContent = r.imported.length ? `Saved ${r.imported.length} key${r.imported.length > 1 ? "s" : ""}: ${r.imported.join(", ")}.` + (r.ignored.length ? ` Not used: ${r.ignored.length} other line${r.ignored.length > 1 ? "s" : ""}.` : "") : "No keys Studio knows were found in that file." }
+      catch(err) { $("suEnvMsg").textContent = err.message } };
+    $("suMcpCopy").onclick = async () => { try { await navigator.clipboard.writeText(S.mcp_command); $("suMcpCopy").textContent = "Copied" } catch(e) { const r = document.createRange(); r.selectNodeContents($("suMcp")); getSelection().removeAllRanges(); getSelection().addRange(r) } };
     $("suGoogle").onclick = async () => {
       try { const r = await call("/api/setup/google/start", {}); window.open(r.url, "_blank"); $("suGMsg").textContent = "Finish in the browser, then come back here.";
         clearInterval(poll); let n = 0; poll = setInterval(async () => { if (++n > 150) return clearInterval(poll); const s = await call("/api/setup"); if (s.google_signed_in && s.google_account !== S.google_account || s.google_signed_in && !S.google_signed_in){ clearInterval(poll); S = s; draw() } }, 2000) }

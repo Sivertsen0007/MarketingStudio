@@ -32,7 +32,7 @@ import health
 import gapi
 import progress
 import areas
-import setup_routes  # keys (Keychain), Sign in with Google, move from AI-Hub
+import setup_routes  # keys (Keychain), Sign in with Google, .env import
 import updater  # [mac-app updater] in-app updates (GitHub Releases), see updater.py
 
 HERE = Path(__file__).resolve().parent
@@ -357,8 +357,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(400, {"error": "body must be a JSON object"})
         if self.path == "/api/setup/save":
             return self._run(lambda: setup_routes.save(body))
-        if self.path == "/api/setup/import_aihub":
-            return self._run(lambda: setup_routes.import_aihub(body))
+        if self.path == "/api/setup/import_env":
+            return self._run(lambda: setup_routes.import_env(body))
         if self.path == "/api/setup/google/start":
             return self._run(lambda: setup_routes.google_start(self.server.server_address[1]))
         if self.path == "/api/setup/google/sign_out":

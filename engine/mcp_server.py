@@ -9,6 +9,8 @@ No dependencies: plain JSON-RPC 2.0 over stdin/stdout, one message per line (the
 """
 import json, sys, traceback
 
+import appconfig  # noqa: F401  (keys + vendor modules; same Keychain and data folder as the app)
+
 import core
 import datasources
 import gapi
@@ -16,7 +18,7 @@ import meta_ads as meta
 import areas
 
 PROTOCOL = "2025-06-18"
-ACCT = {"type": "string", "description": "ml (Master Liveaboards Global Google Ads, default), mluk (Google Ads UK) or meta (Facebook + Instagram)"}
+ACCT = {"type": "string", "description": "Google Ads account key or id (see list_accounts; the first one is the default) or meta / meta_<id> for a Meta ad account"}
 GOOGLE_KINDS = tuple(gapi.KINDS) + tuple(gapi.EXTRA_KINDS)
 KINDS = sorted(set(GOOGLE_KINDS) | set(meta.GRIDS))
 
@@ -141,7 +143,18 @@ DATA_TOOLS = [
          "account": {"type": "string", "description": "optional: one account or SEO part"},
          "days": {"type": "integer", "description": "stats window to fetch with Google (default 7)"}}, "required": ["source"]}},
 ]
-TOOLS += AREA_TOOLS + DATA_TOOLS
+SETUP_TOOLS = [
+    {"name": "setup_status", "description": "Which keys Marketing Studio has (Meta, Google Ads, Google sign-in, ML Suite, WordPress, LinkedIn): set or not set per key. Never returns a value.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "setup_import_env_file",
+     "description": "Load Marketing Studio's keys from a .env file on this Mac (KEY=value lines, e.g. META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, "
+                    "GADS_DEVELOPER_TOKEN, GADS_LOGIN_CUSTOMER_ID, GADS_OPERATING_CUSTOMER_ID, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, "
+                    "GOOGLE_REFRESH_TOKEN, GOOGLE_SERVICE_ACCOUNT_FILE=<path to a service-account json>, MLSUITE_*, WP_STUDIO_*, LINKEDIN_*). "
+                    "Secrets go into the macOS Keychain. Returns only which keys were imported and which lines were ignored, never values. "
+                    "Only run this when the user asks to set Studio up from a file.",
+     "inputSchema": {"type": "object", "properties": {"path": {"type": "string", "description": "absolute path to the .env file"}}, "required": ["path"]}},
+]
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS
 
 
 def _scope(acct, campaign, ad_group, tree=None):
@@ -218,6 +231,12 @@ AREA_NAMES = {t["name"] for t in AREA_TOOLS}
 def call(name, a):
     if name in AREA_NAMES:
         return call_area(name, a)
+    if name == "setup_status":
+        st = appconfig.status()
+        return {"keys": {k["name"]: k["set"] for k in st["keys"]}, "google_signed_in": st["google_signed_in"],
+                "google_service_account": st["google_service_account"], "ready": st["ready"], "data_folder": str(appconfig.DATA)}
+    if name == "setup_import_env_file":
+        return appconfig.import_env_file(a["path"])
     if name == "data_status":
         return datasources.status()
     if name == "refresh_data":
@@ -291,7 +310,7 @@ def handle(msg):
     m, mid = msg.get("method"), msg.get("id")
     if m == "initialize":
         return {"protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL), "capabilities": {"tools": {}},
-                "serverInfo": {"name": "ads-studio", "version": "1.1"},
+                "serverInfo": {"name": "marketing-studio", "version": "1.2"},
                 "instructions": "Marketing Studio (localhost:4830), four areas: Ads (Google Ads Editor data, the Meta ad account and a "
                                 "shared draft per account), Email (ML Suite campaigns), SEO (WordPress posts + Search Console) and SoMe "
                                 "(organic Facebook, Instagram, LinkedIn posts). Drafts only: you read and add to drafts the user reviews "

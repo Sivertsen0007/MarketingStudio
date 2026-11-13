@@ -47,11 +47,30 @@ Setup opens on its own the first time (later: the **Setup** button at the top). 
 | **SEO** | A WordPress application password (optional). Search Console + GA4 use your Google sign-in. |
 | **LinkedIn** | Optional. |
 
+**Have your keys in a .env file?** Use *Import from a .env file* in Setup: Studio saves every key it knows
+(`META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID`, `GADS_DEVELOPER_TOKEN`, `GADS_LOGIN_CUSTOMER_ID`, `GADS_OPERATING_CUSTOMER_ID`,
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `GOOGLE_SERVICE_ACCOUNT_FILE=<path to json>`,
+`MLSUITE_*`, `WP_STUDIO_*`, `LINKEDIN_*`) and ignores the rest.
+
 Secrets go into the macOS Keychain (service "Marketing Studio"). Everything else Studio keeps - drafts, push
 history, caches, settings - lives in `~/Library/Application Support/MarketingStudio/`.
 
 The Google Ads Editor parts (Send to Editor, reading Editor's data) need Google Ads Editor installed on the same
 Mac. Everything else talks to the Google Ads and Meta APIs directly.
+
+## Use with Claude Code (MCP)
+
+Studio ships an MCP server, so Claude Code in your terminal works on the same accounts and the same draft as the
+app. Connect it once (Setup shows the exact line):
+
+```sh
+claude mcp add marketing-studio -s user -- python3 "/Applications/Marketing Studio.app/Contents/Resources/engine/mcp_server.py"
+```
+
+Claude can then read campaigns, ad sets, ads, keywords and stats, add and remove draft changes (they appear live in
+the app), check the draft, preview a live push, read push history, work on Email/SEO/SoMe drafts, and set Studio up
+from a .env file (`setup_import_env_file`) without the values ever passing through the chat. Claude cannot push
+live, send, publish or undo: those stay your buttons in the app.
 
 ## How it works
 

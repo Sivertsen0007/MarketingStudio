@@ -3,7 +3,7 @@
 "scheduled", time reached), then marks them published or failed. It never creates, edits or deletes posts of its own.
 
 NOT INSTALLED. Written and tested on the Mac; installing it on the VPS (and its cron line) needs the user's approval,
-see ADMIN.md section J.
+see the README.
 
   python3 social_publisher.py [--data DIR] [--dry-run | --live] [--fake] [--max-late 120]
       run once: dry-run (the default) only logs what it would publish

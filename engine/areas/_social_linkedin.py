@@ -1,7 +1,7 @@
 """SoMe <-> LinkedIn company page (Posts API + Images API, version li-lms-2026-10). NOT CONNECTED: we have no LinkedIn
 developer app or token yet, so this is built and tested against a fake HTTP transport only.
 
-Connect (admin, see ADMIN.md section J): a LinkedIn developer app with the Community Management API approved, a page admin
+Connect (admin, see the README): a LinkedIn developer app with the Community Management API approved, a page admin
 signs in once (OAuth, scope w_organization_social + r_organization_social), and the token + the organisation URN go in
 Setup (Keychain) as LINKEDIN_ACCESS_TOKEN and LINKEDIN_ORG_URN (urn:li:organization:<id>). Studio never shows the token.
 

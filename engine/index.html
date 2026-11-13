@@ -800,7 +800,7 @@ function renderDraft(d){
     ${i.note ? `<div class="note">${esc(i.note)}</div>` : ""}
     ${i.problems.map(p => `<div class="prob">${esc(p)}</div>`).join("")}
     ${i.warnings.map(p => `<div class="warnl">${esc(p)}</div>`).join("")}
-  </div>`).join("") : `<div class="empty">No changes yet.<br><br>Edit a cell, use + Add, or ask Claude (MCP: ads-studio).</div>`;
+  </div>`).join("") : `<div class="empty">No changes yet.<br><br>Edit a cell, use + Add, or ask Claude (MCP: marketing-studio).</div>`;
   const blocked = d.items.some(i => i.problems.length);
   $("#pushN").textContent = n || ""; $("#pushHdr").classList.toggle("has", n > 0);
   $("#pushHdr").title = n ? `${n} change${n > 1 ? "s" : ""} in the draft${blocked ? " (some need fixing)" : ""}. Review and push them live.` : "Nothing in the draft. Push history is in here too.";

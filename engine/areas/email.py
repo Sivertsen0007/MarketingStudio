@@ -1449,7 +1449,7 @@ def health(today):
     s = settings()
     if not s["token"] and not s["mcp_token"]:
         return [hrow("email", "ML Suite", "Connection", None, "Not connected: Settings > Email > Connect. The Email area shows demo data.",
-                     "Paste an ML Suite MCP token (Email app, read-only is fine) in Email > Connect. See ADMIN.md section H.")]
+                     "Paste an ML Suite MCP token (Email app, read-only is fine) in Email > Connect. See the README.")]
     rows = []
     if s["token"]:
         ok, msg = probe(StudioApiAdapter(s["base_url"], s["token"], timeout=10), fresh=True)

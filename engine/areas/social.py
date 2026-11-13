@@ -9,7 +9,7 @@ below that need "pressed": "user"); there is no MCP tool for them and Claude nev
 Test mode: SOCIAL_FAKE_PUBLISH=1 makes every publisher a FakePublisher and the media host a FakeHost (nothing leaves the
 Mac). SOCIAL_DIR=<folder> keeps SoMe data apart (tests and the test server).
 Scheduling: Facebook through Meta's own scheduling (10 min to 30 days ahead). Instagram and LinkedIn need the VPS publisher
-job (social_publisher.py), which is OFF until the user approves it (ADMIN.md section J). Nothing is copied to the VPS while off.
+job (social_publisher.py), which is OFF until the user approves it . Nothing is copied to the VPS while off.
 """
 import datetime as dt
 import json
@@ -69,7 +69,7 @@ def host():
 _shipper = None  # tests set a fake
 
 
-VPS_PARKED = "VPS publisher: parked, not available yet. See ADMIN.md section J"
+VPS_PARKED = "VPS publisher: parked, not available yet. See the README"
 
 
 def shipper():
@@ -1259,14 +1259,14 @@ def health(today=None):
                          "Check the system user still has the Page asset with Create content rights."))
     from . import _social_linkedin as li  # noqa: PLC0415
     rows.append(_row("SoMe LinkedIn", "", "Connection", True if li.connected() else None,
-                     "Connected." if li.connected() else "Not connected.", "See ADMIN.md section J: LinkedIn developer app + Community Management API."))
+                     "Connected." if li.connected() else "Not connected.", "See the README: LinkedIn developer app + Community Management API."))
     s = store.settings()
     rows.append(_row("SoMe scheduling", "Studio on this Mac", "Scheduler", True if s["local_scheduler"] else None,
                      ("On: scheduled Instagram and LinkedIn posts go out while Studio is open" + ("" if _sched.get("thread") else " (the thread is not running yet)"))
                      if s["local_scheduler"] else "Off: Instagram and LinkedIn can't be scheduled (Facebook uses Meta's own scheduling).",
                      "Turn it on in SoMe settings if this Mac is on and Studio open at the times you schedule."))
     rows.append(_row("SoMe scheduling", "VPS publisher job", "Parked", None, "Parked: not available yet.",
-                     "Bringing it back needs a separate build, a review and your approval: see ADMIN.md section J."))
+                     "Bringing it back needs a separate build, a review and your approval: see the README."))
     return rows
 
 

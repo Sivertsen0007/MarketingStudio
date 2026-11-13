@@ -301,7 +301,7 @@ class WpRestWriter:
         if "meta" in payload:
             missing = [m for m in payload["meta"] if m not in (self.current(post_id).get("_meta_keys") or [])]
             if missing:
-                raise RuntimeError("Yoast fields are not writable over REST yet: install wp-snippets/yoast-rest-fields.php (ADMIN.md section I).")
+                raise RuntimeError("Yoast fields are not writable over REST yet: install wp-snippets/yoast-rest-fields.php (the README).")
         res = self._call(f"posts/{int(post_id)}", "POST", payload)
         return {"ok": True, "modified": res.get("modified_gmt")}
 

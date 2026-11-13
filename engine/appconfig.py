@@ -45,7 +45,7 @@ _listeners = []
 # name, label, group, secret, help
 KEYS = [
     ("META_ACCESS_TOKEN", "Access token", "Meta", True, "A system user token with ads_management (Business Settings > System users), or your own long-lived token."),
-    ("META_AD_ACCOUNT_ID", "Ad account id", "Meta", False, "act_ followed by the number, e.g. act_644981006414114. More accounts can be added in Settings."),
+    ("META_AD_ACCOUNT_ID", "Ad account id", "Meta", False, "act_ followed by the number, e.g. act_1234567890. More accounts can be added in Settings."),
     ("META_PAGE_ID", "Facebook Page id", "Meta", False, "The Page your ads and posts run as (optional)."),
     ("GADS_DEVELOPER_TOKEN", "Developer token", "Google Ads", True, "From the manager account: Tools > API Center."),
     ("GADS_LOGIN_CUSTOMER_ID", "Manager account id (MCC)", "Google Ads", False, "Digits only, no dashes."),

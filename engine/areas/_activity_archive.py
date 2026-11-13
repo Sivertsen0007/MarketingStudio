@@ -8,7 +8,7 @@ Tables:
   fetches(source, account, start, end, at, n)                 every window that was read, to show coverage
 
 Personal data: rows hold who made a change (Google user_email, Meta actor name). This file stays on the Mac, inside
-Studio's gitignored data folder. See ADMIN.md section L.
+Studio's gitignored data folder. See the README.
 """
 import json
 import os

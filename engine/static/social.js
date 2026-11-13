@@ -593,7 +593,7 @@ async function settingsDialog(){
       <div class="so-consent" id="soLocalNote" style="${st.local_scheduler ? "" : "display:none"}">The Mac must be on and Studio running at the scheduled time. If the Mac is asleep or Studio is closed, the post is <b>not</b> posted late: it shows as Missed, with a Post now button.
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px">Still post up to <input type="number" id="soLate" min="0" max="240" value="${esc(st.late_minutes || 0)}" style="width:70px"> minutes late (0 = never)</label>
         ${s.scheduler_running ? "" : `<div class="hint" style="margin:4px 0 0">The scheduler thread starts with Studio (after a Studio restart).</div>`}</div>
-      <label style="display:flex;gap:6px;align-items:center;margin-top:8px;color:var(--muted)"><input type="checkbox" id="soVps" disabled> ${esc(s.vps_parked || "VPS publisher: parked, not available yet. See ADMIN.md section J")}</label></div>
+      <label style="display:flex;gap:6px;align-items:center;margin-top:8px;color:var(--muted)"><input type="checkbox" id="soVps" disabled> ${esc(s.vps_parked || "VPS publisher: parked, not available yet. See the README")}</label></div>
     <div class="set-sec"><h3>Posting slots (the queue)</h3><p class="hint">Weekly times per channel, for example "Tue 09:00, Thu 18:00". Add to queue picks the next free one.</p>
       ${CHS.map(c => `<div class="so-row"><label>${CH[c]}</label><input type="text" data-slots="${c}" value="${esc(((st.slots || {})[c] || []).join(", "))}" style="width:100%"></div>`).join("")}</div>
     <div class="set-sec"><h3>Trackable links</h3>

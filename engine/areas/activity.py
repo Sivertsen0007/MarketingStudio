@@ -16,7 +16,7 @@ time an account has nothing archived, and whenever snapshot() runs. sync_status(
 
 Read functions for MCP tools: activity_summary(period, ...) and activity_rows(period, filters, ...).
 Personal data: rows carry who made a change ("who": Google user email, Meta actor name). Shown inside Studio only;
-CSV exports leave it out unless include_who is set. See ADMIN.md section L.
+CSV exports leave it out unless include_who is set. See the README.
 """
 import concurrent.futures
 import csv

@@ -160,7 +160,7 @@ function drawPosts(){
   $("#seoRangeLbl").textContent = `${d.range.start} to ${d.range.end} vs ${d.range.prev_start} to ${d.range.prev_end}`;
   const notes = [];
   if (d.errors && d.errors.length) notes.push(d.errors.map(esc).join("<br>"));
-  if (T.view === "edit" && !d.snippet_installed) notes.push("Focus keyphrase is blank: Yoast does not share it over the REST API until the Studio snippet is installed (ADMIN.md section I). SEO title shows the title Google sees.");
+  if (T.view === "edit" && !d.snippet_installed) notes.push("Focus keyphrase is blank: Yoast does not share it over the REST API until the Studio snippet is installed . SEO title shows the title Google sees.");
   if (T.filter === "noindex") notes.push("Index status comes from URL Inspection. Check a post (open it) or run Check index status in Opportunities.");
   $("#seoNote").innerHTML = notes.length ? `<p class="seo-errs">${notes.join("<br>")}</p>` : "";
   const s = T.search.toLowerCase();
@@ -416,7 +416,7 @@ async function drawSettings(){
         <label style="margin-left:14px;color:var(--bad)"><input type="radio" name="ssTarget" value="prod" ${s.target === "prod" ? "checked" : ""}> Prod (live site)</label></span>
       <b>Publish mode</b><span><label><input type="radio" name="ssMode" value="dry" ${s.mode !== "live" ? "checked" : ""}> Dry run (records only)</label>
         <label style="margin-left:14px"><input type="radio" name="ssMode" value="live" ${s.mode === "live" ? "checked" : ""} ${s.connected ? "" : "disabled"}> WordPress REST</label>${s.connected ? "" : ` <span class="hint">needs the login</span>`}</span>
-      <b>Yoast fields over REST</b><span>${s.snippet_installed ? yes(true, "Snippet installed: focus keyphrase is shared") : `<span class="seo-dot"></span>Snippet not installed: SEO title, meta and focus keyphrase can't be written yet. See ADMIN.md section I.`}</span>
+      <b>Yoast fields over REST</b><span>${s.snippet_installed ? yes(true, "Snippet installed: focus keyphrase is shared") : `<span class="seo-dot"></span>Snippet not installed: SEO title, meta and focus keyphrase can't be written yet. See the README (Setup).`}</span>
       <b>Secrets file</b><span><code>${esc(s.secrets_file)}</code> <span class="hint">(chmod 600, password never shown)</span></span></div></div>
     <div class="seo-box"><h3>Search Console + GA4</h3><div class="seo-kv">
       <b>Search Analytics</b><span>${yes(sc.search_console_read, "Readable (sc-domain:masterliveaboards.com)", "No access")}</span>

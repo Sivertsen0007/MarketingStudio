@@ -3,7 +3,7 @@
 See it: posts grid with Yoast fields, internal links, Search Console and GA4 organic numbers.
 Build a draft: you (the post editor) or Claude (add_draft, suggestions). Check it: copy rules, lengths, links.
 Make it real: only the user's own Publish button. Default writer is a dry run; WordPress writes need the
-Marketing Studio Application Password (ADMIN.md section I). divetravel.co.uk stays off until the director agrees.
+Marketing Studio Application Password . divetravel.co.uk stays off until the director agrees.
 
 For an MCP tool later: list_drafts() and add_draft(change, by). There is deliberately no publish function for Claude.
 """
@@ -601,7 +601,7 @@ def health(today=None):
     user, _ = c.wp_creds()
     if not user:
         out.append(_row("SEO", "masterliveaboards.com", "WordPress write access", None, "Not connected. Publish runs as a dry run.",
-                        "ADMIN.md section I: create the Marketing Studio Editor user and an Application Password, then SEO > Settings > Connect."))
+                        "the README: create the Marketing Studio Editor user and an Application Password, then SEO > Settings > Connect."))
     else:
         s = settings()
         try:

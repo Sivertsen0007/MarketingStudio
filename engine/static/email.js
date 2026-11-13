@@ -350,7 +350,7 @@ async function connectDialog(){
   let s = {}; try { s = await api(A("settings")) } catch(e) {}
   const ph = set => set ? "Saved (hidden). Paste a new one to replace it" : "mls_...";
   const any = s.token_set || s.mcp_token_set;
-  showDialog("Connect to ML Suite", `<p class="hint">Tokens are saved in ${esc(s.secrets_file)} (only you can read it) and never shown again. See ADMIN.md section H for how to make them.</p>
+  showDialog("Connect to ML Suite", `<p class="hint">Tokens are saved in ${esc(s.secrets_file)} (only you can read it) and never shown again. See the README for how to make them.</p>
     <div class="row"><label>Base URL</label><input id="emBase" value="${esc(s.base_url || "https://mlsuite.app")}"></div>
     <div class="row"><label>MCP token</label><input id="emMcpTok" type="password" autocomplete="off" placeholder="${ph(s.mcp_token_set)}"></div>
     <p class="hint" style="margin-top:-4px">From ML Suite > Settings > MCP, with the Email app ticked. Read-only is fine: Studio then reads campaigns, stats and list counts.</p>

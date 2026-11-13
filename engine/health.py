@@ -68,7 +68,7 @@ META_EXPIRY = {
     "v27.0": None,
 }
 META_REQUIRED_SCOPES = ("ads_management", "ads_read")
-META_APP_REVIEW = "ADMIN.md section A (Meta Full access for the Marketing API)"
+META_APP_REVIEW = "Meta App Review: apply for Full access to the Marketing API"
 
 _SECRETS = []
 
@@ -100,10 +100,10 @@ def _version_row(channel, version, table, source, read_on, today, fix_where):
     left = (end - today).days
     if left <= 0:
         return _row(channel, "", "API version", False, f"{version} reached end of life on {_d(end)} ({-left} days ago). Source {source}, read {read_on}.",
-                    f"Bump {fix_where} to a supported version and test. See ADMIN.md section F.")
+                    f"Bump {fix_where} to a supported version and test. See the README (Setup).")
     ok = True if left >= WARN_DAYS else None
     return _row(channel, "", "API version", ok, f"{version} supported until {_d(end)} ({left} days left). Source {source}, read {read_on}.",
-                "" if ok else f"Plan the bump of {fix_where} before {_d(end)}. See ADMIN.md section F.")
+                "" if ok else f"Plan the bump of {fix_where} before {_d(end)}. See the README (Setup).")
 
 
 # ---------- Google ----------
@@ -136,7 +136,7 @@ def google_checks(today):
         out.append(_row("google", "", "Service account token", True, "Token obtained (adwords scope)."))
     except Exception as e:  # noqa: BLE001
         out.append(_row("google", "", "Service account token", False, f"No token: {e}",
-                        "The service account key may be missing or deleted. See ADMIN.md section F."))
+                        "The service account key may be missing or deleted. See the README (Setup)."))
         tok = None
     out.append(_version_row("google", getattr(g, "API_VERSION", None), GOOGLE_SUNSET, GOOGLE_SOURCE, GOOGLE_READ, today,
                             "API_VERSION in shared/dashboard/connectors/google_ads_api.py"))
@@ -149,7 +149,7 @@ def google_checks(today):
         return out
     accts = _google_accounts()
     if not accts:
-        out.append(_row("google", "", "Accounts", None, "No Google Ads accounts found to test.", "See ADMIN.md section C."))
+        out.append(_row("google", "", "Accounts", None, "No Google Ads accounts found to test.", "See the README (Setup)."))
     for cid, name in accts:
         try:
             rows = live.query(cid, "SELECT customer.descriptive_name, customer.currency_code FROM customer LIMIT 1")
@@ -157,7 +157,7 @@ def google_checks(today):
             out.append(_row("google", name, "Account answers", True, f"{c.get('descriptiveName', '?')} ({cid}), {c.get('currencyCode', '?')}"))
         except Exception as e:  # noqa: BLE001
             out.append(_row("google", name, "Account answers", False, f"{cid}: {e}",
-                            "Check the account is still linked to the MCC and the service account has access. See ADMIN.md sections C and F."))
+                            "Check the account is still linked to the MCC and the service account has access. See the README."))
     return out
 
 
@@ -228,13 +228,13 @@ def meta_checks(today):
     version, where = _meta_version(meta_ads)
     out.append(_version_row("meta", version, META_EXPIRY, META_SOURCE, META_READ, today, where))
     if not token:
-        return out + [_row("meta", "", "Token", False, "No Meta access token yet.", "See ADMIN.md section F.")]
+        return out + [_row("meta", "", "Token", False, "No Meta access token yet.", "See the README (Setup).")]
 
     try:
         d = _debug_token(version, token)
         if not d.get("is_valid"):
             out.append(_row("meta", "", "Token", False, f"Token is not valid: {(d.get('error') or {}).get('message', 'no reason given')}",
-                            "Generate a new system user token. See ADMIN.md section F."))
+                            "Generate a new system user token. See the README (Setup)."))
         else:
             exp = d.get("expires_at") or 0
             exp_txt = "never expires" if not exp else f"expires {_d(dt.datetime.fromtimestamp(exp))}"
@@ -244,9 +244,9 @@ def meta_checks(today):
             out.append(_row("meta", "", "Token", ok,
                             f"{d.get('type', '?')} token" + (f" for app \"{d['application']}\"" if d.get("application") else "") + f", {exp_txt}"
                             + (f", missing scopes: {', '.join(missing)}" if missing else ", has ads_management + ads_read"),
-                            "" if ok else "Generate a new system user token with ads_management and ads_read. See ADMIN.md section F."))
+                            "" if ok else "Generate a new system user token with ads_management and ads_read. See the README (Setup)."))
     except Exception as e:  # noqa: BLE001
-        out.append(_row("meta", "", "Token", False, f"debug_token failed: {e}", "See ADMIN.md section F."))
+        out.append(_row("meta", "", "Token", False, f"debug_token failed: {e}", "See the README (Setup)."))
 
     worst, tier, upgraded = None, None, None
     for a in meta_ads.settings().get("meta_accounts", []):
@@ -264,10 +264,10 @@ def meta_checks(today):
             upgraded = h.get("x-ad-api-version-warning") or upgraded
         except Exception as e:  # noqa: BLE001
             out.append(_row("meta", a["name"], "Account answers", False, f"{a['act']}: {e}",
-                            "The system user may have lost access to this ad account. See ADMIN.md sections B and F."))
+                            "The system user may have lost access to this ad account. See the README."))
     if worst is not None:
         out.append(_row("meta", "", "API usage", True if worst <= 75 else None, f"Highest usage {worst}% of the current limit window.",
-                        "" if worst <= 75 else "Slow down bulk edits; usage resets within the hour. Full access raises the limit (ADMIN.md section A)."))
+                        "" if worst <= 75 else "Slow down bulk edits; usage resets within the hour. Full access raises the limit ."))
     if tier:
         dev = tier == "development_access"
         out.append(_row("meta", "", "Access tier", None if dev else True,
@@ -275,7 +275,7 @@ def meta_checks(today):
                         f"Apply for Full access. See {META_APP_REVIEW}." if dev else ""))
     if upgraded:
         out.append(_row("meta", "", "Version auto-upgrade", None, f"Meta says: {upgraded}",
-                        "Meta is answering on a newer version than Studio asks for. Bump the version so calls don't start failing. See ADMIN.md section F."))
+                        "Meta is answering on a newer version than Studio asks for. Bump the version so calls don't start failing. See the README (Setup)."))
     return out
 
 

@@ -3,7 +3,7 @@
  * Marketing Studio: make Yoast's SEO title, meta description and focus keyphrase readable and writable over the WP REST API.
  *
  * Install: Code Snippets plugin ("Run everywhere") or as wp-content/mu-plugins/marketing-studio-yoast-rest.php.
- * STAGING FIRST (staging.masterliveaboards.com), then prod. See ADMIN.md section I. Not installed by Studio.
+ * STAGING FIRST (staging.masterliveaboards.com), then prod. See the README. Not installed by Studio.
  *
  * - Adds the three Yoast post meta keys to the `meta` object of /wp-json/wp/v2/posts.
  * - Writing needs a logged-in user who can edit posts (edit_posts) and that post (edit_post).

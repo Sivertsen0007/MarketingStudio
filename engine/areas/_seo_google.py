@@ -24,7 +24,7 @@ _creds, _creds_at, _lock = None, 0, threading.Lock()
 
 def _token():
     import appconfig  # noqa: PLC0415
-    return appconfig.google_token()
+    return appconfig.google_token("seo")
 
 
 def scopes():

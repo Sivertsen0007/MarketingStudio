@@ -177,6 +177,7 @@ def on_change(fn):
 
 def _notify():
     _GOOGLE["token"], _GOOGLE["exp"] = None, 0
+    _SA["token"], _SA["exp"] = None, 0
     for fn in list(_listeners):
         try:
             fn()
@@ -224,29 +225,43 @@ def _post_form(url, fields):
         raise RuntimeError(f"Google sign-in: {msg}") from None
 
 
-def google_token():
-    """A Google access token (Ads, Search Console, GA4) for the signed-in person, cached until it expires."""
+_SA = {"token": None, "exp": 0}
+
+
+def _from_refresh():
+    if _GOOGLE["token"] and time.time() < _GOOGLE["exp"] - 120:
+        return _GOOGLE["token"]
+    r = _post_form("https://oauth2.googleapis.com/token", {
+        "client_id": get("GOOGLE_CLIENT_ID"), "client_secret": get("GOOGLE_CLIENT_SECRET"),
+        "refresh_token": get("GOOGLE_REFRESH_TOKEN"), "grant_type": "refresh_token"})
+    _GOOGLE["token"], _GOOGLE["exp"] = r["access_token"], time.time() + int(r.get("expires_in", 3600))
+    return _GOOGLE["token"]
+
+
+def _from_service_account():
+    if _SA["token"] and time.time() < _SA["exp"] - 120:
+        return _SA["token"]
+    try:
+        from google.oauth2 import service_account  # noqa: PLC0415
+        from google.auth.transport.requests import Request  # noqa: PLC0415
+    except ImportError:
+        raise NotConnected("This Mac has a service-account key but not the google-auth library (pip3 install google-auth). Or sign in with Google instead.") from None
+    c = service_account.Credentials.from_service_account_info(json.loads(get("GOOGLE_SA_JSON")), scopes=[GOOGLE_SCOPES[0]])
+    c.refresh(Request())
+    _SA["token"], _SA["exp"] = c.token, time.time() + 3000
+    return _SA["token"]
+
+
+def google_token(purpose="ads"):
+    """A Google access token, cached until it expires.
+    purpose "ads": a service-account key wins when there is one (it is set up for Google Ads), else the sign-in.
+    purpose "seo" (Search Console, GA4): the sign-in wins, else the service-account key."""
     with _glock:
-        if _GOOGLE["token"] and time.time() < _GOOGLE["exp"] - 120:
-            return _GOOGLE["token"]
-        rt = get("GOOGLE_REFRESH_TOKEN")
-        if rt:
-            r = _post_form("https://oauth2.googleapis.com/token", {
-                "client_id": get("GOOGLE_CLIENT_ID"), "client_secret": get("GOOGLE_CLIENT_SECRET"),
-                "refresh_token": rt, "grant_type": "refresh_token"})
-            _GOOGLE["token"], _GOOGLE["exp"] = r["access_token"], time.time() + int(r.get("expires_in", 3600))
-            return _GOOGLE["token"]
-        sa = get("GOOGLE_SA_JSON")
-        if sa:
-            try:
-                from google.oauth2 import service_account  # noqa: PLC0415
-                from google.auth.transport.requests import Request  # noqa: PLC0415
-            except ImportError:
-                raise NotConnected("This Mac has a service-account key but not the google-auth library. Sign in with Google instead.") from None
-            c = service_account.Credentials.from_service_account_info(json.loads(sa), scopes=GOOGLE_SCOPES[:3])
-            c.refresh(Request())
-            _GOOGLE["token"], _GOOGLE["exp"] = c.token, time.time() + 3000
-            return _GOOGLE["token"]
+        have_rt, have_sa = bool(get("GOOGLE_REFRESH_TOKEN")), bool(get("GOOGLE_SA_JSON"))
+        order = [_from_service_account, _from_refresh] if purpose == "ads" else [_from_refresh, _from_service_account]
+        for fn in order:
+            if (fn is _from_refresh and have_rt) or (fn is _from_service_account and have_sa):
+                return fn()
         raise NotConnected("Not signed in to Google. Open Setup and press Sign in with Google.")
 
 

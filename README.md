@@ -101,6 +101,17 @@ Marketing Studio updates itself from this repository's GitHub Releases.
 
 The version you run is shown bottom left (*Marketing Studio v0.1.2*).
 
+**Which copies get updates**
+
+| How you got it | Updates |
+|---|---|
+| Downloaded the zip from [Releases](https://github.com/Sivertsen0007/MarketingStudio/releases/latest) | Yes, in the app (banner + Update now) |
+| Built it yourself from the source (`./build.sh`), or from a fork | No. Your build is signed with a different certificate, so the app refuses our releases and says to update by hand: `git pull` and build again, or switch to the release download |
+| Running the engine from source (`python3 server.py`) | No updater: `git pull` gets the latest code |
+
+The certificate check is on purpose: an update is only installed when it is signed by the same certificate as the app you already
+have, so nobody else can push code into your copy.
+
 ---
 
 ## The window

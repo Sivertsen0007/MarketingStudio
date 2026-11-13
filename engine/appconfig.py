@@ -58,6 +58,7 @@ KEYS = [
     ("EMAIL_MCP_URL", "MCP URL", "Email", False, "The platform's MCP server over HTTP, e.g. https://mail.example.com/api/mcp. Read access, plus new drafts."),
     ("EMAIL_MCP_TOKEN", "MCP token", "Email", True, "Bearer token for the MCP server."),
     ("EMAIL_FROM_ADDRESS", "From address", "Email", False, "Optional: every campaign must use this From and Reply-to (a check). Empty = the platform decides."),
+    ("EMAIL_OWN_DOMAINS", "Own domains", "Email", False, "Optional, comma separated: domains whose addresses may be shown (the From domain always is)."),
     ("STUDIO_TEST_EMAIL", "Test email address", "Email", False, "Where Send test goes (shown in the Email area)."),
     ("EMAIL_TIMEZONE", "Send timezone", "Email", False, "IANA name, e.g. Europe/London (default)."),
     ("EMAIL_IMAGE_HOST", "Image host", "Email", False, "Optional: warn when an image is not on this host, e.g. media.example.com."),

@@ -1813,7 +1813,7 @@ async function healthDot(){
 }
 function healthHtml(h){
   if (!h || !h.results || !h.results.length) return `<p class="hint">Not checked yet.</p>`;
-  return `<p class="hint">Checked ${esc(String(h.checked_at || "").replace("T", " ").slice(0, 16))}. Read-only checks: nothing is changed in Google, Meta, ML Suite, WordPress or the social channels.</p>`
+  return `<p class="hint">Checked ${esc(String(h.checked_at || "").replace("T", " ").slice(0, 16))}. Read-only checks: nothing is changed in Google, Meta, your email platform, WordPress or the social channels.</p>`
     + h.results.map(r => `<div class="hl-row"><span class="hdot ${hcls(r.ok)}"></span><div><b>${esc(chLabel(r.channel))}</b><div class="sub hint" style="margin:0">${esc(r.account || "")}</div></div>
       <div>${esc(r.check)}: ${esc(r.detail)}${r.ok !== true && r.fix ? `<div class="hint" style="margin:2px 0 0">Fix: ${esc(r.fix)}</div>` : ""}</div></div>`).join("");
 }

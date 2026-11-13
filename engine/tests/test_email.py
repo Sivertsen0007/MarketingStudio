@@ -1,7 +1,7 @@
 """Email area tests: checks, fake adapter, draft store, the user's buttons on fake data, settings file.
 
 Run from the studio folder:  python3 -m unittest tests/test_email.py
-Never touches a real ML Suite: SECRETS points at a temp file without a token, so the fake adapter is used.
+Never touches a real email platform: SECRETS points at a temp file without a token, so the fake adapter is used.
 """
 import os as _os, tempfile as _tf
 _os.environ.setdefault("MSTUDIO_HOME", _tf.mkdtemp(prefix="mstudio-test-"))
@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from areas import email as em  # noqa: E402
 import progress  # noqa: E402
 
-GOOD_HTML = ('<html><body><img src="https://media.mlmediahub.com/a.jpg" alt="Reef"><p>Hi {{first_name}}, spaces from GBP 900.</p>'
-             '<a href="https://www.masterliveaboards.com/">Trips</a> <a href="mailto:dive@masterliveaboards.com">Mail</a>'
+GOOD_HTML = ('<html><body><img src="https://media.example.net/a.jpg" alt="Reef"><p>Hi {{first_name}}, spaces from GBP 900.</p>'
+             '<a href="https://www.demobrand.com/">Trips</a> <a href="mailto:dive@demobrand.com">Mail</a>'
              '<a href="tel:+44123">Call</a> <a href="{{unsubscribe_url}}">Unsubscribe</a></body></html>')
 
 
@@ -55,9 +55,17 @@ class Base(unittest.TestCase):
         em._fetch_status = lambda url, timeout=8: (200, "")
         em._link_cache.clear()
         em.FakeAdapter.SEND_SECONDS = 0.6
+        self._cfg = (em.FROM_ADDRESS, em.IMAGE_HOST, em.OWN_DOMAINS, em.PLATFORM)
+        em.FROM_ADDRESS, em.IMAGE_HOST, em.OWN_DOMAINS, em.PLATFORM = "dive@demobrand.com", "media.example.net", ("demobrand.com",), "the platform"
+        em.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        (em.DATA_DIR / "email_copy_rules.json").write_text(json.dumps([  # your own rules, on top of the built-in ones
+            {"level": "error", "pattern": r"\bbahamas\b", "message": 'Never mention "Bahamas".'},
+            {"level": "error", "pattern": r"\byachts?\b", "message": 'Say "vessel", not "yacht".'},
+            {"level": "error", "pattern": r"\byou('ll| will) see\b", "message": 'No promised sightings ("you will see").'},
+            {"level": "warn", "pattern": r"\bcabins?\b", "message": 'For prices, say "spaces", not "cabins".'}]))
         em._probes.clear()
         em._adapters.clear()
-        # Network guard: tests may only reach this machine, never mlsuite.app or anything else.
+        # Network guard: tests may only reach this machine, never mail.example.com or anything else.
         self._urlopen = urllib.request.urlopen
 
         def guarded(req, *a, **kw):
@@ -71,6 +79,7 @@ class Base(unittest.TestCase):
     def tearDown(self):
         urllib.request.urlopen = self._urlopen
         em.DATA_DIR, em.SECRETS, em.campaigns_root, em._fetch_status, em.FakeAdapter.SEND_SECONDS = self._old
+        em.FROM_ADDRESS, em.IMAGE_HOST, em.OWN_DOMAINS, em.PLATFORM = self._cfg
         em._link_cache.clear()
         em._probes.clear()
         em._adapters.clear()
@@ -82,7 +91,7 @@ class Checks(Base):
         self.assertEqual(em.run_checks(good(), fetch=ok_fetch), [])
 
     def test_from_and_reply_to(self):
-        p = em.run_checks(good(from_address="sales@masterliveaboards.com", reply_to=""), links=False)
+        p = em.run_checks(good(from_address="sales@demobrand.com", reply_to=""), links=False)
         self.assertIn("From must be", msgs(p, "error"))
         self.assertIn("Reply-to must be", msgs(p, "error"))
 
@@ -92,11 +101,11 @@ class Checks(Base):
         self.assertEqual(em.run_checks(good(html=GOOD_HTML.replace("{{unsubscribe_url}}", "{{ unsubscribe_url }}")), links=False), [])
 
     def test_images(self):
-        h = GOOD_HTML + '<img src="https://media.mlmediahub.com/b.webp"><img src="https://staging.mlmediahub.com/c.jpg">' \
+        h = GOOD_HTML + '<img src="https://media.example.net/b.webp"><img src="https://staging.example.net/c.jpg">' \
                         '<img src="http://localhost:3000/d.png"><img src="https://cdn.example.com/e.jpg">'
         p = em.run_checks(good(html=h), links=False)
         self.assertIn(".webp", msgs(p, "error"))
-        self.assertIn("staging.mlmediahub.com", msgs(p, "error"))
+        self.assertIn("staging.example.net", msgs(p, "error"))
         self.assertIn("localhost", msgs(p, "error"))
         self.assertIn("cdn.example.com", msgs(p, "warn"))
         self.assertNotIn("cdn.example.com", msgs(p, "error"))
@@ -128,7 +137,7 @@ class Checks(Base):
         self.assertIn("list or segment", msgs(em.run_checks(good(list_id=None), links=False), "error"))
 
     def test_links_skip_and_fail(self):
-        self.assertEqual(em.link_urls(GOOD_HTML), ["https://www.masterliveaboards.com/"])
+        self.assertEqual(em.link_urls(GOOD_HTML), ["https://www.demobrand.com/"])
         h = GOOD_HTML + '<a href="https://bad.example.com/x">x</a><a href="#top">t</a><a href="https://x.com/?e={{email}}">m</a>'
         fetch = lambda u: (404, "Not Found") if "bad." in u else (200, "")
         p = em.run_checks(good(html=h), fetch=fetch)
@@ -236,13 +245,13 @@ class Drafts(Base):
         with self.assertRaises(ValueError):
             em.add_draft({"campaign_id": "", "fields": {"subject": "x"}})
 
-    def test_merged_view_and_save_to_mls(self):
+    def test_merged_view_and_save_to_platform(self):
         em.add_draft({"campaign_id": "demo-4", "fields": {"subject": "From the draft"}})
         g = em.g_campaign({"id": "demo-4"})
         self.assertEqual(g["campaign"]["subject"], "From the draft")
         self.assertNotEqual(g["original"]["subject"], "From the draft")
         self.assertEqual([r["id"] for r in em.g_campaigns({})["campaigns"] if r["draft"]], ["demo-4"])
-        em.p_save_to_mls({"id": "demo-4"})
+        em.p_save_to_platform({"id": "demo-4"})
         self.assertEqual(em.FakeAdapter().get_campaign("demo-4")["subject"], "From the draft")
         self.assertEqual(em.list_drafts(), [])
 
@@ -293,31 +302,31 @@ class Settings(Base):
     def test_connect_keeps_other_keys_and_hides_token(self):
         em.SECRETS.parent.mkdir(parents=True)
         em.SECRETS.write_text("WP_APP_PASSWORD=abc\n")
-        r = em.p_connect({"token": "mls_abcdefghijkl", "base_url": "http://127.0.0.1:9/"})
-        self.assertNotIn("mls_abcdefghijkl", json.dumps(r))
+        r = em.p_connect({"token": "tok_abcdefghijkl", "api_url": "http://127.0.0.1:9/api"})
+        self.assertNotIn("tok_abcdefghijkl", json.dumps(r))
         self.assertTrue(r["token_set"])
         txt = em.SECRETS.read_text()
         self.assertIn("WP_APP_PASSWORD=abc", txt)
-        self.assertIn("MLSUITE_STUDIO_TOKEN=mls_abcdefghijkl", txt)
+        self.assertIn("EMAIL_API_TOKEN=tok_abcdefghijkl", txt)
         self.assertEqual(stat.S_IMODE(os.stat(em.SECRETS).st_mode), 0o600)
         self.assertIsInstance(em.adapter(), em.FakeAdapter)  # the Studio API token does not answer (nothing on port 9)
         self.assertIn("did not answer", em.g_state({})["api_note"])
-        self.assertNotIn("mls_abcdefghijkl", json.dumps(em.g_state({}), default=str))
+        self.assertNotIn("tok_abcdefghijkl", json.dumps(em.g_state({}), default=str))
         em.p_connect({"disconnect": True})
-        self.assertNotIn("MLSUITE_STUDIO_TOKEN", em.SECRETS.read_text())
+        self.assertNotIn("EMAIL_API_TOKEN", em.SECRETS.read_text())
         self.assertIsInstance(em.adapter(), em.FakeAdapter)
 
     def test_connect_validation(self):
         with self.assertRaises(ValueError):
-            em.p_connect({"token": "nope"})
+            em.p_connect({"token": "no pe"})
         with self.assertRaises(ValueError):
-            em.p_connect({"base_url": "mlsuite.app"})
+            em.p_connect({"api_url": "mail.example.com"})
 
     def test_real_adapter_error_has_no_token(self):
-        a = em.StudioApiAdapter("http://127.0.0.1:9", "mls_secret_token_123", timeout=1)
+        a = em.EmailApiAdapter("http://127.0.0.1:9", "tok_secret_token_123", timeout=1)
         with self.assertRaises(em.AdapterError) as cm:
             a.list_campaigns(limit=1)
-        self.assertNotIn("mls_secret", str(cm.exception))
+        self.assertNotIn("tok_secret", str(cm.exception))
 
 
 class Helpers(Base):
@@ -354,19 +363,19 @@ class Helpers(Base):
         r = g["campaigns"][0]
         self.assertEqual(r["open_rate"], round(100 * 6880 / 18102, 1))
         self.assertEqual(g["counts"]["all"], 5)
-        self.assertEqual(len(em.g_campaigns({"search": "red sea"})["campaigns"]), 1)
+        self.assertEqual(len(em.g_campaigns({"search": "spring"})["campaigns"]), 1)
 
 
-# ---------------------------------------------------------------- a local fake of ML Suite's /api/mcp (route.ts + server.ts)
+# ---------------------------------------------------------------- a local fake of the platform's /api/mcp (route.ts + server.ts)
 import http.server  # noqa: E402
 import threading  # noqa: E402
 
-GOOD_TOKEN = "mls_faketoken_for_tests_only"
+GOOD_TOKEN = "tok_faketoken_for_tests_only"
 FAKE_HTML = GOOD_HTML
 
 
-class FakeMls:
-    """JSON-RPC 2.0 over POST, plain JSON replies, Bearer mls_ token, tools named with underscores on the wire.
+class FakePlatform:
+    """JSON-RPC 2.0 over POST, plain JSON replies, Bearer tok_ token, tools named with underscores on the wire.
     Some results smuggle in personal data (subscriber rows, a person's name, addresses) to prove Studio drops them."""
 
     def __init__(self, studio_api=False, port=0):
@@ -406,7 +415,7 @@ class FakeMls:
                 rid, m, params = body.get("id"), body.get("method"), body.get("params") or {}
                 if m == "initialize":
                     return self._json(200, {"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
-                                                                                     "serverInfo": {"name": "mlsuite", "version": "1.0.0"}}})
+                                                                                     "serverInfo": {"name": "demo-platform", "version": "1.0.0"}}})
                 if m == "tools/call":
                     name, args = params.get("name"), params.get("arguments") or {}
                     me.calls.append((name, args))
@@ -429,11 +438,11 @@ class FakeMls:
     CAMPAIGNS = [
         {"id": "c1", "name": "October newsletter", "subject": "Autumn trips", "status": "sent", "listId": "L1", "listName": "All subscribers",
          "segmentId": None, "segmentName": None, "scheduledFor": "2026-11-01T09:00:00.000Z", "sentAt": "2026-11-01T09:00:00.000Z",
-         "fromAddress": "dive@masterliveaboards.com", "fromName": "Master Liveaboards", "replyTo": "dive@masterliveaboards.com",
+         "fromAddress": "dive@demobrand.com", "fromName": "Demo Brand", "replyTo": "dive@demobrand.com",
          "createdBy": "u1", "createdByName": "Jane Staff", "sendError": "bounce for joe.bloggs@example.com", "updatedAt": "2026-11-01T09:00:00.000Z"},
         {"id": "c2", "name": "Asia draft", "subject": "Asia dates", "status": "draft", "listId": None, "listName": None, "segmentId": "S1",
-         "segmentName": "Asia interest", "scheduledFor": None, "sentAt": None, "fromAddress": "dive@masterliveaboards.com",
-         "fromName": "Master Liveaboards", "replyTo": "dive@masterliveaboards.com", "createdByName": "Jane Staff"},
+         "segmentName": "Asia interest", "scheduledFor": None, "sentAt": None, "fromAddress": "dive@demobrand.com",
+         "fromName": "Demo Brand", "replyTo": "dive@demobrand.com", "createdByName": "Jane Staff"},
     ]
 
     def tool(self, name, a):
@@ -467,12 +476,12 @@ class FakeMls:
 class Mcp(Base):
     def setUp(self):
         super().setUp()
-        self.mls = FakeMls()
+        self.plat = FakePlatform()
         em.SECRETS.parent.mkdir(parents=True, exist_ok=True)
-        em.p_connect({"base_url": self.mls.base, "mcp_token": GOOD_TOKEN})
+        em.p_connect({"mcp_url": self.plat.base + "/api/mcp", "mcp_token": GOOD_TOKEN})
 
     def tearDown(self):
-        self.mls.stop()
+        self.plat.stop()
         super().tearDown()
 
     def blob(self):
@@ -481,7 +490,7 @@ class Mcp(Base):
 
     def test_reads_through_mcp(self):
         st = em.g_state({})
-        self.assertEqual((st["source"], st["source_label"]), ("mcp", "Live data from ML Suite (read-only)"))
+        self.assertEqual((st["source"], st["source_label"]), ("mcp", "Live data through MCP (read-only)"))
         self.assertFalse(st["can"]["edit"])
         g = em.g_campaigns({})
         c1 = next(r for r in g["campaigns"] if r["id"] == "c1")
@@ -492,31 +501,31 @@ class Mcp(Base):
         self.assertEqual(em.g_audiences({}), {"lists": [{"id": "L1", "name": "All subscribers", "count": 1000}],
                                               "segments": [{"id": "S1", "name": "Asia interest", "count": 321}]})
         self.assertIn("{{unsubscribe_url}}", em.g_campaign({"id": "c1"})["campaign"]["html"])
-        self.assertIn("initialize", self.mls.methods)
+        self.assertIn("initialize", self.plat.methods)
 
     def test_personal_data_dropped(self):
         b = self.blob()
         for bad in ("gmail.com", "example.com", "Jane", '"subscribers"', "firstName", "definition", "createdBy", "abHtmlB"):
             self.assertNotIn(bad, b)
-        self.assertIn("dive@masterliveaboards.com", b)
+        self.assertIn("dive@demobrand.com", b)
 
     def test_cache(self):
         em.g_campaigns({})
-        n = len(self.mls.calls)
+        n = len(self.plat.calls)
         em.g_campaigns({})
-        self.assertEqual(len(self.mls.calls), n)
+        self.assertEqual(len(self.plat.calls), n)
         em.g_campaigns({"fresh": "1"})
-        self.assertGreater(len(self.mls.calls), n)
+        self.assertGreater(len(self.plat.calls), n)
 
     def test_wrong_token(self):
-        em.p_connect({"mcp_token": "mls_wrong_token_123456"})
+        em.p_connect({"mcp_token": "tok_wrong_token_123456"})
         with self.assertRaises(em.AdapterError) as cm:
             em.g_campaigns({})
         self.assertIn("401", str(cm.exception))
-        self.assertNotIn("mls_wrong", str(cm.exception))
+        self.assertNotIn("tok_wrong", str(cm.exception))
         r = em.p_test_connection({})
         self.assertFalse(r["mcp"]["ok"])
-        self.assertNotIn("mls_wrong", json.dumps(r))
+        self.assertNotIn("tok_wrong", json.dumps(r))
 
     def test_tool_error_is_reported(self):
         with self.assertRaises(em.AdapterError) as cm:
@@ -530,7 +539,7 @@ class Mcp(Base):
             em.p_new_campaign({"name": "Seg", "subject": "S", "segment_id": "S1", "confirm": em.CONFIRM})
         r = em.p_new_campaign({"name": "December", "subject": "December dates", "list_id": "L1", "confirm": em.CONFIRM})
         self.assertEqual(r["campaign"]["status"], "draft")
-        a = self.mls.created[-1]
+        a = self.plat.created[-1]
         self.assertEqual((a["fromAddress"], a["replyTo"], a["listId"]), (em.FROM_ADDRESS, em.FROM_ADDRESS, "L1"))
         self.assertIn("{{unsubscribe_url}}", a["html"])
 
@@ -543,34 +552,34 @@ class Mcp(Base):
                 self.assertEqual(r["message"], em.NEEDS_API)
         em.add_draft({"campaign_id": "c2", "fields": {"html": "<p>x</p>"}})
         with self.assertRaises(ValueError):
-            em.p_save_to_mls({"id": "c2"})
-        used = {n for n, _ in self.mls.calls}
+            em.p_save_to_platform({"id": "c2"})
+        used = {n for n, _ in self.plat.calls}
         self.assertTrue(used <= {"email_list_campaigns", "email_get_campaign", "email_campaign_stats", "email_list_lists",
                                  "email_list_segments", "email_segment_count", "email_overview"}, used)
 
     def test_preview_is_local(self):
         r = em.p_preview({"id": "c1"})
         self.assertIn("<mark", r["html"])
-        self.assertNotIn("email_compile_preview", {n for n, _ in self.mls.calls})
+        self.assertNotIn("email_compile_preview", {n for n, _ in self.plat.calls})
 
     def test_health_and_overview(self):
         h = em.health(dt.date.today())
         self.assertEqual([(x["check"], x["ok"]) for x in h], [("MCP (read)", True)])
         o = em.overview("30")
-        self.assertIn("Live data from ML Suite", o["note"])
+        self.assertIn("Live data through MCP", o["note"])
         self.assertEqual(o["tiles"][0]["v"], "1")
         self.assertEqual(em.g_overview_numbers({})["numbers"]["activeSubscribers"], 1000)
 
 
 class Choice(Base):
     def tearDown(self):
-        self.mls.stop()
+        self.plat.stop()
         super().tearDown()
 
     def test_studio_api_first_then_mcp_then_demo(self):
-        self.mls = FakeMls(studio_api=False)
+        self.plat = FakePlatform(studio_api=False)
         em.SECRETS.parent.mkdir(parents=True, exist_ok=True)
-        em.p_connect({"base_url": self.mls.base, "token": GOOD_TOKEN, "same_token": True})
+        em.p_connect({"api_url": self.plat.base + "/api/studio/email", "mcp_url": self.plat.base + "/api/mcp", "token": GOOD_TOKEN, "same_token": True})
         self.assertEqual(em.settings()["mcp_token"], GOOD_TOKEN)
         self.assertTrue(em.g_settings({})["same_token"])
         self.assertEqual(em.adapter().source, "mcp")  # Studio API not deployed (404 HTML)
@@ -579,8 +588,8 @@ class Choice(Base):
         self.assertTrue(r["mcp"]["ok"])
         self.assertEqual(r["active"], "mcp")
         h = em.health(dt.date.today())
-        self.assertEqual([(x["check"], x["ok"]) for x in h], [("Studio API", None), ("MCP (read)", True)])
-        self.mls.studio_api = True
+        self.assertEqual([(x["check"], x["ok"]) for x in h], [("Email API", None), ("MCP (read)", True)])
+        self.plat.studio_api = True
         em._probes.clear()
         self.assertEqual(em.adapter().source, "api")
         em.p_connect({"disconnect": True})

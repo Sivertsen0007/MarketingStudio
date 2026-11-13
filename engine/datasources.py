@@ -1,7 +1,7 @@
 """What Marketing Studio has fetched, and refreshing one source at a time (the header's Refresh menu, the per-area
 Refresh buttons, GET /api/data/status, POST /api/data/refresh and the MCP tools data_status / refresh_data).
 
-Refreshing only reads: Google Ads (GAQL search), Meta (Graph GET), ML Suite (Email reads), Search Console, GA4,
+Refreshing only reads: Google Ads (GAQL search), Meta (Graph GET), the email platform (Email reads), Search Console, GA4,
 WordPress (public/REST GET), Frankfurter rates. Nothing is pushed, sent, scheduled or published from here.
 
 Sources:  google (account: ml, mluk or a customer id; none = every Google account)

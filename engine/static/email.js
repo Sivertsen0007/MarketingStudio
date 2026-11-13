@@ -1,4 +1,4 @@
-// Email area: ML Suite email campaigns. Grid, editor with live preview, checks, and the user's own buttons
+// Email area: campaigns from your email platform (Email API or MCP). Grid, editor with live preview, checks, and the user's own buttons
 // (Send test, Schedule, Send now, Cancel schedule). Claude never presses these; there is no MCP tool for them.
 (() => {
 const A = (k, q) => "/api/area/email/" + k + (q ? "?" + qs(q) : "");
@@ -99,11 +99,12 @@ const FILTERS = [["all", "All"], ["draft", "Drafts"], ["scheduled", "Scheduled"]
 function banner(){
   const s = E.state || {};
   const note = s.api_note ? `<span class="em-note">${esc(s.api_note)}</span>` : "";
-  if (s.source === "mcp") return `<div class="em-banner info" id="emBanner"><b>${esc(s.source_label)}</b><span>Reads through the ML Suite MCP. You can create new drafts; changing HTML, tests, scheduling and sending need the Studio API.</span>${note}<span class="em-spacer"></span><button class="link" data-em="connect">Connection</button></div>`;
-  if (s.source === "api") return `<div class="em-banner ok" id="emBanner"><b>${esc(s.source_label)}</b><span>${esc(s.base_url)}</span><span class="em-spacer"></span><button class="link" data-em="connect">Connection</button></div>`;
-  return `<div class="em-banner" id="emBanner"><b>Demo data: not connected to ML Suite.</b><span>Nothing here is real, and nothing is sent.</span>${note}<span class="em-spacer"></span><button class="link" data-em="connect">Connect</button></div>`;
+  if (s.source === "mcp") return `<div class="em-banner info" id="emBanner"><b>${esc(s.source_label)}</b><span>Reads through the MCP. You can create new drafts; changing HTML, tests, scheduling and sending need the Email API.</span>${note}<span class="em-spacer"></span><button class="link" data-em="connect">Connection</button></div>`;
+  if (s.source === "api") return `<div class="em-banner ok" id="emBanner"><b>${esc(s.source_label)}</b><span>${esc(s.platform || "")}</span><span class="em-spacer"></span><button class="link" data-em="connect">Connection</button></div>`;
+  return `<div class="em-banner" id="emBanner"><b>Demo data: no email platform connected.</b><span>Nothing here is real, and nothing is sent.</span>${note}<span class="em-spacer"></span><button class="link" data-em="connect">Connect</button></div>`;
 }
 const can = k => !!(E.state && E.state.can && E.state.can[k]);
+const PN = () => (E.state && E.state.platform) || "your email platform";
 const needAttr = k => can(k) ? "" : `disabled title="${esc((E.state || {}).needs_api || "")}"`;
 
 // ---- campaigns list ----
@@ -154,7 +155,7 @@ function onClick(e){
   if (row && !E.cur) return openEditor(row.dataset.emid);
   if (!b) return;
   const act = {connect:connectDialog, refresh:async () => { await dataRefresh("email", null, {reload:false}); loadGrid() }, newdraft:createFromEditor, new:newDialog, back:goBack, check:runChecks, save:() => saveDraft(false), discard:discardDraft,
-               mls:saveToMls, file:saveHtmlDialog, test:testDialog, schedule:scheduleDialog, now:sendNowDialog, cancel:cancelDialog, prev:() => preview(true)}[b.dataset.em];
+               platform:saveToPlatform, file:saveHtmlDialog, test:testDialog, schedule:scheduleDialog, now:sendNowDialog, cancel:cancelDialog, prev:() => preview(true)}[b.dataset.em];
   if (act) act();
 }
 
@@ -184,14 +185,14 @@ function drawEditor(){
     <div class="toolbar em-etb">
       <button data-em="back">Back to campaigns</button>
       <span class="t" title="${esc(c.name)}">${esc(c.name)}</span>${statusPill(o.status)}
-      <span id="emDraftChip">${d ? `<span class="chip draft" title="Edits saved in Studio, not yet in ML Suite (by ${esc(d.by)})">Studio draft</span>` : ""}</span>
+      <span id="emDraftChip">${d ? `<span class="chip draft" title="Edits saved in Studio, not yet on ${esc(PN())} (by ${esc(d.by)})">Studio draft</span>` : ""}</span>
       <span class="em-spacer"></span>
       <button data-em="check" title="Run every check, links included">Check</button>
       ${editable ? `<span id="emAuto" class="hint" title="Edits are kept as a Studio draft on their own, about a second after you stop typing">Edits save on their own</span>
-      ${d ? `<button data-em="discard" class="danger" title="Throw away the Studio draft and go back to what ML Suite holds">Discard draft</button>` : ""}
-      ${can("edit") ? `<button data-em="mls" class="primary" title="Write the Studio draft into ML Suite (drafts only)" ${d ? "" : "disabled"}>Save to ML Suite</button>`
-        : `<button data-em="mls" class="primary" ${needAttr("edit")}>Save to ML Suite</button>`}` : ""}
-      ${!can("edit") && can("create") ? `<button data-em="newdraft" title="Create a NEW draft in ML Suite with this subject, list and HTML. Nothing is sent.">Create draft in ML Suite</button>` : ""}
+      ${d ? `<button data-em="discard" class="danger" title="Throw away the Studio draft and go back to what ${esc(PN())} holds">Discard draft</button>` : ""}
+      ${can("edit") ? `<button data-em="platform" class="primary" title="Write the Studio draft to ${esc(PN())} (drafts only)" ${d ? "" : "disabled"}>Save to platform</button>`
+        : `<button data-em="platform" class="primary" ${needAttr("edit")}>Save to platform</button>`}` : ""}
+      ${!can("edit") && can("create") ? `<button data-em="newdraft" title="Create a NEW draft on ${esc(PN())} with this subject, list and HTML. Nothing is sent.">Create draft on platform</button>` : ""}
       <button data-em="file" title="Write the HTML to the campaign folder in AI-Hub">Save HTML to folder</button>
       <span class="sep"></span>
       ${editable ? (can("test") ? `<button data-em="test" title="Always to ${esc(E.state.test_address)}">Send test</button>` : `<button data-em="test" ${needAttr("test")}>Send test</button>`)
@@ -199,7 +200,7 @@ function drawEditor(){
           : `<button data-em="schedule" ${needAttr("schedule")}>Schedule</button><button data-em="now" class="live" ${needAttr("schedule")}>Send now</button>`) : ""}
       ${o.status === "scheduled" ? `<button data-em="cancel" class="danger" ${needAttr("schedule")}>Cancel schedule</button>` : ""}
     </div>
-    ${can("edit") ? "" : `<div class="em-need">${esc(E.state.needs_api)}: Save to ML Suite, Send test, Schedule, Send now and Cancel schedule. Your edits stay as a Studio draft, and Create draft in ML Suite makes a new draft from them.</div>`}
+    ${can("edit") ? "" : `<div class="em-need">${esc(E.state.needs_api)}: Save to platform, Send test, Schedule, Send now and Cancel schedule. Your edits stay as a Studio draft, and Create draft on platform makes a new draft from them.</div>`}
     ${editable ? "" : `<div class="em-ro">${o.status === "scheduled" ? `Scheduled for ${esc(fmtDate(o.scheduled_for, true))} (London). Cancel the schedule to edit it again.` : o.status === "sent" ? `Sent ${esc(fmtDate(o.sent_at, true))}. A sent email can't be changed or unsent.` : `This campaign is ${esc(o.status)}. Only drafts can be changed.`}</div>`}
     <div class="em-ed">
       <div class="em-left">
@@ -208,8 +209,8 @@ function drawEditor(){
           <div class="row" data-f="subject"><label>Subject <span class="em-cnt" id="emSubjN"></span></label><input id="em_subject" value="${esc(c.subject)}" ${ro}></div>
           <div class="row" data-f="preview_text"><label>Preview text</label><input id="em_preview_text" value="${esc(c.preview_text)}" ${ro}></div>
           <div class="row" data-f="from_name"><label>From name</label><input id="em_from_name" value="${esc(c.from_name)}" ${ro}></div>
-          <div class="row"><label>From</label><input value="${esc(E.state.from_address)}" readonly title="Fixed: always ${esc(E.state.from_address)}"></div>
-          <div class="row"><label>Reply-to</label><input value="${esc(E.state.from_address)}" readonly title="Fixed: always ${esc(E.state.from_address)}"></div>
+          <div class="row"><label>From</label><input value="${esc(E.state.from_address || c.from_address || "")}" readonly title="${E.state.from_address ? "Fixed in Setup: always " + esc(E.state.from_address) : "Set by the platform"}"></div>
+          <div class="row"><label>Reply-to</label><input value="${esc(E.state.from_address || c.reply_to || "")}" readonly title="${E.state.from_address ? "Fixed in Setup: always " + esc(E.state.from_address) : "Set by the platform"}"></div>
           <div class="row" data-f="aud"><label>Send to</label><select id="em_aud" ${editable ? "" : "disabled"}>${audOptions(audValue(c))}</select></div>
           ${c.scheduled_for ? `<div class="row"><label>Scheduled for</label><span>${esc(fmtDate(c.scheduled_for, true))} (London)</span></div>` : ""}
         </div>
@@ -234,7 +235,7 @@ function formValues(){
   const a = $("#em_aud").value; v.list_id = a.startsWith("l:") ? a.slice(2) : null; v.segment_id = a.startsWith("s:") ? a.slice(2) : null;
   return v;
 }
-// fields that differ from what ML Suite holds
+// fields that differ from what the platform holds
 function diffFromOriginal(){
   const v = formValues(), o = E.cur.original, out = {};
   for (const f of [...FIELDS, "html"]) if ((v[f] || "") !== (o[f] || "")) out[f] = v[f];
@@ -299,9 +300,9 @@ function autoSave(){
       cur.draft = has ? {...(cur.draft || {}), fields, by:"you"} : null;
       cur.campaign = {...cur.campaign, ...vals};
       if (E.cur === cur){
-        autoTxt(has ? "Saved as Studio draft" : "Same as ML Suite");
-        const chip = document.getElementById("emDraftChip"); if (chip) chip.innerHTML = has ? `<span class="chip draft" title="Edits saved in Studio, not yet in ML Suite (by you)">Studio draft</span>` : "";
-        const m = document.querySelector('[data-em="mls"]'); if (m && can("edit")) m.disabled = !has;
+        autoTxt(has ? "Saved as Studio draft" : "Same as " + PN());
+        const chip = document.getElementById("emDraftChip"); if (chip) chip.innerHTML = has ? `<span class="chip draft" title="Edits saved in Studio, not yet on ${esc(PN())} (by you)">Studio draft</span>` : "";
+        const m = document.querySelector('[data-em="platform"]'); if (m && can("edit")) m.disabled = !has;
       }
       return true;
     } catch(e) { autoTxt("Not saved: " + e.message); toast(e.message); return false }
@@ -313,17 +314,17 @@ async function saveDraft(quiet){
   const fields = diffFromOriginal();
   try {
     await api(A("save_draft"), {id:E.cur.original.id, fields, replace:true});
-    if (!quiet) toast(Object.keys(fields).length ? "Saved as a draft in Studio. Press Save to ML Suite when it is ready." : "Same as ML Suite: no draft kept.");
+    if (!quiet) toast(Object.keys(fields).length ? "Saved as a draft in Studio. Press Save to platform when it is ready." : "Same as " + PN() + ": no draft kept.");
     await reloadCurrent(); return true;
   } catch(e) { toast(e.message); return false }
 }
 async function discardDraft(){
   try { await api(A("discard_draft"), {id:E.cur.original.id}); toast("Studio draft discarded"); reloadCurrent() } catch(e) { toast(e.message) }
 }
-async function saveToMls(){
+async function saveToPlatform(){
   if (E.autoT) await autoSave();
   if (isDirty() && !(await saveDraft(true))) return;
-  try { const r = await api(A("save_to_mls"), {id:E.cur.original.id}); toast(r.demo ? "Saved to the demo campaign (not ML Suite)." : "Saved to ML Suite as a draft."); reloadCurrent() }
+  try { const r = await api(A("save_to_platform"), {id:E.cur.original.id}); toast(r.demo ? "Saved to the demo campaign." : "Saved to " + PN() + " as a draft."); reloadCurrent() }
   catch(e) { toast(e.message) }
 }
 async function goBack(){
@@ -348,21 +349,21 @@ async function saveHtmlDialog(){
 }
 async function connectDialog(){
   let s = {}; try { s = await api(A("settings")) } catch(e) {}
-  const ph = set => set ? "Saved (hidden). Paste a new one to replace it" : "mls_...";
+  const ph = set => set ? "Saved (hidden). Paste a new one to replace it" : "";
   const any = s.token_set || s.mcp_token_set;
-  showDialog("Connect to ML Suite", `<p class="hint">Tokens are saved in ${esc(s.secrets_file)} (only you can read it) and never shown again. See the README for how to make them.</p>
-    <div class="row"><label>Base URL</label><input id="emBase" value="${esc(s.base_url || "https://mlsuite.app")}"></div>
+  showDialog("Connect your email platform", `<p class="hint">Connect through the <b>Email API</b> (full: edit, test, schedule, send) and/or an <b>MCP server</b> (read, plus new drafts). Tokens go into the macOS Keychain and are never shown again. The README describes both.</p>
+    <div class="row"><label>Platform name</label><input id="emName" value="${esc(s.name && s.name !== "your email platform" ? s.name : "")}" placeholder="Shown in buttons, e.g. Acme Mail"></div>
+    <div class="row"><label>Email API URL</label><input id="emApiUrl" value="${esc(s.api_url || "")}" placeholder="https://mail.example.com/api/studio/email"></div>
+    <div class="row"><label>Email API token</label><input id="emTok" type="password" autocomplete="off" placeholder="${ph(s.token_set)}"></div>
+    <div class="row"><label>MCP URL</label><input id="emMcpUrl" value="${esc(s.mcp_url || "")}" placeholder="https://mail.example.com/api/mcp"></div>
     <div class="row"><label>MCP token</label><input id="emMcpTok" type="password" autocomplete="off" placeholder="${ph(s.mcp_token_set)}"></div>
-    <p class="hint" style="margin-top:-4px">From ML Suite > Settings > MCP, with the Email app ticked. Read-only is fine: Studio then reads campaigns, stats and list counts.</p>
-    <div class="row"><label>Studio API token</label><input id="emTok" type="password" autocomplete="off" placeholder="${ph(s.token_set)}"></div>
-    <p class="hint" style="margin-top:-4px">Only works once the Studio API is deployed in ML Suite. Needed for HTML changes, tests, scheduling and sending.</p>
     <label style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input type="checkbox" id="emSame" ${s.same_token ? "checked" : ""}> Use the same token for both</label>
-    <p class="hint" id="emConnMsg">${any ? `Saved: ${[s.mcp_token_set && "MCP token", s.token_set && "Studio API token"].filter(Boolean).join(" and ")}.` : "No token yet: the Email area shows demo data."}</p>`,
+    <p class="hint" id="emConnMsg">${any ? `Saved: ${[s.token_set && "Email API token", s.mcp_token_set && "MCP token"].filter(Boolean).join(" and ")}.` : "Nothing connected yet: the Email area shows demo data."}</p>`,
     [...(any ? [["Disconnect", async () => { try { await api(A("connect"), {disconnect:true}); dlg.close(); toast("Disconnected: showing demo data"); E.aud = null; renderList() } catch(e) { toast(e.message) } }, "danger"]] : []),
      ["Test connection", async () => { $("#emConnMsg").textContent = "Testing ..."; try { const r = await api(A("test_connection"), {}); $("#emConnMsg").textContent = r.message } catch(e) { $("#emConnMsg").textContent = e.message } }],
      ["Save", async () => {
        try {
-         await api(A("connect"), {base_url:$("#emBase").value, token:$("#emTok").value, mcp_token:$("#emMcpTok").value, same_token:$("#emSame").checked});
+         await api(A("connect"), {name:$("#emName").value, api_url:$("#emApiUrl").value, token:$("#emTok").value, mcp_url:$("#emMcpUrl").value, mcp_token:$("#emMcpTok").value, same_token:$("#emSame").checked});
          $("#emTok").value = ""; $("#emMcpTok").value = "";
          $("#emConnMsg").textContent = "Saved. Testing ...";
          const r = await api(A("test_connection"), {}); dlg.close(); toast(r.message); E.aud = null; renderList();
@@ -375,12 +376,12 @@ function listOnlyOptions(sel){
 }
 async function createDraft(fields){
   const r = await api(A("new_campaign"), {...fields, confirm:USER});
-  dlg.close(); toast(E.state.demo ? "Draft created in the demo data" : "Draft created in ML Suite. Nothing was sent."); openEditor(r.campaign.id);
+  dlg.close(); toast(E.state.demo ? "Draft created in the demo data" : "Draft created on " + PN() + ". Nothing was sent."); openEditor(r.campaign.id);
 }
 async function newDialog(){
   try { if (!E.aud) E.aud = await api(A("audiences")) } catch(e) {}
   const segOk = can("segments_on_create");
-  showDialog("New campaign", `<p class="hint">Creates a draft${E.state && E.state.demo ? " in the demo data" : " in ML Suite"}. Nothing is sent. From and reply-to are always ${esc(E.state.from_address)}.${segOk ? "" : " Through the MCP a new draft can only go to a list; set a segment in ML Suite."}</p>
+  showDialog("New campaign", `<p class="hint">Creates a draft${E.state && E.state.demo ? " in the demo data" : " on " + esc(PN())}. Nothing is sent.${E.state.from_address ? " From and reply-to are always " + esc(E.state.from_address) + "." : ""}${segOk ? "" : " Through the MCP a new draft can only go to a list; set a segment on the platform."}</p>
     <div class="row"><label>Name</label><input id="emNewName" placeholder="December newsletter"></div>
     <div class="row"><label>Subject</label><input id="emNewSubj"></div>
     <div class="row"><label>Send to</label><select id="emNewAud">${segOk ? audOptions("") : listOnlyOptions("")}</select></div>`,
@@ -394,7 +395,7 @@ async function newDialog(){
 // MCP mode: the edits can't be written into the existing campaign, so make a new draft from them (the user's button)
 async function createFromEditor(){
   const v = formValues(), aud = $("#em_aud").value;
-  showDialog("Create draft in ML Suite", `<p>Creates a <b>new draft</b> in ML Suite from what is in the editor: subject, HTML and list. The original campaign is not changed, and nothing is sent.</p>
+  showDialog("Create draft on platform", `<p>Creates a <b>new draft</b> on ${esc(PN())} from what is in the editor: subject, HTML and list. The original campaign is not changed, and nothing is sent.</p>
     <div class="row"><label>Name</label><input id="emCopyName" value="${esc(v.name + " (from Studio)")}"></div>
     <div class="row"><label>Send to</label><select id="emCopyAud">${listOnlyOptions(aud.startsWith("l:") ? aud : "")}</select></div>
     <p class="hint">Checks run first (links are not checked here). Through the MCP a new draft can only go to a list.</p>`,
@@ -423,7 +424,7 @@ async function runAction(title, key, extra){
 async function testDialog(){
   if (!(await beforeAction())) return;
   showDialog("Send a test", `<p>Sends one test email <b>to ${esc(E.state.test_address)}</b>. Tests never go anywhere else.</p>
-    <p class="hint">Checks run first. ${E.cur.draft ? "Your Studio draft is saved to ML Suite first, so the test shows your edits." : ""}${E.state.demo ? " Demo data: nothing is really sent." : ""}</p>`,
+    <p class="hint">Checks run first. ${E.cur.draft ? "Your Studio draft is saved to " + esc(PN()) + " first, so the test shows your edits." : ""}${E.state.demo ? " Demo data: nothing is really sent." : ""}</p>`,
     [["Send test", () => runAction("Send test", "test_send"), "primary"]]);
 }
 function defaultWhen(){

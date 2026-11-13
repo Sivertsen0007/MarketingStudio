@@ -158,10 +158,10 @@ def email_rows(start, end, adapter=None):
         n = (c.get("stats") or {}).get("sent")
         aud = c.get("segment_name") or c.get("list_name") or ""
         out.append({"id": f"e:{'demo:' if demo else ''}{c.get('id')}", "ts": per.iso(per.parse(sent)), "channel": "email",
-                    "account": "ML Suite" + (" (demo data)" if demo else ""), "account_id": "mls", "type": "Campaign sent",
+                    "account": "Email platform" + (" (demo data)" if demo else ""), "account_id": "email", "type": "Campaign sent",
                     "object_type": "Email campaign", "object": c.get("name") or c.get("subject") or str(c.get("id")),
                     "where": aud, "old": "", "new": f"{n:,} emails" if isinstance(n, int) else "", "fields": "",
-                    "by": "Demo data" if demo else "ML Suite", "by_kind": "demo" if demo else "mls", "who": "",
+                    "by": "Demo data" if demo else "Email platform", "by_kind": "demo" if demo else "email", "who": "",
                     "link": c.get("url") or "", "source": "Email area" + (" (demo)" if demo else ""), "count": not demo, "demo": demo})
     return out, demo
 

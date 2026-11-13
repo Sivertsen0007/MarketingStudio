@@ -345,7 +345,7 @@ def _load_raw(src, p, force=False):
         return _archive_source(src, p, force)
     if src == "email":
         rows, demo = loc.email_rows(p["prev_start"], p["end"])
-        note = "Demo data: the Email area is not connected to ML Suite. Demo campaigns are shown but never counted." if demo else ""
+        note = "Demo data: no email platform is connected. Demo campaigns are shown but never counted." if demo else ""
         return {"status": "demo" if demo else "ok", "rows": rows, "note": note}
     if src == "studio":
         return {"status": "ok", "rows": loc.studio_rows(_studio_dir(), p["prev_start"], p["end"], _names()),

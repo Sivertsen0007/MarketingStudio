@@ -77,16 +77,16 @@ TOOLS = [
 LIMIT = {"type": "integer", "description": "default 200"}
 DAYS = {"type": "integer", "enum": [7, 14, 28, 30, 90], "description": "period in days (default 28; Search Console data ends 2 days ago)"}
 AREA_TOOLS = [
-    # Email (ML Suite campaigns). Drafts stay in Studio until the user presses Save to ML Suite; sending is the user's button.
-    {"name": "email_list_campaigns", "description": "ML Suite email campaigns (demo data if Studio isn't connected): name, subject, audience, status, stats, and whether a Studio draft exists.",
+    # Email (the connected email platform). Drafts stay in Studio until the user presses Save to platform; sending is the user's button.
+    {"name": "email_list_campaigns", "description": "Email campaigns from the connected email platform (demo data if none is connected): name, subject, audience, status, stats, and whether a Studio draft exists.",
      "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "description": "draft, scheduled, sending, sent, cancelled, failed or all"},
                                                       "search": {"type": "string"}, "limit": LIMIT}}},
-    {"name": "email_get_campaign", "description": "One email campaign: the ML Suite original, the Studio draft (if any) and the merged view.",
+    {"name": "email_get_campaign", "description": "One email campaign: the platform's original, the Studio draft (if any) and the merged view.",
      "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
-    {"name": "email_list_drafts", "description": "Studio email drafts (edits not yet saved to ML Suite).",
+    {"name": "email_list_drafts", "description": "Studio email drafts (edits not yet saved to the email platform).",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "email_add_draft",
-     "description": "Draft edits to one email campaign in Studio. Never touches ML Suite and never sends. Fields: subject, preview_text, html "
+     "description": "Draft edits to one email campaign in Studio. Never touches the email platform and never sends. Fields: subject, preview_text, html "
                     "(raw HTML), from_name, list_id, segment_id, name, text. From and reply-to are fixed (dive@). The user reviews, saves and sends.",
      "inputSchema": {"type": "object", "properties": {"campaign_id": {"type": "string"}, "fields": {"type": "object"},
                                                       "note": {"type": "string", "description": "why - shown to the user"}},
@@ -144,12 +144,12 @@ DATA_TOOLS = [
          "days": {"type": "integer", "description": "stats window to fetch with Google (default 7)"}}, "required": ["source"]}},
 ]
 SETUP_TOOLS = [
-    {"name": "setup_status", "description": "Which keys Marketing Studio has (Meta, Google Ads, Google sign-in, ML Suite, WordPress, LinkedIn): set or not set per key. Never returns a value.",
+    {"name": "setup_status", "description": "Which keys Marketing Studio has (Meta, Google Ads, Google sign-in, Email, WordPress, LinkedIn): set or not set per key. Never returns a value.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "setup_import_env_file",
      "description": "Load Marketing Studio's keys from a .env file on this Mac (KEY=value lines, e.g. META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, "
                     "GADS_DEVELOPER_TOKEN, GADS_LOGIN_CUSTOMER_ID, GADS_OPERATING_CUSTOMER_ID, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, "
-                    "GOOGLE_REFRESH_TOKEN, GOOGLE_SERVICE_ACCOUNT_FILE=<path to a service-account json>, MLSUITE_*, WP_STUDIO_*, LINKEDIN_*). "
+                    "GOOGLE_REFRESH_TOKEN, GOOGLE_SERVICE_ACCOUNT_FILE=<path to a service-account json>, EMAIL_*, WP_STUDIO_*, LINKEDIN_*). "
                     "Secrets go into the macOS Keychain. Returns only which keys were imported and which lines were ignored, never values. "
                     "Only run this when the user asks to set Studio up from a file.",
      "inputSchema": {"type": "object", "properties": {"path": {"type": "string", "description": "absolute path to the .env file"}}, "required": ["path"]}},
@@ -312,7 +312,7 @@ def handle(msg):
         return {"protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL), "capabilities": {"tools": {}},
                 "serverInfo": {"name": "marketing-studio", "version": "1.2"},
                 "instructions": "Marketing Studio (localhost:4830), four areas: Ads (Google Ads Editor data, the Meta ad account and a "
-                                "shared draft per account), Email (ML Suite campaigns), SEO (WordPress posts + Search Console) and SoMe "
+                                "shared draft per account), Email (campaigns on the connected email platform), SEO (WordPress posts + Search Console) and SoMe "
                                 "(organic Facebook, Instagram, LinkedIn posts). Drafts only: you read and add to drafts the user reviews "
                                 "in Studio. Never send to Editor without the user's explicit go. Live actions (push live, send, schedule, "
                                 "publish, post, delete, undo) are only ever the user's own buttons in Studio; there are no tools for them."}

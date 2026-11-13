@@ -25,7 +25,7 @@
 |---|---|
 | **Start** | [What it is](#what-it-is) · [Install](#install) · [First run: Setup](#first-run-setup) · [Updates](#updates) |
 | **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Keyboard](#keyboard) |
-| **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email (ML Suite)](#email-ml-suite) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
+| **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email platform](#email-platform) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
 | **Developers** | [Run from source](#run-from-source) · [Tests](#tests) · [Build the app](#build-the-app) · [Release](#release) · [Repository layout](#repository-layout) · [Troubleshooting](#troubleshooting) · [License](#license) |
@@ -80,7 +80,7 @@ Fill in only what you use. Each block shows a green dot once it has keys.
 | **Meta** | Access token, ad account id, Page id |
 | **Google Ads** | Developer token, manager account (MCC) id, default account id |
 | **Google sign-in** | The OAuth client id and secret used by *Sign in with Google* |
-| **ML Suite (Email)** | URL, Studio API token, MCP token, your test address |
+| **Email** | Your email platform: Email API URL + token and/or MCP URL + token, sender, test address, timezone |
 | **WordPress (SEO)** | User and application password, for publishing SEO edits |
 | **LinkedIn** | Access token and organisation URN (optional) |
 | **Advanced** | Folder for *Save HTML to folder*, and an optional R2 image library for uploading SoMe media |
@@ -224,22 +224,40 @@ Currencies are never added together. Set a **display currency** in Settings to s
 
 ## Email
 
-The Email area works with **ML Suite** email campaigns. Without a connection it shows demo data and sends nothing.
+The Email area works with **your email platform**, through the [Email API](#email-api-contract) or the platform's
+[MCP server](#mcp-contract). Without a connection it shows demo data and sends nothing.
 
 ![Email campaigns](docs/screenshots/email-campaigns.png)
 
 - The list: name, status, list or segment, audience, schedule, sent, opens, clicks, bounces, unsubscribes, rates.
 - Open a draft to edit name, subject, preview text, from name, audience and the HTML. The preview updates as you type
   (desktop and mobile), and your edits are kept as a Studio draft on their own.
-- **Check** runs every check: subject length, links (each one is fetched), merge tags, images.
-- Then your own buttons: **Save to ML Suite**, **Send test** (to your test address), **Schedule**, **Send now**, **Cancel schedule**.
+- **Check** runs every check: subject length, links (each one is fetched), merge tags, images, the sender, and your own copy rules.
+- Then your own buttons: **Save to platform**, **Send test** (to your test address), **Schedule**, **Send now**, **Cancel schedule**.
 - **Save HTML to folder** writes the HTML to the folder set in Setup > Advanced.
 
 ![Email editor](docs/screenshots/email-editor.png)
 
-Studio only reads counts and list or segment names, never subscriber rows or addresses.
+| Connected through | What you can do |
+|---|---|
+| **Email API** | Everything: read, edit, save, test, schedule, send, cancel |
+| **MCP** | Read campaigns, stats and audiences, and create new drafts |
+| Nothing | Demo data, nothing is sent |
 
----
+When both are set up, Studio uses the Email API and falls back to the MCP if the API does not answer.
+
+**Your own copy rules.** Put a file `email_copy_rules.json` in Studio's data folder
+(`~/Library/Application Support/MarketingStudio/data/`) and Check flags them in subjects, preview texts and the visible text:
+
+```json
+[
+  {"level": "error", "pattern": "\\bguaranteed?\\b", "message": "No promises (\"guaranteed\")."},
+  {"level": "warn",  "pattern": "\\bcheap\\b",       "message": "Say \"great value\", not \"cheap\"."}
+]
+```
+
+Studio only reads counts and list or segment names, never subscriber rows or addresses. Any address that is not on your own
+domains is removed before it is shown or cached.
 
 ## SEO
 
@@ -342,10 +360,63 @@ Your team can share one OAuth client; each person signs in with their own Google
 (`GOOGLE_SERVICE_ACCOUNT_FILE` in a .env import) also works for Google Ads. When both exist, Ads uses the service account and
 Search Console / GA4 use the sign-in.
 
-### Email (ML Suite)
+### Email platform
 
-`MLSUITE_STUDIO_URL`, `MLSUITE_STUDIO_TOKEN` (the Studio API, for saving and sending), `MLSUITE_MCP_TOKEN` (read access),
-`STUDIO_TEST_EMAIL` (where *Send test* goes). Without them the Email area runs on demo data.
+| Key | What |
+|---|---|
+| `EMAIL_PLATFORM_NAME` | Your platform's name, shown in buttons (*Save to ...*). Optional |
+| `EMAIL_API_URL`, `EMAIL_API_TOKEN` | The platform's [Email API](#email-api-contract) and its bearer token: full access |
+| `EMAIL_MCP_URL`, `EMAIL_MCP_TOKEN` | The platform's [MCP server](#mcp-contract) over HTTP and its bearer token: read access + new drafts |
+| `EMAIL_FROM_ADDRESS` | Optional: every campaign must use this From and Reply-to (a check). Empty = the platform decides |
+| `EMAIL_OWN_DOMAINS` | Optional, comma separated: domains whose addresses may be shown (the From domain is always one) |
+| `STUDIO_TEST_EMAIL` | Where *Send test* goes |
+| `EMAIL_TIMEZONE` | Send timezone, IANA name (default `Europe/London`) |
+| `EMAIL_IMAGE_HOST` | Optional: warn when an image is not on this host |
+
+Connect in Setup > Email or in the Email area > **Connect** (with *Test connection*).
+
+#### Email API contract
+
+Any email platform can work with Studio by offering this small REST API. All of it lives under `EMAIL_API_URL`, answers JSON,
+and takes `Authorization: Bearer <EMAIL_API_TOKEN>`. Actions that send or schedule also carry `X-Studio-Confirm: user-pressed`,
+which Studio only sets when you pressed the button.
+
+| Method and path | Body | Answer |
+|---|---|---|
+| `GET /campaigns?status=&limit=` | | `{"campaigns": [Campaign]}` |
+| `GET /campaigns/{id}` | | `{"campaign": Campaign}` (with `html`) |
+| `GET /audiences` | | `{"lists": [{id, name, count}], "segments": [{id, name, count}]}` |
+| `POST /campaigns` | `{name, subject, html, list_id or segment_id, ...}` | `{"campaign": Campaign}`, always a draft |
+| `PATCH /campaigns/{id}` | any of `name, subject, preview_text, html, text, from_name, list_id, segment_id` | `{"campaign": Campaign}` |
+| `POST /campaigns/{id}/preview` | | `{"html": "..."}` with merge tags filled with sample data |
+| `POST /campaigns/{id}/checks` | | `{"problems": [{level: "error"or"warn", message}]}` |
+| `POST /campaigns/{id}/test-send` | | `{"ok": true, "to": "..."}` |
+| `POST /campaigns/{id}/schedule` | `{"scheduled_for": ISO 8601}` | `{"campaign": Campaign}` (now or later) |
+| `POST /campaigns/{id}/cancel` | | `{"campaign": Campaign}` |
+| `GET /campaigns/{id}/progress` | | `{"status", "sent", "total"}` while sending |
+
+`Campaign` = `{id, name, subject, preview_text, status (draft, scheduled, sending, sent, cancelled, failed), list_id, list_name,
+segment_id, segment_name, scheduled_for, sent_at, from_name, from_address, reply_to, updated_at, stats: {sent, delivered, opens,
+clicks, bounces, unsubscribes}}`. Errors: a non-2xx status with `{"error": "message"}`.
+
+#### MCP contract
+
+Studio talks to the platform's MCP server over streamable HTTP (JSON-RPC 2.0, JSON or SSE replies) at `EMAIL_MCP_URL`, with
+`Authorization: Bearer <EMAIL_MCP_TOKEN>`, and calls these tools:
+
+| Tool | Used for |
+|---|---|
+| `email_overview` | Connection check |
+| `email_list_campaigns`, `email_get_campaign`, `email_campaign_stats` | The list, the editor, the numbers |
+| `email_list_lists`, `email_list_segments`, `email_segment_count` | Audiences |
+| `email_create_draft_campaign` | *New campaign* and *Create draft on platform* |
+
+Studio keeps only the fields it needs from each answer and drops any personal data.
+
+#### More platforms
+
+Each connection is a small *provider* class in `engine/areas/email.py` (`EmailApiAdapter`, `McpAdapter`, plus `FakeAdapter`
+for demo data). A direct integration for another platform is one more class with the same methods, registered in `PROVIDERS`.
 
 ### WordPress
 
@@ -374,9 +445,12 @@ GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=...
 GOOGLE_REFRESH_TOKEN=1//...                         # optional: skips Sign in with Google
 GOOGLE_SERVICE_ACCOUNT_FILE=~/keys/ads-sa.json      # optional: a service account for Google Ads
-MLSUITE_STUDIO_URL=https://suite.example.com
-MLSUITE_STUDIO_TOKEN=...
-MLSUITE_MCP_TOKEN=...
+EMAIL_PLATFORM_NAME=Acme Mail
+EMAIL_API_URL=https://mail.example.com/api/studio/email
+EMAIL_API_TOKEN=...
+EMAIL_MCP_URL=https://mail.example.com/api/mcp
+EMAIL_MCP_TOKEN=...
+EMAIL_FROM_ADDRESS=hello@example.com
 STUDIO_TEST_EMAIL=you@example.com
 WP_STUDIO_USER=...
 WP_STUDIO_APP_PASSWORD=...
@@ -478,7 +552,7 @@ The subbar shows when the data you are looking at was fetched.
 
 ## Privacy
 
-- Studio talks only to Google, Meta, ML Suite, WordPress, LinkedIn, the ECB rates API and GitHub (for updates). There is no telemetry.
+- Studio talks only to Google, Meta, your email platform, WordPress, LinkedIn, the ECB rates API and GitHub (for updates). There is no telemetry.
 - It never downloads lead form leads or subscriber lists. Activity hides staff names unless you ask for them.
 - Keys never leave your Mac, are never logged, and are never shown again after you save them.
 

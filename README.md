@@ -9,6 +9,7 @@
 ![app](https://img.shields.io/badge/app-Swift%20%2F%20WKWebView-F05138)
 ![network](https://img.shields.io/badge/binds-127.0.0.1%20only-16a34a)
 ![release](https://img.shields.io/github/v/release/Sivertsen0007/MarketingStudio?color=111827)
+![license](https://img.shields.io/badge/license-MIT-16a34a)
 
 ![Marketing Studio: Google Ads campaigns](docs/screenshots/ads-google-campaigns.png)
 
@@ -27,7 +28,7 @@
 | **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email (ML Suite)](#email-ml-suite) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
-| **Developers** | [Run from source](#run-from-source) · [Tests](#tests) · [Build the app](#build-the-app) · [Release](#release) · [Repository layout](#repository-layout) · [Troubleshooting](#troubleshooting) |
+| **Developers** | [Run from source](#run-from-source) · [Tests](#tests) · [Build the app](#build-the-app) · [Release](#release) · [Repository layout](#repository-layout) · [Troubleshooting](#troubleshooting) · [License](#license) |
 
 ---
 
@@ -548,3 +549,7 @@ VERSION        the version, stamped into the app at build time
 | Numbers look old | Studio keeps data until you refresh: **↻** or **Refresh data ▾** |
 | Update says it can't install | Your copy was built and signed elsewhere: download the latest release and replace the app once |
 | Something else | Look in `~/Library/Logs/MarketingStudio/engine.log`, and **Connections** for a health check |
+
+## License
+
+[MIT](LICENSE). Use it, copy it, change it, build on it, share it, also commercially. Keep the copyright notice in copies.

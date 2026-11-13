@@ -1,0 +1,1955 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marketing Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* Look modelled on Google Ads Editor 2.13 (Qt, Material palette read from the app and a window capture). No Google logos or icons. */
+:root{
+  --bg:#fff;--panel:#fff;--side:#fff;--head:#f8f9fa;--line:#dadce0;--line2:#e8eaed;--text:#202124;--text2:#3c4043;--muted:#5f6368;
+  --accent:#1a73e8;--accent-bg:#e8f0fe;--ok:#188038;--ok-bg:#ceead6;--warn:#b06000;--warn-bg:#feefc3;--bad:#d93025;--bad-bg:#fad2cf;
+  --draft:#8430ce;--draft-bg:#e9d2fd;--info-bg:#d2e3fc;--hover:#f1f3f4;--sel:#ceead6;--sel-text:#202124;--title:#2d2e30;--title-text:#e8eaed;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#202124;--panel:#292a2d;--side:#202124;--head:#2d2e31;--line:#3c4043;--line2:#35363a;--text:#e8eaed;--text2:#bdc1c6;--muted:#9aa0a6;
+  --accent:#8ab4f8;--accent-bg:#283a57;--ok:#81c995;--ok-bg:#1e3a2a;--warn:#fdd663;--warn-bg:#3d3420;--bad:#f28b82;--bad-bg:#4a2523;
+  --draft:#d7aefb;--draft-bg:#3d2a52;--info-bg:#25344d;--hover:#35363a;--sel:#1e3a2a;--sel-text:#e8eaed;--title:#17181a;--title-text:#bdc1c6;
+}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 Roboto,"Helvetica Neue",Arial,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:4px;padding:6px 14px;font-weight:500;color:var(--text2)}
+button:hover{background:var(--hover)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+@media (prefers-color-scheme: dark){button.primary{color:#202124}}
+button.primary:hover{filter:brightness(1.08)}
+button.primary:disabled{opacity:.45;cursor:default}
+button.danger{color:var(--bad)}
+button.link{border:0;background:none;padding:0;color:var(--accent);font-weight:500}
+input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:6px 10px}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+textarea{width:100%;resize:vertical}
+.app{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr);height:100vh;height:100dvh;width:100vw;overflow:hidden}
+html,body{overflow:hidden}
+body.ov .app{grid-template-rows:auto 1fr auto}
+body.area .app{grid-template-rows:auto 1fr auto}
+.atabs{display:flex;gap:2px;margin-right:6px} .atabs button{border:0;background:none;padding:8px 12px;border-bottom:3px solid transparent;border-radius:0;color:var(--muted)}
+.atabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.areapage{display:none;min-height:0;overflow:hidden}
+body.area:not(.ov) .areapage{display:flex;flex-direction:column}
+body.area main, body.area .subbar, body.area #sideOpen, body.area #acct, body.area #refreshBtn, body.area #pushHdr{display:none!important}
+body.ov .atabs{visibility:hidden}
+/* top bar: app name left, outlined action buttons right (Editor's toolbar) */
+header{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:22px;margin:0 6px 0 0;font-weight:400;color:var(--muted);letter-spacing:-.2px;white-space:nowrap}
+header h1 b{color:var(--text2);font-weight:500}
+header select#acct{font-weight:500;min-width:0;max-width:280px;flex:0 1 auto}
+header,.subbar{min-width:0;overflow:hidden}
+@media (max-width:1560px){header{gap:6px;padding:8px 12px} header .tb{padding:7px 10px} header h1{font-size:19px} #hlAge{display:none} .atabs button{padding:8px 9px}}
+@media (max-width:1380px){header h1{display:none} header select#acct{max-width:200px}}
+.tb{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--text2);font-weight:500;white-space:nowrap}
+.tb svg{width:17px;height:17px;fill:currentColor;flex:none}
+.tb:hover{background:var(--hover)}
+.pushhdr.has{background:var(--accent);border-color:var(--accent);color:#fff} .pushhdr.has:hover{filter:brightness(1.08)}
+.pushn{display:none;min-width:18px;padding:0 6px;border-radius:9px;background:rgba(255,255,255,.25);font-size:12px;text-align:center} .pushhdr.has .pushn{display:inline-block}
+.pushok{font-size:16px;margin:4px 0 10px} .pushok b{color:var(--ok,#188038)}
+.dlg-f .link{margin-right:auto}
+.tally{border-collapse:collapse;width:100%;margin:2px 0 14px;font-size:14px} .tally td{padding:7px 4px;border-bottom:1px solid var(--line)} .tally td:last-child{text-align:right;font-weight:500;width:60px}
+.pdet{margin-top:10px} .pdet summary{cursor:pointer;color:var(--accent);font-size:13px;margin-bottom:8px}
+/* second bar: data state left, colour legend right (Editor's "Review account updates" bar) */
+.subbar{display:flex;align-items:center;gap:10px;padding:7px 16px;background:var(--head);border-bottom:1px solid var(--line);font-size:13px;flex-wrap:wrap}
+.legend{display:flex;gap:6px}
+.legend span{padding:2px 8px;border-radius:2px;font-size:13px;color:var(--text)}
+.lg-live{background:var(--ok-bg)}.lg-draft{background:var(--draft-bg)}.lg-bad{background:var(--bad-bg)}.lg-warn{background:var(--warn-bg)}
+.chip{font-size:13px;padding:2px 8px;border-radius:2px;background:var(--line2);color:var(--text2);white-space:nowrap}
+.chip.warn{background:var(--warn-bg);color:var(--text)}
+.chip.draft{background:var(--draft-bg);color:var(--text)}
+.chip.ok{background:var(--ok-bg);color:var(--text)}
+.spacer{flex:1}
+main{display:grid;grid-template-columns:300px minmax(0,1fr) 400px;min-height:0;min-width:0}
+aside,section{min-height:0;min-width:0;display:flex;flex-direction:column}
+aside.tree{border-right:1px solid var(--line);background:var(--side)}
+aside.draft{border-left:1px solid var(--line);background:var(--side)}
+main.noside{grid-template-columns:300px 1fr 0}
+.ovpage{display:none;overflow:auto;padding:20px 24px;background:var(--bg);min-height:0}
+body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{display:none!important}
+body.ov #ovBtn{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.ov-top{display:flex;align-items:center;gap:12px;margin-bottom:16px} .ov-top h2{margin:0;font-size:20px;font-weight:400}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:8px}
+.tile{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--panel)}
+.tile .k{font-size:12px;color:var(--muted)} .tile .v{font-size:24px;font-weight:400;margin-top:2px;font-variant-numeric:tabular-nums} .tile.hi{border-color:var(--accent);background:var(--accent-bg)}
+.ov-ch{font-size:13px;font-weight:500;color:var(--text2);margin:16px 0 8px}
+.ovpage h4{margin:22px 0 8px;font-weight:500}
+.ovpage table{width:100%;border-collapse:collapse;background:var(--panel)} .ovpage th,.ovpage td{padding:6px 10px;border-bottom:1px solid var(--line2);text-align:left;font-size:13px} .ovpage td.num,.ovpage th.num{text-align:right}
+main.noside aside.draft{display:none}
+.rtabs .rclose{flex:0 0 40px;font-size:18px;line-height:1;color:var(--muted)}
+#sideOpen{display:none;position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:20;writing-mode:vertical-rl;border-radius:6px 0 0 6px;border-right:0;padding:14px 7px;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+main.noside ~ #sideOpen{display:block}
+.pad{padding:12px}
+.search{position:relative}
+.search input{width:100%;background:var(--head);border-color:transparent;padding-left:34px;height:38px}
+.search svg{position:absolute;left:22px;top:50%;transform:translateY(-50%);width:18px;height:18px;fill:var(--muted)}
+/* account tree: Editor's green "downloaded" band */
+.tree-list{overflow:auto;flex:1 1 55%;padding:0 0 10px;border-bottom:1px solid var(--line)}
+.node{display:flex;align-items:center;gap:7px;padding:0 10px;height:32px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text2);font-weight:500}
+.node:hover{background:var(--hover)}
+.node.sel{background:var(--sel);color:var(--sel-text)}
+.node .tw{width:14px;color:var(--muted);flex:none;text-align:center;font-size:11px}
+.node .nm{overflow:hidden;text-overflow:ellipsis}
+.node.ag{padding-left:36px;font-weight:400}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ok)}
+.dot.Paused{background:#9aa0a6}
+.dot.Removed{background:var(--bad)}
+/* MANAGE: entity types as a vertical list under the tree */
+.manage-h{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 6px;font-size:12px;font-weight:500;letter-spacing:.6px;color:var(--muted)}
+.tabs{display:flex;flex-direction:column;overflow:auto;flex:1 1 45%;padding:0 0 10px}
+.tab{flex:none;display:flex;justify-content:space-between;text-align:left;padding:0 16px 0 40px;height:34px;align-items:center;border:0;border-radius:0;background:none;white-space:nowrap;color:var(--text2);font-weight:400}
+.tab:hover{background:var(--hover)}
+.tab.on{background:var(--line2);color:var(--text);font-weight:500}
+.tab .n{font-size:13px;color:var(--muted);margin-left:6px;font-weight:400}
+.toolbar{display:flex;gap:8px;align-items:center;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.toolbar .crumb{color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;font-weight:500}
+.grid-wrap{overflow:auto;flex:1}
+/* data grid: Editor's flat table, grey sticky header, hairline rows */
+table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:13px}
+th,td{padding:0 12px;height:34px;border-bottom:1px solid var(--line2);border-right:1px solid var(--line2);text-align:left;white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis}
+th{position:sticky;top:0;background:var(--head);z-index:1;font-weight:500;color:var(--text2);cursor:pointer;border-bottom:1px solid var(--line);user-select:none;height:38px}
+th.sorted{color:var(--accent)}
+th.dragging{opacity:.4} th.drop-l{box-shadow:inset 3px 0 0 var(--accent)} th.drop-r{box-shadow:inset -3px 0 0 var(--accent)}
+tr:hover td{background:var(--hover)}
+tr.removed td{color:var(--muted);text-decoration:line-through}
+tr.new td{background:var(--draft-bg)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.cb,th.cb{width:36px;text-align:center;padding:0 6px}
+td.changed{background:var(--draft-bg)!important;color:var(--text);font-weight:500}
+td.changed .old{color:var(--muted);text-decoration:line-through;font-weight:400;margin-right:6px}
+td.edit{cursor:text}
+td.edit:hover{outline:1px solid var(--accent);outline-offset:-2px}
+td input,td select{padding:2px 6px;width:100%;min-width:70px}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+.st{font-size:13px}
+.st.Paused{color:var(--muted)}
+.st.Removed{color:var(--bad)}
+.st.Enabled,.st.Active{color:var(--ok)}
+.ed{font-size:12px;padding:1px 6px;border-radius:2px;background:var(--warn-bg);color:var(--text)}
+.ed.draft{background:var(--draft-bg)}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+.draft-list{overflow:auto;flex:1;padding:0 12px 12px}
+.item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--panel)}
+.item .who{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:6px}
+.item .who b{color:var(--draft);font-weight:500}
+.item .sum{margin:3px 0;word-break:break-word}
+.item .note{font-size:12px;color:var(--muted);font-style:italic}
+.item .prob{font-size:12px;color:var(--text);background:var(--bad-bg);border-radius:2px;padding:3px 7px;margin-top:4px}
+.item .warnl{font-size:12px;color:var(--text);background:var(--warn-bg);border-radius:2px;padding:3px 7px;margin-top:4px}
+.draft-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;border-top:1px solid var(--line)}
+button.live{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:500}
+@media (prefers-color-scheme: dark){button.live{color:#202124}}
+button.live:disabled{opacity:.45;cursor:default}
+.pv{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.pv .ln2{font-size:12px;color:var(--muted);font-family:"Roboto Mono",ui-monospace,Menlo,monospace;word-break:break-word}
+.flag{font-size:12px;border-radius:2px;padding:2px 7px;margin-top:4px;display:inline-block;color:var(--text)}
+.flag.spend{background:var(--warn-bg)}
+.flag.perm{background:var(--bad-bg)}
+.prog-h{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-weight:500}
+.prog-h .spin{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+.prog-h .done{color:var(--ok)} .prog-h .bad{color:var(--bad)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.prog-row{display:grid;grid-template-columns:1fr 150px 74px;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2);font-size:13px}
+.prog-row .bar{height:6px;background:var(--line2);border-radius:3px;overflow:hidden;position:relative}
+.prog-row .bar i{display:block;height:100%;background:var(--accent);transition:width .4s}
+.prog-row.done .bar i{background:var(--ok)} .prog-row.failed .bar i,.prog-row.reversed .bar i{background:var(--bad)}
+.prog-row.busy .bar::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:shine 1.2s linear infinite}
+@keyframes shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.prog-row .st{font-size:12px;color:var(--muted);text-align:right}
+.prog-row.done .st{color:var(--ok)} .prog-row.failed .st,.prog-row.reversed .st{color:var(--bad)}
+.tick{display:flex;gap:8px;align-items:flex-start;margin:8px 0}
+.bulk{display:flex;gap:8px;align-items:center}
+.bulk.off{visibility:hidden}
+.bulk #bulkN{display:inline-block;min-width:92px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.bulk button:disabled{opacity:.45;cursor:not-allowed}
+.fxh{display:block;font-size:11px;color:var(--muted);line-height:1.2}
+dialog{border:0;border-radius:8px;padding:0;background:var(--panel);color:var(--text);width:min(720px,94vw);max-height:90vh;box-shadow:0 4px 8px 3px #0000002a,0 1px 3px #0000004d}
+dialog::backdrop{background:#20212466}
+.dlg-h{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;font-size:18px;font-weight:400}
+.dlg-b{padding:4px 20px 14px;overflow:auto;max-height:calc(90vh - 120px)}
+.dlg-f{display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--line)}
+.row{display:grid;grid-template-columns:150px 1fr;gap:8px;align-items:center;margin-bottom:10px}
+.row label{color:var(--muted)}
+.lines .ln{display:grid;grid-template-columns:1fr 46px 76px 24px;gap:6px;align-items:center;margin-bottom:4px}
+.cnt{font-size:12px;color:var(--muted);text-align:right}
+.cnt.over{color:var(--bad);font-weight:500}
+.hint{font-size:13px;color:var(--muted);margin:4px 0 10px}
+.toast{position:fixed;bottom:44px;left:24px;background:#323232;color:#fff;padding:12px 18px;border-radius:4px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:60vw;box-shadow:0 3px 5px #0003}
+.toast.on{opacity:1}
+pre.out{white-space:pre-wrap;background:var(--head);padding:10px;border-radius:4px;font-size:12px;max-height:50vh;overflow:auto}
+/* status bar at the bottom, like Editor's */
+footer{display:flex;align-items:center;gap:14px;padding:5px 16px;border-top:1px solid var(--line);background:var(--head);font-size:12px;color:var(--muted)}
+.hdot{width:10px;height:10px;border-radius:50%;background:#9aa0a6;flex:none}
+.hdot.green{background:var(--ok)}.hdot.amber{background:#f9ab00}.hdot.red{background:var(--bad)}
+.hl-row{display:grid;grid-template-columns:14px 150px 1fr;gap:10px;align-items:start;padding:7px 0;border-bottom:1px solid var(--line2)}
+.hl-row .hdot{margin-top:5px}
+.hl-row b{text-transform:capitalize}
+/* status pill + menu */
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 8px 2px 6px;border-radius:12px;border:1px solid var(--line);background:var(--panel);font-size:12.5px;line-height:18px}
+.pill i{width:8px;height:8px;border-radius:50%;background:#9aa0a6;flex:none}
+.pill.Active i,.pill.Enabled i{background:var(--ok)}.pill.Removed i{background:var(--bad)}
+.pill.Removed{color:var(--bad)}
+td.st-edit{cursor:pointer}
+td.st-edit .pill:after{content:"▾";font-size:9px;color:var(--muted);margin-left:2px}
+td.st-edit:hover .pill{border-color:var(--accent)}
+.menu{position:fixed;z-index:50;background:var(--panel);border-radius:6px;box-shadow:0 2px 6px 2px #00000026,0 1px 2px #0000004d;padding:6px 0;min-width:170px}
+.menu button{display:flex;gap:10px;align-items:center;width:100%;border:0;border-radius:0;background:none;text-align:left;padding:8px 16px;font-weight:400;color:var(--text)}
+.menu button:hover{background:var(--hover)}
+.menu .sep{border-top:1px solid var(--line);margin:6px 0}
+.menu .cur{font-weight:500}
+.dmenu{position:fixed;z-index:60;background:var(--panel);border-radius:6px;box-shadow:0 2px 6px 2px #00000026,0 1px 2px #0000004d;padding:6px 0;width:340px;max-height:80vh;overflow:auto}
+.dmenu .dh{padding:6px 16px 8px;font-size:12px;color:var(--muted)}
+.dmenu button{display:flex;gap:10px;align-items:center;width:100%;border:0;border-radius:0;background:none;text-align:left;padding:7px 16px;font-weight:400;color:var(--text)}
+.dmenu button:hover:not(:disabled){background:var(--hover)}
+.dmenu button:disabled{color:var(--muted);cursor:default}
+.dmenu button.sub{padding-left:34px;font-size:13px}
+.dmenu button.top{font-weight:500}
+.dmenu .when{margin-left:auto;font-size:12px;color:var(--muted);white-space:nowrap}
+.dmenu .sep{border-top:1px solid var(--line);margin:6px 0}
+.dmenu .dwarn{margin:4px 12px;padding:6px 8px;border-radius:4px;background:var(--warn-bg);color:var(--warn);font-size:12px}
+.spin{width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex:none;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+#dataWarn{width:8px;height:8px;border-radius:50%;background:#f9ab00;display:none}
+#hlAge{font-size:11px;color:var(--muted);font-weight:400}
+/* filter pills */
+.fpills{display:flex;gap:6px;flex-wrap:wrap}
+.fpills button{padding:3px 12px;border-radius:16px;font-weight:400;font-size:13px}
+.fpills button.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);font-weight:500}
+.fpills .n{color:var(--muted);margin-left:4px;font-size:12px}
+/* thumbnails + hover preview */
+img.thumb{width:40px;height:40px;object-fit:cover;border-radius:4px;display:block;background:var(--line2);cursor:zoom-in}
+td.thumbc{padding:2px 6px;width:52px}
+.hoverprev{position:fixed;z-index:60;pointer-events:none;background:var(--panel);border-radius:8px;padding:6px;box-shadow:0 4px 12px #0000004d;display:none}
+.hoverprev img{width:400px;max-height:420px;object-fit:contain;display:block;border-radius:4px}
+tr.focus td{background:var(--accent-bg)!important}
+#grid tr[data-i]{scroll-margin-top:44px;scroll-margin-bottom:8px}
+/* right panel: Edit | Draft */
+.rtabs{display:flex;border-bottom:1px solid var(--line)}
+.rtabs button{flex:1;border:0;border-radius:0;background:none;padding:12px 0;border-bottom:3px solid transparent;color:var(--muted)}
+.rtabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.pane{display:none;flex-direction:column;min-height:0;flex:1}
+.pane.on{display:flex}
+.edit-body{overflow:auto;flex:1;padding:12px 14px}
+.edit-body .fld{margin-bottom:12px}
+.edit-body .fld label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:4px}
+.edit-body .fld input,.edit-body .fld select,.edit-body .fld textarea{width:100%}
+.edit-body .fld.chg input,.edit-body .fld.chg textarea,.edit-body .fld.chg select{background:var(--draft-bg)}
+.edit-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px}
+.edit-head img{width:96px;height:96px;object-fit:cover;border-radius:6px;cursor:zoom-in;flex:none;background:var(--line2)}
+.edit-head .t{font-weight:500;word-break:break-word}
+.edit-head .s{font-size:12px;color:var(--muted);margin-top:2px}
+.prevbox{border:1px solid var(--line);border-radius:6px;margin:4px 0 14px;overflow:hidden;background:var(--head)}
+.prevbox .bar{display:flex;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line);font-size:12px}
+.prevbox .frame{display:flex;flex-wrap:wrap;justify-content:center;max-height:560px;overflow:auto;background:#fff}
+.prevbox iframe{border:0;transform-origin:top center}
+.edit-foot{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
+.edit-foot button{flex:1}
+.edit-foot .asstate{flex:2;align-self:center;font-size:12px;color:var(--muted)} .asstate.ok{color:var(--ok,#188038)} .asstate.bad{color:var(--bad,#c5221f)}
+/* columns dialog */
+.colpick{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.colpick .list{border:1px solid var(--line);border-radius:6px;max-height:52vh;overflow:auto}
+.colpick label.c{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line2)}
+.colpick .sel .r{display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid var(--line2)}
+.colpick .sel .r span{flex:1}
+.colpick .sel .r button{padding:0 7px}
+.cardbox{border:1px solid var(--line);border-radius:6px;padding:8px 10px 2px;margin-bottom:12px}
+.cardh{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.cardh img{width:40px;height:40px;object-fit:cover;border-radius:4px;cursor:zoom-in}
+.edit-body .fld input[type=checkbox],.edit-body .fld input[type=radio],dialog input[type=checkbox],dialog input[type=radio]{width:16px;height:16px;flex:none;padding:0}
+.plat .pos{display:flex;flex-wrap:wrap;gap:4px 14px;padding:0 0 6px 24px;font-size:13px}
+.plat .pos label{display:inline-flex;gap:5px;align-items:center}
+.localprev{padding:10px;width:100%;color:#202124;font-size:13px}
+.localprev img,.localprev video{width:100%;max-height:340px;object-fit:contain;background:#f1f3f4;border-radius:4px;display:block;margin-bottom:8px}
+.localprev .pt{white-space:pre-wrap;margin-bottom:6px}
+.localprev .hl{font-weight:500}
+.set-sec{margin-bottom:22px}
+.set-sec h3{font-size:15px;font-weight:500;margin:0 0 8px}
+.set-row{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line2)}
+.set-row .grow{flex:1;min-width:0}
+.set-row .sub{font-size:12px;color:var(--muted)}
+@media (max-width:1100px){main{grid-template-columns:240px 1fr}aside.draft{display:none}.legend{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <button id="ovBtn" class="tb" title="Dashboard: Ads spend, results and Select Cabin, plus Email, SEO and SoMe"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z"/></svg><span id="ovLbl">Overview</span></button>
+  <h1><b>Marketing</b> Studio</h1>
+  <nav id="areaTabs" class="atabs"><button data-area="ads" class="on">Ads</button></nav>
+  <select id="acct"></select>
+  <span class="spacer"></span>
+  <button id="refreshBtn" class="tb" style="display:none" title="Refresh this account only (Google: about 10 seconds, Meta: about 20)" aria-label="Refresh this account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
+  <button id="dataBtn" class="tb" title="Studio keeps what it fetched until you refresh. Pick what to fetch again.">Refresh data &#9662;<span id="dataWarn"></span></button>
+  <button id="pushHdr" class="tb pushhdr" title="Review everything in the draft and push it live"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z"/></svg>Push <span id="pushN" class="pushn"></span></button>
+  <button id="hlBtn" class="tb" title="Connection health: Ads, Email, SEO and SoMe"><span id="hlDot" class="hdot"></span>Connections <span id="hlAge"></span></button>
+  <button id="setupBtn" class="tb" title="Keys and Sign in with Google" onclick="openSetup()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.65 10A6 6 0 1 0 7 18a6 6 0 0 0 5.65-4H17v4h4v-4h2v-4H12.65zM7 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>Setup</button>
+  <button id="setBtn" class="tb" title="Accounts and saved views"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.84a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 0 0-.61.22L2.66 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.61.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.84c.24 0 .45-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.09.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>Settings</button>
+</header>
+<div class="subbar">
+  <span id="fresh" class="chip"></span>
+  <span id="pend" class="chip"></span>
+  <span id="behind" class="chip warn" style="display:none" title="You pushed live after Editor's last download">Editor is behind live: Get recent changes in Editor</span>
+  <span class="spacer"></span>
+  <span class="legend"><span class="lg-live">Live</span><span class="lg-draft">In draft</span><span class="lg-bad">Problem</span><span class="lg-warn">Warning</span></span>
+</div>
+<main>
+  <aside class="tree">
+    <div class="pad search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg><input id="treeSearch" placeholder="Search campaigns"></div>
+    <div id="tree" class="tree-list"></div>
+    <div class="manage-h">MANAGE</div>
+    <div id="tabs" class="tabs"></div>
+  </aside>
+  <section>
+    <div class="toolbar">
+      <span id="crumb" class="crumb"></span>
+      <input id="search" placeholder="Search this view" style="width:200px">
+      <span id="fpills" class="fpills"></span>
+      <span id="gridNote" class="chip warn" style="display:none"></span>
+      <span class="spacer"></span>
+      <select id="rangeSel" title="Date range for the stats columns"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="custom">Custom range ...</option></select>
+      <select id="viewSel" title="Saved views"></select>
+      <button id="colBtn" title="Choose and order columns">Columns</button>
+      <span id="bulk" class="bulk" title="Select rows first"><span id="bulkN">None selected</span>
+        <button data-bulk="enabled" disabled>Enable</button><button data-bulk="paused" disabled>Pause</button><button data-bulk="removed" class="danger" disabled>Remove</button></span>
+      <button id="addBtn" class="primary">+ Add</button>
+    </div>
+    <div id="grid" class="grid-wrap"></div>
+  </section>
+  <aside class="draft">
+    <div class="rtabs"><button id="rtEdit" data-p="edit">Edit</button><button id="rtDraft" data-p="draft" class="on">Draft <span id="draftN" class="chip draft"></span></button><button id="sideClose" class="rclose" title="Close the panel for a full-width grid">&times;</button></div>
+    <div id="paneEdit" class="pane"><div id="editBody" class="edit-body"><div class="empty">Click a row to see and edit it here.</div></div><div id="editFoot" class="edit-foot" style="display:none"></div></div>
+    <div id="paneDraft" class="pane on">
+      <div id="draft" class="draft-list" style="padding-top:12px"></div>
+      <div class="draft-actions">
+        <button id="clearBtn" class="danger" title="Empty the draft">Clear</button>
+        <button id="valBtn">Check</button>
+      </div>
+    </div>
+  </aside>
+</main>
+<div id="ovPage" class="ovpage"></div>
+<div id="areaPage" class="areapage"></div>
+<button id="sideOpen" title="Open the Edit and Draft panel">Edit · Draft <span id="draftN2"></span></button>
+<footer><span>Marketing Studio</span><span class="spacer"></span><span>Draft only. Live changes only by your own Push live.</span></footer>
+</div>
+<dialog id="dlg"><div class="dlg-h"><span id="dlgT"></span><button class="link" onclick="dlg.close()">Close</button></div>
+<div id="dlgB" class="dlg-b"></div><div id="dlgF" class="dlg-f"></div></dialog>
+<div id="toast" class="toast"></div>
+<div id="menu" class="menu" style="display:none"></div>
+<div id="dataMenu" class="dmenu" style="display:none"></div>
+<div id="hoverPrev" class="hoverprev"></div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const S = {acct: localGet("acct") || "ml", kind: localGet("kind") || "campaigns", camp: null, ag: null, rows: [], sort: null,
+           sel: new Set(), open: new Set(), draftV: -1, tree: [], filter: localGet("filter") || "all", focus: null, views: [], accts: []};
+function localGet(k){ try { return localStorage.getItem("adsstudio." + k) } catch(e) { return null } }
+function localSet(k, v){ try { localStorage.setItem("adsstudio." + k, v) } catch(e) {} }
+// Per-process secret the server puts in <meta name="studio-press">; every POST sends it (see server.py guard).
+const PRESS = (document.querySelector('meta[name="studio-press"]') || {}).content || "";
+async function api(path, body){
+  const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json", "X-Studio-Press":PRESS}, body: JSON.stringify({acct:S.acct, ...body})} : {});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function toast(msg){ const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 3200) }
+const qs = o => Object.entries(o).filter(([,v]) => v !== null && v !== undefined && v !== "").map(([k,v]) => k + "=" + encodeURIComponent(v)).join("&");
+
+// ---- views: columns per entity type, Editor's names ----
+const money = v => v == null ? "" : Number(v).toFixed(2);
+// ---- display currency (Settings, saved server-side). DISPLAY ONLY: what is typed, stored in a draft or pushed to
+// Google/Meta is always the account's own currency (native values from the server, never converted here). ----
+S.disp = "own"; S.fx = null;
+const SYM = {GBP:"£", USD:"$", EUR:"€"};
+const acctCur = (key = S.acct) => ((S.accts || []).find(a => a.key === key) || {}).currency || "";
+function fxRate(from, to){ if (!S.fx || !from || !to) return null; if (from === to) return 1; const r = S.fx.rates || {}; return r[from] && r[to] ? r[to] / r[from] : null }
+const dispCur = () => S.disp !== "own" && fxRate(acctCur(), S.disp) != null ? S.disp : null; // null: show native, as before
+const curFmt = (v, cur) => { if (v == null || v === "") return ""; const n = Number(v).toLocaleString("en-GB", {minimumFractionDigits:2, maximumFractionDigits:2}); return SYM[cur] ? SYM[cur] + n : n + " " + cur };
+const toDisp = (v, from = acctCur()) => v == null || v === "" || !dispCur() ? null : Number(v) * fxRate(from, S.disp);
+const fxWhen = () => S.fx ? `${S.fx.source}, ${fxDate(S.fx.date)}${S.fx.stale ? " (rate may be out of date)" : ""}` : "";
+const fxDate = iso => { if (!iso) return "unknown date"; const d = new Date(iso + "T12:00:00"); return d.getDate() + " " + d.toLocaleString("en-GB", {month:"long"}) + " " + d.getFullYear() };
+const isMoney = c => c.fmt === money;
+const colLabel = c => { const dc = dispCur(); return dc && isMoney(c) ? `${c.label} (${c.edit === "money" ? acctCur() : dc})` : c.label };
+// one money cell: [html, title]. Editable money stays native with a "≈" hint; read-only money is converted with the native amount in the title.
+function moneyCell(c, v){
+  const dc = dispCur(), cur = acctCur();
+  if (!dc || v == null || v === "") return [money(v), String(v ?? "")];
+  if (c.edit === "money") return [`${money(v)}<span class="fxh">≈ ${esc(curFmt(toDisp(v), dc))}</span>`, `${money(v)} ${cur}: account currency, typed and pushed in ${cur}. ≈ ${curFmt(toDisp(v), dc)} at ${fxWhen()}`];
+  return [esc(curFmt(toDisp(v), dc)), `${money(v)} ${cur} (account currency). Converted to ${dc} at today's rate: ${fxWhen()}`];
+}
+// Edit-panel money input label + a live "≈" hint (the input itself is always the native amount)
+const curLabel = label => acctCur() ? `${label} (${acctCur()}, account currency)` : label;
+const fxHint = id => dispCur() ? `<div class="hint fxlive" data-fx="${id}" style="margin:3px 0 0"></div>` : "";
+function wireFx(){ document.querySelectorAll("[data-fx]").forEach(h => { const i = document.getElementById(h.dataset.fx); if (!i) return;
+  const f = () => { h.textContent = i.value === "" ? "" : `≈ ${curFmt(toDisp(i.value), S.disp)} (display only, at ${fxWhen()})` }; i.addEventListener("input", f); f() }) }
+async function loadFx(){ try { const f = await api("/api/fx"); S.fx = f; S.disp = f.display_currency || "own" } catch(e) { S.fx = null; S.disp = "own" } }
+const ST = {key:"status", label:"Status", fmt:v => v ? `<span class="pill ${esc(v)}"><i></i>${esc(v)}</span>` : ""};
+const CA = {key:"campaign", label:"Campaign"}, AG = {key:"ad_group", label:"Ad group"}, LV = {key:"level", label:"Level"};
+const ED = {key:"editor", label:"Editor", fmt:v => v ? `<span class="ed ${v==="draft"?"draft":""}">${esc(v)}</span>` : ""};
+const VIEWS = {
+  campaigns:{label:"Campaigns", cols:[{...ST, edit:"status3"}, CA, {key:"type",label:"Type"}, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money"},
+    {key:"shared_budget",label:"Shared budget"}, {key:"bidding",label:"Bid strategy"}, {key:"max_cpc_cap",label:"Max CPC cap",num:1,fmt:money},
+    {key:"target_cpa",label:"Target CPA",num:1,fmt:money}, {key:"ad_groups",label:"Ad groups",num:1}, {key:"keywords",label:"Keywords",num:1},
+    {key:"start",label:"Start"}, {key:"end",label:"End"}, ED]},
+  ad_groups:{label:"Ad groups", cols:[{...ST, edit:"status"}, CA, AG, {key:"max_cpc",label:"Default max CPC",num:1,fmt:money,edit:"money"},
+    {key:"keywords",label:"Keywords",num:1}, {key:"ads",label:"Ads",num:1}, ED], bulk:1},
+  keywords:{label:"Keywords", cols:[{...ST, edit:"status"}, CA, AG, {key:"keyword",label:"Keyword"}, {key:"match",label:"Match"},
+    {key:"max_cpc",label:"Max CPC",num:1,fmt:money,edit:"money"}, {key:"quality_score",label:"QS",num:1}, {key:"first_page_cpc",label:"First page CPC",num:1,fmt:money},
+    {key:"top_of_page_cpc",label:"Top of page CPC",num:1,fmt:money}, {key:"final_url",label:"Final URL"}, ED], bulk:1},
+  negatives:{label:"Negative keywords", cols:[LV, CA, AG, {key:"list",label:"Shared list"}, {key:"keyword",label:"Negative keyword"}, {key:"match",label:"Match"}, ST, ED], bulk:1},
+  ads:{label:"Ads", cols:[{...ST, edit:"status", when:r => r.ad_type === "Responsive search ad"}, CA, AG, {key:"ad_type",label:"Type"},
+    {key:"headline",label:"Headline 1"}, {key:"path1",label:"Path 1"}, {key:"path2",label:"Path 2"}, {key:"final_url",label:"Final URL"},
+    {key:"ad_strength",label:"Ad strength"}, {key:"approval",label:"Approval"}, ED], bulk:1, open:r => r.ad_type === "Responsive search ad" && rsaDialog(r)},
+  asset_groups:{label:"Asset groups", cols:[ST, CA, {key:"asset_group",label:"Asset group"}, {key:"headlines",label:"Headlines",num:1},
+    {key:"long_headlines",label:"Long headlines",num:1}, {key:"descriptions",label:"Descriptions",num:1}, {key:"final_url",label:"Final URL"}, {key:"ad_strength",label:"Ad strength"}, ED]},
+  sitelinks:{label:"Sitelinks", cols:[LV, CA, AG, ST, {key:"text",label:"Link text"}, {key:"line1",label:"Description 1"}, {key:"line2",label:"Description 2"},
+    {key:"final_url",label:"Final URL"}, {key:"start",label:"Start"}, {key:"end",label:"End"}, ED], open:r => r.level !== "Ad group" && sitelinkDialog(r)},
+  callouts:{label:"Callouts", cols:[LV, CA, AG, ST, {key:"text",label:"Callout text"}, {key:"start",label:"Start"}, {key:"end",label:"End"}, ED]},
+  snippets:{label:"Snippets", cols:[LV, CA, AG, ST, {key:"header",label:"Header"}, {key:"values",label:"Values"}, ED]},
+  prices:{label:"Prices", cols:[LV, CA, AG, ST, {key:"price_type",label:"Type"}, {key:"qualifier",label:"Qualifier"}, {key:"items",label:"Items"}, ED]},
+  promotions:{label:"Promotions", cols:[LV, CA, ST, {key:"occasion",label:"Occasion"}, {key:"target",label:"Item"}, {key:"discount",label:"Discount"}, {key:"final_url",label:"Final URL"}, ED]},
+  locations:{label:"Locations", cols:[CA, AG, {key:"targeting",label:"Targeting"}, {key:"location",label:"Location"}, {key:"country",label:"Country"},
+    {key:"location_id",label:"ID",num:1}, {key:"bid_modifier",label:"Bid adj.",num:1}, ED]},
+  audiences:{label:"Audiences", cols:[LV, CA, AG, ST, {key:"audience",label:"Audience"}, {key:"bid_modifier",label:"Bid adj.",num:1}, ED]},
+  shared_lists:{label:"Shared negative lists", cols:[{key:"list",label:"List"}, {key:"keywords",label:"Keywords",num:1}, {key:"campaigns",label:"Campaigns",num:1}, {key:"attached_to",label:"Used by"}]},
+};
+
+const MONEY_TOOL = "Account currency";
+const GSTATS = [{key:"cost",label:"Cost",num:1,fmt:money}, {key:"impressions",label:"Impr.",num:1,hide:1}, {key:"clicks",label:"Clicks",num:1},
+  {key:"ctr",label:"CTR %",num:1,hide:1}, {key:"cpc",label:"Avg. CPC",num:1,fmt:money,hide:1}, {key:"conversions",label:"Conv.",num:1},
+  {key:"conv_value",label:"Conv. value",num:1,fmt:money,hide:1}, {key:"cost_per_conv",label:"Cost / conv.",num:1,fmt:money,hide:1},
+  {key:"select_cabin",label:"Select Cabin",num:1}, {key:"cost_per_select_cabin",label:"Cost / Select Cabin",num:1,fmt:money,hide:1}];
+for (const [k, v] of Object.entries(VIEWS)) if (!["negatives", "shared_lists"].includes(k)){ const i = v.cols.findIndex(c => c.key === "editor"); v.cols.splice(i < 0 ? v.cols.length : i, 0, ...GSTATS) }
+Object.assign(VIEWS, {
+  asset_group_assets:{label:"PMax assets", cols:[{...ST}, CA, {key:"asset_group",label:"Asset group"}, {key:"field",label:"Field"}, {key:"text",label:"Text / asset"},
+    {key:"asset_type",label:"Type",hide:1}, {key:"source",label:"Source",hide:1}, {key:"primary_status",label:"Primary status"}, {key:"approval",label:"Approval"}, ...GSTATS], bulk:1, api:1},
+  user_lists:{label:"Audience lists", cols:[{key:"list",label:"List"}, {key:"type",label:"Type"}, {key:"size_search",label:"Size (Search)",num:1}, {key:"size_display",label:"Size (Display)",num:1},
+    {key:"membership",label:"Membership",hide:1}, {key:"campaigns",label:"Campaigns",num:1}, {key:"attached_to",label:"Used by"}], api:1},
+  recommendations:{label:"Recommendations", cols:[{key:"type",label:"Recommendation"}, LV, CA, AG, {key:"impact_clicks",label:"+ Clicks",num:1}, {key:"impact_cost",label:"+ Cost",num:1,fmt:money},
+    {key:"impact_conversions",label:"+ Conv.",num:1}, {key:"dismissed",label:"Dismissed",hide:1}], api:1},
+});
+// Meta stats for the picked date range (meta.grid puts them on these generic keys)
+const STATS = [{key:"spend",label:"Spend",num:1,fmt:money}, {key:"impressions",label:"Impr.",num:1}, {key:"reach",label:"Reach",num:1,hide:1},
+  {key:"frequency",label:"Frequency",num:1,hide:1}, {key:"clicks",label:"Clicks",num:1}, {key:"ctr",label:"CTR %",num:1},
+  {key:"cpc",label:"CPC",num:1,fmt:money,hide:1}, {key:"cpm",label:"CPM",num:1,fmt:money,hide:1}, {key:"results",label:"Results",num:1},
+  {key:"cost_per_result",label:"Cost per result",num:1,fmt:money,hide:1},
+  {key:"select_cabin",label:"Select Cabin",num:1}, {key:"cost_per_select_cabin",label:"Cost / Select Cabin",num:1,fmt:money},
+  {key:"purchases",label:"Purchases",num:1,hide:1}, {key:"cost_per_purchase",label:"Cost / purchase",num:1,fmt:money,hide:1},
+  {key:"leads",label:"Leads",num:1,hide:1}, {key:"cost_per_lead",label:"Cost / lead",num:1,fmt:money,hide:1}];
+// saved layouts and views from before the range picker used the *_7d keys
+const OLD_KEYS = {spend_7d:"spend", impr_7d:"impressions", reach_7d:"reach", frequency_7d:"frequency", clicks_7d:"clicks", ctr_7d:"ctr",
+  cpc_7d:"cpc", cpm_7d:"cpm", results_7d:"results", cost_per_result_7d:"cost_per_result"};
+const newKey = k => OLD_KEYS[k] || k;
+const IDC = {key:"id", label:"ID", hide:1}, UPD = {key:"updated", label:"Updated", hide:1};
+const THUMB = {key:"thumbnail", label:"", thumb:1};
+const DL = {key:"delivery", label:"Delivery"}, AS = {key:"ad_set", label:"Ad set"};
+const MST = {...ST, edit:"mstatus"};
+const META_VIEWS = {
+  campaigns:{label:"Campaigns", cols:[MST, CA, DL, {key:"objective",label:"Objective"}, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money",when:r => r.budget != null},
+    {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money}, {key:"budget_level",label:"Budget on"}, {key:"bidding",label:"Bid strategy"},
+    {key:"ad_sets",label:"Ad sets",num:1}, {key:"ads",label:"Ads",num:1}, ...STATS, UPD, IDC], bulk:1},
+  adsets:{label:"Ad sets", cols:[MST, CA, AS, DL, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money",when:r => r.budget != null},
+    {key:"optimisation",label:"Optimisation"}, {key:"countries",label:"Countries"}, {key:"age",label:"Age"}, {key:"audiences",label:"Audiences"},
+    {key:"excluded",label:"Excluded"}, {key:"end",label:"End"}, {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money,hide:1},
+    ...STATS, UPD, IDC], bulk:1, open:r => adsetDialog(r)},
+  ads:{label:"Ads", cols:[MST, THUMB, {key:"ad",label:"Ad"}, CA, AS, DL, {key:"format",label:"Format"}, {key:"headline",label:"Headline"},
+    {key:"primary_text",label:"Primary text"}, {key:"description",label:"Description",hide:1}, {key:"link",label:"Link"}, {key:"cta",label:"CTA"},
+    ...STATS, {key:"creative_id",label:"Creative ID",hide:1}, UPD, IDC], bulk:1, open:r => metaAdDialog(r)},
+  audiences:{label:"Audiences", cols:[{key:"audience",label:"Audience"}, {key:"type",label:"Type"}, {key:"size",label:"Size"}, {key:"status",label:"Status"}, {key:"updated",label:"Updated"}], ro:1},
+  leadforms:{label:"Lead forms", cols:[{key:"lead_form",label:"Lead form"}, {key:"status",label:"Status"}, {key:"leads",label:"Leads",num:1}, {key:"created",label:"Created"}, IDC], ro:1},
+};
+const GDPR_HINT = "Personal data: UK GDPR check needed before any upload/download. Studio reads names and counts only.";
+const isMeta = () => String(S.acct).startsWith("meta");
+const mediaUrl = id => "/api/meta/media?" + qs({acct:S.acct, id});
+const srvStatus = () => S.filter === "removed" ? "all" : "active";
+S.range = (() => { try { return JSON.parse(localGet("range")) || {days:"7"} } catch(e) { return {days:"7"} } })();
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Google's GAQL has no LAST_90_DAYS, so 90 days goes to Google as dates (the 90 days before today, like its LAST_N_DAYS); Meta takes 90 as is
+const rangeQ = () => S.range.start ? {start:S.range.start, end:S.range.end}
+  : S.range.days === "90" && !isMeta() ? {start:ymd(new Date(Date.now() - 90 * 864e5)), end:ymd(new Date(Date.now() - 864e5))} : {days:S.range.days || "7"};
+function renderRange(){
+  const sel = $("#rangeSel"); [...sel.options].filter(o => o.dataset.c).forEach(o => o.remove());
+  if (S.range.start){ const o = new Option(`${S.range.start} to ${S.range.end}`, "cur"); o.dataset.c = 1; sel.insertBefore(o, sel.lastElementChild); sel.value = "cur" } else sel.value = S.range.days || "7";
+}
+$("#rangeSel").onchange = e => {
+  const v = e.target.value;
+  if (v === "custom"){
+    const t = new Date(), iso = d => d.toISOString().slice(0, 10), from = new Date(t - 29 * 864e5);
+    const a = prompt("From (YYYY-MM-DD):", S.range.start || iso(from)); if (!a) return renderRange();
+    const b = prompt("To (YYYY-MM-DD):", S.range.end || iso(t)); if (!b) return renderRange();
+    if (!/^\d{4}-\d\d-\d\d$/.test(a) || !/^\d{4}-\d\d-\d\d$/.test(b) || a > b){ toast("Use YYYY-MM-DD, with From before To"); return renderRange() }
+    S.range = {start:a, end:b};
+  } else if (v !== "cur") S.range = {days:v};
+  localSet("range", JSON.stringify(S.range)); renderRange(); noteFetch().then(loadGrid);
+};
+// A date range (or account) that is not cached yet is fetched once; say so while it loads. Cached ranges pull nothing.
+async function noteFetch(){
+  try { const c = await api("/api/data/cached?" + qs({acct:S.acct, kind:S.kind, ...rangeQ()}));
+    if (!c.cached){ $("#gridNote").textContent = `Fetching stats for ${c.label} ...`; $("#gridNote").title = "Not fetched yet: fetched once, then kept until you refresh"; $("#gridNote").style.display = "" }
+  } catch(e) {}
+}
+const V = () => isMeta() ? META_VIEWS : VIEWS;
+// Built-in views, always there: "Data" (numbers) and "Edit" (settings and copy). Saved views come after them.
+const DATA_M = ["spend", "impressions", "clicks", "ctr", "results", "select_cabin", "cost_per_select_cabin"];
+const DATA_G = ["cost", "impressions", "clicks", "ctr", "conversions", "cost_per_conv", "select_cabin", "cost_per_select_cabin"];
+const BUILTIN = {
+  meta:{
+    campaigns:{Data:["status", "campaign", "delivery", ...DATA_M], Edit:["status", "campaign", "delivery", "objective", "budget", "lifetime_budget", "budget_level", "bidding", "ad_sets", "ads"]},
+    adsets:{Data:["status", "campaign", "ad_set", "delivery", ...DATA_M], Edit:["status", "campaign", "ad_set", "delivery", "budget", "optimisation", "countries", "age", "audiences", "excluded", "end"]},
+    ads:{Data:["status", "thumbnail", "ad", "campaign", "ad_set", "delivery", ...DATA_M], Edit:["status", "thumbnail", "ad", "campaign", "ad_set", "delivery", "format", "headline", "primary_text", "link", "cta"]},
+  },
+  google:{
+    campaigns:{Data:["status", "campaign", "type", ...DATA_G], Edit:["status", "campaign", "type", "budget", "shared_budget", "bidding", "max_cpc_cap", "target_cpa", "start", "end", "editor"]},
+    ad_groups:{Data:["status", "campaign", "ad_group", ...DATA_G], Edit:["status", "campaign", "ad_group", "max_cpc", "keywords", "ads", "editor"]},
+    keywords:{Data:["status", "campaign", "ad_group", "keyword", "match", ...DATA_G], Edit:["status", "campaign", "ad_group", "keyword", "match", "max_cpc", "quality_score", "final_url", "editor"]},
+    ads:{Data:["status", "campaign", "ad_group", "ad_type", "headline", ...DATA_G], Edit:["status", "campaign", "ad_group", "ad_type", "headline", "path1", "path2", "final_url", "ad_strength", "approval", "editor"]},
+    asset_groups:{Data:["status", "campaign", "asset_group", ...DATA_G], Edit:["status", "campaign", "asset_group", "headlines", "long_headlines", "descriptions", "final_url", "ad_strength", "editor"]},
+  },
+};
+const builtins = () => (BUILTIN[chan()] || {})[S.kind] || {};
+
+// ---- tree ----
+async function loadTree(){
+  S.tree = await api("/api/tree?" + qs({acct:S.acct, status:srvStatus()}));
+  renderTree();
+}
+function renderTree(){
+  const f = $("#treeSearch").value.toLowerCase();
+  let h = `<div class="node ${!S.camp ? "sel" : ""}" data-c=""><span class="tw"></span><b>All campaigns</b></div>`;
+  for (const c of S.tree){
+    const groups = c.ad_groups.filter(g => !f || g.name.toLowerCase().includes(f));
+    if (f && !c.name.toLowerCase().includes(f) && !groups.length) continue;
+    const open = S.open.has(String(c.id)) || (f && groups.length);
+    h += `<div class="node ${S.camp === String(c.id) && !S.ag ? "sel" : ""}" data-c="${c.id}" title="${esc(c.name)} - ${esc(c.type)}">
+      <span class="tw" data-tw="${c.id}">${c.ad_groups.length ? (open ? "▾" : "▸") : ""}</span><span class="dot ${c.status}"></span><span class="nm">${esc(c.name)}</span>
+      ${c.editor ? `<span class="ed">${c.editor}</span>` : ""}${c.draft ? ` <span class="chip draft" title="New in the draft: created Paused when you push live">draft</span>` : ""}</div>`;
+    if (open) for (const g of (f && !c.name.toLowerCase().includes(f) ? groups : c.ad_groups))
+      h += `<div class="node ag ${S.ag === String(g.id) ? "sel" : ""}" data-c="${c.id}" data-g="${g.id}" title="${esc(g.name)}"><span class="dot ${g.status}"></span><span class="nm">${esc(g.name)}</span>${g.draft ? ` <span class="chip draft">draft</span>` : ""}</div>`;
+  }
+  $("#tree").innerHTML = h;
+}
+$("#tree").onclick = e => {
+  const tw = e.target.closest("[data-tw]");
+  if (tw){ const id = tw.dataset.tw; S.open.has(id) ? S.open.delete(id) : S.open.add(id); return renderTree() }
+  const n = e.target.closest(".node"); if (!n) return;
+  S.camp = n.dataset.c || null; S.ag = n.dataset.g || null;
+  if (S.camp && !S.ag) S.open.add(S.camp);
+  if (isMeta()){
+    if (S.ag && ["campaigns", "adsets"].includes(S.kind)) S.kind = "ads";
+    if (S.camp && !S.ag && S.kind === "campaigns") S.kind = "adsets";
+  } else {
+    if (S.ag && ["campaigns"].includes(S.kind)) S.kind = "keywords";
+    if (S.camp && !S.ag && S.kind === "campaigns") S.kind = "ad_groups";
+  }
+  renderTree(); renderTabs(); loadGrid();
+};
+$("#treeSearch").oninput = renderTree;
+
+// ---- tabs + grid ----
+function renderTabs(){
+  $("#tabs").innerHTML = Object.entries(V()).filter(([k, v]) => !v.api || S.gsrc !== "editor").map(([k, v]) => `<button class="tab ${k === S.kind ? "on" : ""}" data-k="${k}">${v.label}${k === S.kind ? `<span class="n">${S.rows.length}</span>` : ""}</button>`).join("");
+}
+$("#tabs").onclick = e => { const b = e.target.closest(".tab"); if (!b) return; S.kind = b.dataset.k; localSet("kind", S.kind); S.sort = null; S.focus = null; renderTabs(); renderViews(); loadGrid() };
+function scopeNames(){
+  const c = S.tree.find(c => String(c.id) === S.camp), g = c && c.ad_groups.find(g => String(g.id) === S.ag);
+  return {campaign: c ? c.name : null, ad_group: g ? g.name : null};
+}
+async function loadGrid(){
+  if (!V()[S.kind]) S.kind = "campaigns";
+  const kind = S.kind, seq = S.gridSeq = (S.gridSeq || 0) + 1;
+  const rows = await api("/api/grid?" + qs({acct:S.acct, kind, campaign_id:S.camp, ad_group_id:S.ag, status:srvStatus(), search:$("#search").value, ...rangeQ()}));
+  if (kind !== S.kind || seq !== S.gridSeq) return; // a newer request (other range, scope or tab) is on its way
+  S.rows = rows; S.sel.clear();
+  const note = isMeta() && ["leadforms", "audiences"].includes(kind) ? ((rows[0] && rows[0].note) || GDPR_HINT) : "";
+  $("#gridNote").textContent = note; $("#gridNote").title = note; $("#gridNote").style.display = note ? "" : "none";
+  const sc = scopeNames();
+  $("#crumb").textContent = [sc.campaign || "All campaigns", sc.ad_group].filter(Boolean).join("  /  ");
+  renderTabs(); renderGrid();
+}
+function cellVal(r, col){ return r._draft && r._draft[col.key] ? r._draft[col.key].value : r[col.key] }
+// ---- columns: catalogue per type, the chosen set per channel+type (saved views live on the server) ----
+const chan = () => isMeta() ? "meta" : "google";
+const layoutKey = kind => "cols." + chan() + "." + kind;
+function colsFor(kind = S.kind){
+  const all = V()[kind].cols, saved = localGet(layoutKey(kind));
+  if (saved){ try { const keys = [...new Set(JSON.parse(saved).map(newKey))], got = keys.map(k => all.find(c => c.key === k)).filter(Boolean); if (got.length) return got } catch(e) {} }
+  return all.filter(c => !c.hide);
+}
+// ---- status filter: All / Active / Paused / In draft / Live / Removed ----
+const isOn = st => st === "Active" || st === "Enabled";
+const FILTERS = () => [["all", "All"], ["active", isMeta() ? "Active" : "Enabled"], ["paused", "Paused"], ["draft", "In draft"],
+  ...(isMeta() ? [["live", "Live now"]] : []), ...(!isMeta() ? [["removed", "Removed"]] : [])];
+function passFilter(r){
+  const st = r._draft && r._draft.status ? r._draft.status.value : r.status;
+  switch (S.filter){
+    case "active": return isOn(st);
+    case "paused": return st === "Paused";
+    case "draft": return !!(r._new || r._draft);
+    case "live": return r.delivery === "Active" || ["audiences", "leadforms"].includes(S.kind);
+    case "removed": return st === "Removed";
+    default: return true;
+  }
+}
+function renderPills(){
+  const fs = FILTERS(); if (!fs.some(f => f[0] === S.filter)) S.filter = "all";
+  $("#fpills").innerHTML = fs.map(([k, l]) => `<button data-f="${k}" class="${k === S.filter ? "on" : ""}" title="${k === "live" ? "Actually delivering: the ad, its ad set and its campaign are all on" : ""}">${l}${k !== "all" ? `<span class="n">${S.rows.filter(r => { const o = S.filter; S.filter = k; const p = passFilter(r); S.filter = o; return p }).length}</span>` : ""}</button>`).join("");
+}
+$("#fpills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; const was = S.filter; S.filter = b.dataset.f; localSet("filter", S.filter);
+  if ((was === "removed") !== (S.filter === "removed")){ loadTree(); loadGrid() } else { renderPills(); renderGrid() } };
+function renderGrid(){
+  const v = V()[S.kind], cols = colsFor();
+  let rows = S.rows.filter(passFilter);
+  if (S.sort){ const {key, dir} = S.sort, mc = cols.find(c => c.key === key && isMoney(c)), sv = r => { const x = r[key]; return mc && dispCur() && x != null && x !== "" ? toDisp(x) : x };
+    rows = [...rows].sort((a, b) => { const x = sv(a) ?? "", y = sv(b) ?? ""; return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y))) * dir }) }
+  renderPills();
+  if (!rows.length) { $("#grid").innerHTML = `<div class="empty">Nothing here${S.camp ? " for this selection" : ""}${S.filter !== "all" ? " with this filter" : ""}.</div>`; updBulk(); return }
+  const MAX = 2000;
+  let h = `<table><thead><tr>${v.bulk ? `<th class="cb"><input type="checkbox" id="selAll"></th>` : ""}${cols.map(c => `<th data-s="${c.key}" draggable="true" title="Click to sort, drag to move" class="${S.sort && S.sort.key === c.key ? "sorted" : ""}">${esc(colLabel(c))}${S.sort && S.sort.key === c.key ? (S.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>`;
+  rows.slice(0, MAX).forEach(r => {
+    const i = S.rows.indexOf(r);
+    const removed = r.status === "Removed" || (r._draft && r._draft.status && r._draft.status.value === "Removed");
+    h += `<tr data-i="${i}" class="${r._new ? "new" : ""} ${removed ? "removed" : ""} ${S.focus && String(r.id) === S.focus ? "focus" : ""}">`;
+    if (v.bulk) h += `<td class="cb">${r._new ? "" : `<input type="checkbox" data-sel="${i}" ${S.sel.has(i) ? "checked" : ""}>`}</td>`;
+    for (const c of cols){
+      if (c.thumb){ const mu = r.media_id && mediaUrl(r.media_id);
+        h += `<td class="thumbc">${mu ? (r.format === "Video" ? `<span class="chip draft" title="Uploaded video, stored on this Mac until you push">Video</span>` : `<img class="thumb" src="${esc(mu)}" data-big="${esc(mu)}" alt="" loading="lazy">`)
+          : r.thumbnail ? `<img class="thumb" src="${esc(r.thumbnail)}" data-big="${esc(r.image || r.thumbnail)}" alt="" loading="lazy">` : ""}</td>`; continue }
+      const d = r._draft && r._draft[c.key];
+      const val = cellVal(r, c);
+      const mon = isMoney(c) ? moneyCell(c, val) : null;
+      const shown = mon ? mon[0] : c.fmt ? c.fmt(val) : esc(val);
+      const editable = c.edit && !r._new && (!c.when || c.when(r)) && !(S.kind === "campaigns" && c.key === "budget" && r.shared_budget);
+      const stEdit = editable && (c.edit.startsWith("status") || c.edit === "mstatus");
+      h += `<td class="${c.num ? "num" : ""} ${d ? "changed" : ""} ${stEdit ? "st-edit" : editable ? "edit" : ""}" data-k="${c.key}" title="${esc(mon ? mon[1] : val)}">${d ? `<span class="old">${isMoney(c) ? moneyCell(c, r[c.key])[0] : c.fmt ? c.fmt(r[c.key]) : esc(r[c.key])}</span>` : ""}${shown}</td>`;
+    }
+    h += "</tr>";
+  });
+  h += "</tbody></table>";
+  if (rows.length > MAX) h += `<div class="empty">Showing ${MAX} of ${rows.length}. Pick a campaign or search to narrow it down.</div>`;
+  $("#grid").innerHTML = h; updBulk(); refreshFocus();
+}
+// drag a column header to move the column; the order is saved like the Columns dialog (Save as a view keeps it under a name)
+{
+  let dragKey = null;
+  const clear = () => document.querySelectorAll("#grid th.drop-l, #grid th.drop-r").forEach(t => t.classList.remove("drop-l", "drop-r"));
+  const side = (th, e) => { const r = th.getBoundingClientRect(); return e.clientX < r.left + r.width / 2 ? "l" : "r" };
+  $("#grid").addEventListener("dragstart", e => { const th = e.target.closest("th[data-s]"); if (!th) return;
+    dragKey = th.dataset.s; th.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragKey) });
+  $("#grid").addEventListener("dragover", e => { const th = e.target.closest("th[data-s]"); if (!th || !dragKey) return;
+    e.preventDefault(); clear(); if (th.dataset.s !== dragKey) th.classList.add("drop-" + side(th, e)) });
+  $("#grid").addEventListener("dragend", () => { dragKey = null; clear(); document.querySelectorAll("#grid th.dragging").forEach(t => t.classList.remove("dragging")) });
+  $("#grid").addEventListener("drop", e => { const th = e.target.closest("th[data-s]"); if (!th || !dragKey) return; e.preventDefault();
+    const to = th.dataset.s, after = side(th, e) === "r", from = dragKey; dragKey = null; clear(); if (to === from) return;
+    const keys = colsFor().map(c => c.key).filter(k => k !== from);
+    keys.splice(keys.indexOf(to) + (after ? 1 : 0), 0, from);
+    localSet(layoutKey(S.kind), JSON.stringify(keys)); localSet("view." + chan() + "." + S.kind, ""); renderViews(); renderGrid() });
+}
+$("#grid").onclick = e => {
+  const th = e.target.closest("th[data-s]");
+  if (th){ const k = th.dataset.s; S.sort = S.sort && S.sort.key === k ? {key:k, dir:-S.sort.dir} : {key:k, dir:1}; return renderGrid() }
+  if (e.target.id === "selAll"){ S.rows.forEach((r, i) => !r._new && passFilter(r) && (e.target.checked ? S.sel.add(i) : S.sel.delete(i))); renderGrid(); return }
+  if (e.target.dataset.sel !== undefined){ const i = +e.target.dataset.sel; e.target.checked ? S.sel.add(i) : S.sel.delete(i); return updBulk() }
+  const st = e.target.closest("td.st-edit");
+  if (st) return statusMenu(st);
+  const td = e.target.closest("td.edit");
+  if (td && !td.querySelector("input, select")) return startEdit(td);
+  if (td) return;
+  const tr = e.target.closest("tr[data-i]");
+  if (tr && !e.target.closest("td.cb")) focusRow(S.rows[+tr.dataset.i]);
+};
+// ---- keyboard: Up/Down (and Home/End, PageUp/PageDown) move through the rows like in Editor ----
+document.addEventListener("keydown", e => {
+  const keys = {ArrowDown:1, ArrowUp:-1, PageDown:10, PageUp:-10, Home:-1e9, End:1e9};
+  if (!(e.key in keys) || e.altKey || e.ctrlKey || e.metaKey) return;
+  if ($("#dlg").open || document.body.classList.contains("area") || document.body.classList.contains("ov")) return;
+  const t = e.target; if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  const trs = [...document.querySelectorAll("#grid tr[data-i]")]; if (!trs.length) return;
+  e.preventDefault();
+  const cur = trs.findIndex(tr => tr.classList.contains("focus"));
+  const i = cur < 0 ? (keys[e.key] > 0 ? 0 : trs.length - 1) : Math.max(0, Math.min(trs.length - 1, cur + keys[e.key]));
+  if (i === cur) return;
+  focusRow(S.rows[+trs[i].dataset.i]);
+  trs[i].scrollIntoView({block:"nearest"});
+});
+$("#grid").ondblclick = e => {
+  const tr = e.target.closest("tr[data-i]"); if (!tr || e.target.closest("td.edit, td.st-edit")) return;
+  const r = S.rows[+tr.dataset.i], v = V()[S.kind];
+  if (v.open && !r._new) v.open(r);
+};
+// ---- status menu: click the status pill, pick the new status ----
+function statusMenu(td){
+  const r = S.rows[+td.closest("tr").dataset.i], col = colsFor().find(c => c.key === "status");
+  const cur = cellVal(r, col);
+  const opts = col.edit === "mstatus" ? [["Active", "Turn on"], ["Paused", "Pause"]] : col.edit === "status3" ? [["Enabled", "Enable"], ["Paused", "Pause"]] : [["Enabled", "Enable"], ["Paused", "Pause"], ["Removed", "Remove"]];
+  const inDraft = r._draft && r._draft.status;
+  openMenu(td, opts.map(([v, l]) => [`<span class="pill ${v}"><i></i>${v}</span> ${v === r.status ? "<span class='hint' style='margin:0'>(live now)</span>" : l}`, async () => {
+    if (inDraft) await api("/api/draft/remove", {ids:[r._draft.status.draft_id]});
+    if (v === r.status){ if (inDraft) { toast("Back to the live status"); poll(true) } return }
+    if (v === "Removed" && !confirm("Remove it? (Draft only - nothing changes until you send to Editor and Post.)")) return;
+    addChanges([changeFor(r, "status", v)], "");
+  }, v === cur]).concat(inDraft ? [["sep"], ["Keep it as it is live (drop from draft)", async () => { await api("/api/draft/remove", {ids:[r._draft.status.draft_id]}); poll(true) }]] : []));
+}
+function openMenu(anchor, items){
+  const m = $("#menu");
+  m.innerHTML = items.map((it, i) => it[0] === "sep" ? `<div class="sep"></div>` : `<button data-mi="${i}" class="${it[2] ? "cur" : ""}">${it[0]}</button>`).join("");
+  const b = anchor.getBoundingClientRect();
+  m.style.display = "block"; m.style.left = Math.min(b.left, innerWidth - m.offsetWidth - 8) + "px";
+  m.style.top = (b.bottom + m.offsetHeight > innerHeight ? b.top - m.offsetHeight : b.bottom) + "px";
+  m.onclick = e => { const x = e.target.closest("[data-mi]"); if (!x) return; m.style.display = "none"; items[+x.dataset.mi][1]() };
+  setTimeout(() => document.addEventListener("click", function off(e){ if (!m.contains(e.target)){ m.style.display = "none"; document.removeEventListener("click", off) } }), 0);
+}
+// ---- hover a thumbnail: bigger picture ----
+document.addEventListener("mouseover", e => {
+  const img = e.target.closest("img.thumb, img.bigok"), hp = $("#hoverPrev");
+  if (!img){ hp.style.display = "none"; return }
+  hp.innerHTML = `<img src="${esc(img.dataset.big || img.src)}" alt="">`; hp.style.display = "block";
+  const b = img.getBoundingClientRect(), W = 432;
+  hp.style.left = (b.right + 12 + W > innerWidth ? Math.max(8, b.left - W - 12) : b.right + 12) + "px";
+  hp.style.top = Math.max(8, Math.min(b.top - 40, innerHeight - 440)) + "px";
+});
+// The bulk bar is always laid out (no jump when rows are ticked); buttons are disabled until something is selected.
+function updBulk(){
+  const n = S.sel.size, b = $("#bulk"), has = !!(V()[S.kind] || {}).bulk;
+  b.classList.toggle("off", !has); b.title = n ? "" : "Select rows first";
+  b.querySelectorAll("button").forEach(x => { x.disabled = !n; x.title = n ? "" : "Select rows first" });
+  $("#bulkN").textContent = n ? n + " selected" : "None selected";
+}
+let searchT; $("#search").oninput = () => { clearTimeout(searchT); searchT = setTimeout(loadGrid, 250) };
+
+
+// ---- inline edits -> draft changes (gae plan format) ----
+function startEdit(td){
+  const r = S.rows[+td.closest("tr").dataset.i], col = V()[S.kind].cols.find(c => c.key === td.dataset.k);
+  const cur = cellVal(r, col);
+  if (col.edit.startsWith("status") || col.edit === "mstatus"){
+    const opts = col.edit === "mstatus" ? ["Active", "Paused"] : col.edit === "status3" ? ["Enabled", "Paused"] : ["Enabled", "Paused", "Removed"];
+    td.innerHTML = `<select>${opts.map(o => `<option ${o === cur ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+  } else td.innerHTML = `<input type="number" step="0.01" min="0" value="${cur ?? ""}" title="${esc(acctCur() ? acctCur() + ", account currency: typed, saved and pushed as is" : "Account currency")}" placeholder="${esc(acctCur())}">`;
+  const inp = td.firstChild; inp.focus();
+  let done = false;
+  const finish = async save => {
+    if (done) return; done = true;
+    const nv = inp.value;
+    if (!save || nv === "" || String(nv) === String(cur)) return renderGrid();
+    try { await addChanges([changeFor(r, col.key, nv)], "") } catch(err) { toast(err.message); renderGrid() }
+  };
+  inp.onkeydown = e => { if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false) };
+  inp.onblur = () => finish(true);
+  if (inp.tagName === "SELECT") inp.onchange = () => finish(true);
+}
+const MLEVEL = {campaigns:"campaign", adsets:"adset", ads:"ad"};
+function changeFor(r, key, value, kind = S.kind){
+  if (isMeta()){
+    const level = MLEVEL[kind];
+    if (key === "status") return {type:"meta_status", level, id:r.id, status:String(value).toLowerCase().replace("enabled", "active")};
+    return {type:"meta_budget", level, id:r.id, budget:Number(value)};
+  }
+  const status = key === "status" ? String(value).toLowerCase() : undefined;
+  const num = key !== "status" ? Number(value) : undefined;
+  if (kind === "campaigns") return {type:"campaign", campaign:r.campaign, ...(status ? {status} : {budget:num})};
+  if (kind === "ad_groups") return {type:"ad_group", campaign:r.campaign, ad_group:r.ad_group, ...(status ? {status} : {max_cpc:num})};
+  if (kind === "keywords") return {type:"keyword", edit:true, campaign:r.campaign, ad_group:r.ad_group, match:r.match.toLowerCase(), keywords:[r.keyword], ...(status ? {status} : {max_cpc:num})};
+  if (kind === "ads") return {type:"rsa", edit:true, campaign:r.campaign, ad_group:r.ad_group, local_id:r.id, ...(r.ad_id ? {ad_id:r.ad_id} : {}), status};
+  if (kind === "negatives") return {type:"negative", remove:true, campaign:r.campaign, ...(r.ad_group ? {ad_group:r.ad_group} : {}), match:r.match.toLowerCase(), keywords:[r.keyword]};
+}
+document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
+  const st = b.dataset.bulk, rows = [...S.sel].map(i => S.rows[i]);
+  if (isMeta()){
+    if (st === "removed") return toast("Studio never deletes on Meta - pause instead");
+    return addChanges(rows.map(r => changeFor(r, "status", st === "enabled" ? "active" : "paused")), "");
+  }
+  if (S.kind === "asset_group_assets"){
+    if (st !== "removed") return toast("PMax assets can only be removed here (or added with + Add)");
+    const txt = rows.filter(r => ["HEADLINE", "LONG_HEADLINE", "DESCRIPTION"].includes(r.field_type));
+    if (txt.length < rows.length) toast("Only text assets (headlines, long headlines, descriptions) can be removed from Studio");
+    if (!txt.length || !confirm(`Remove ${txt.length} text asset(s) from their asset groups? Removal is permanent in Google Ads once pushed.`)) return;
+    return addChanges(txt.map(r => ({type:"pmax_asset", remove:true, campaign:r.campaign, asset_group:r.asset_group, field:r.field_type.toLowerCase(), texts:[r.text]})), "");
+  }
+  if (S.kind === "negatives" && st !== "removed") return toast("Negatives can only be removed");
+  if (S.kind === "ads" && rows.some(r => r.ad_type !== "Responsive search ad")) return toast("Only responsive search ads can change status here");
+  if (st === "removed" && !confirm(`Remove ${rows.length} item(s)? (Draft only - nothing changes until you send to Editor and Post.)`)) return;
+  let changes = rows.map(r => changeFor(r, "status", st));
+  if (S.kind === "negatives") changes = rows.filter(r => r.level !== "Shared list").map(r => changeFor(r, "remove"));
+  await addChanges(changes, "");
+});
+
+// ---- draft panel ----
+async function addChanges(changes, note){
+  const items = await api("/api/draft/add", {changes, note, by:"you"});
+  const bad = items.filter(i => i.problems.length);
+  toast(bad.length ? `Added, but ${bad.length} need fixing` : `Added ${items.length} change${items.length > 1 ? "s" : ""} to the draft`);
+  await poll(true);
+}
+function renderDraft(d){
+  const n = d.items.length;
+  $("#draftN").textContent = n || "0"; $("#draftN2").textContent = n ? `(${n})` : "";
+  S.draftItems = d.items;
+  $("#draft").innerHTML = n ? d.items.slice().reverse().map(i => `<div class="item">
+    <div class="who"><span><b>${i.by === "claude" ? "Claude" : "You"}</b> · ${esc(i.ts.slice(11, 16))}</span><button class="link danger" data-rm="${i.id}">Undo</button></div>
+    <div class="sum">${esc(i.summary)}</div>
+    ${i.note ? `<div class="note">${esc(i.note)}</div>` : ""}
+    ${i.problems.map(p => `<div class="prob">${esc(p)}</div>`).join("")}
+    ${i.warnings.map(p => `<div class="warnl">${esc(p)}</div>`).join("")}
+  </div>`).join("") : `<div class="empty">No changes yet.<br><br>Edit a cell, use + Add, or ask Claude (MCP: ads-studio).</div>`;
+  const blocked = d.items.some(i => i.problems.length);
+  $("#pushN").textContent = n || ""; $("#pushHdr").classList.toggle("has", n > 0);
+  $("#pushHdr").title = n ? `${n} change${n > 1 ? "s" : ""} in the draft${blocked ? " (some need fixing)" : ""}. Review and push them live.` : "Nothing in the draft. Push history is in here too.";
+}
+$("#draft").onclick = async e => { const b = e.target.closest("[data-rm]"); if (!b) return; await api("/api/draft/remove", {ids:[b.dataset.rm]}); poll(true) };
+$("#clearBtn").onclick = async () => { if (confirm("Empty the whole draft?")) { await api("/api/draft/clear", {}); poll(true) } };
+$("#valBtn").onclick = async () => {
+  await asFlush();
+  const res = await api("/api/validate", {});
+  const bad = res.filter(r => !r.ok);
+  toast(!res.length ? "Draft is empty" : bad.length ? `${bad.length} of ${res.length} can't be written - see red notes` : `All ${res.length} changes check out against Editor's data`);
+  poll(true);
+};
+async function sendToEditor(){
+  await asFlush();
+  const st = await api("/api/state?acct=" + S.acct);
+  const msg = (st.editor_running ? "Google Ads Editor will close and reopen (about 15 seconds). Any half-typed edit in Editor is lost.\n\n" : "") +
+    `Send ${st.draft.items.length} change(s) into Editor as pending changes? Nothing goes live until you Post in Editor.`;
+  if (!confirm(msg)) return;
+  showDialog("Sending to Google Ads Editor", `<div class="prog-h"><span class="spin"></span>Sending ...</div>`, []);
+  try {
+    const r = await api("/api/push", {});
+    showDialog(r.ok ? "Sent to Google Ads Editor" : "Not sent", `<pre class="out">${esc(r.output)}</pre>${r.ok ? `<p class="hint">Review the changes in Editor (they carry the comment shown above), then Post.</p>` : ""}`, []);
+  } catch(err) { toast(err.message) }
+  poll(true);
+}
+
+// ---- push live: straight to the Google Ads API, after Google has checked it (validateOnly) ----
+const LIVE = {enable_new:false};
+const histLink = () => ["Push history", liveHistory, "link"];
+// Editor-style tally of the draft: "Ad sets edited 2", "Keywords added 14" ...
+const ENT = {campaign:["Campaign", "Campaigns"], adset:["Ad set", "Ad sets"], ad_group:["Ad group", "Ad groups"], ad:["Ad", "Ads"], keyword:["Keyword", "Keywords"],
+  negative:["Negative keyword", "Negative keywords"], callout:["Callout", "Callouts"], sitelink:["Sitelink", "Sitelinks"], excluded_location:["Excluded location", "Excluded locations"],
+  pmax_asset:["Asset group asset", "Asset group assets"], audience:["Audience", "Audiences"], shared_list:["Shared list", "Shared lists"]};
+function pushCounts(items){
+  const out = {};
+  for (const it of items){
+    const c = it.change || {}, t = c.type || "";
+    let ent, verb, n = 1;
+    if (t.startsWith("meta_")){
+      ent = t === "meta_new_ad" ? "ad" : t === "meta_new_campaign" ? "campaign" : t === "meta_new_adset" ? "adset" : (c.level || "ad");
+      verb = /^meta_new_/.test(t) ? "added" : "edited";
+    } else {
+      ent = t === "rsa" ? "ad" : t;
+      n = (c.keywords || c.texts || c.locations || c.lists || [1]).length || 1;
+      verb = c.remove || c.status === "removed" ? "removed" : c.new || (!c.edit && ["keyword", "negative", "callout", "sitelink", "excluded_location", "pmax_asset", "audience", "shared_list"].includes(t)) || (t === "rsa" && !c.edit) ? "added" : "edited";
+    }
+    const [one, many] = ENT[ent] || [ent.replace(/_/g, " "), ent.replace(/_/g, " ") + "s"];
+    const k = one + "|" + verb; out[k] = out[k] || {one, many, verb, n:0}; out[k].n += n;
+  }
+  return Object.values(out).sort((a, b) => b.n - a.n).map(x => [`${x.n === 1 ? x.one : x.many} ${x.verb}`, x.n]);
+}
+async function livePreview(){
+  const where = isMeta() ? "Meta" : "Google Ads", who = isMeta() ? "Meta" : "Google";
+  if (!(S.draftItems || []).length){
+    showDialog("Push to " + where, `<div class="empty">Nothing in the draft.<br><br>Every change you make lands in the draft on its own. Come back here to push it all live in one go.</div>`, [histLink()]);
+    return;
+  }
+  showDialog("Push to " + where, `<div class="empty">Asking ${who} to check the ${S.draftItems.length} change${S.draftItems.length > 1 ? "s" : ""} in the draft ...</div>`, [histLink()]);
+  let p;
+  try { p = await api("/api/live/preview", {enable_new:LIVE.enable_new}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
+  const byId = Object.fromEntries((S.draftItems || []).map(i => [i.id, i]));
+  const counts = pushCounts(p.items.map(i => byId[i.id] || {}));
+  const bad = p.items.filter(i => i.problems.length), nSpend = p.items.filter(i => i.spend.length).length, nPerm = p.items.filter(i => i.permanent.length).length;
+  const details = p.items.map(i => `<div class="pv"><div><b>${i.by === "claude" ? "Claude" : "You"}:</b> ${esc(i.summary)}</div>
+    ${i.lines.map(l => `<div class="ln2">${esc(l)}</div>`).join("")}
+    ${i.spend.map(f => `<span class="flag spend">raises spend: ${esc(f)}</span> `).join("")}
+    ${i.permanent.length ? `<span class="flag perm">permanent, can't be undone</span>` : ""}
+    ${i.problems.map(x => `<div class="prob">${esc(x)}</div>`).join("")}</div>`).join("");
+  const body = `<table class="tally">${counts.map(([l, n]) => `<tr><td>${esc(l)}</td><td>${n}</td></tr>`).join("")}</table>
+    ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then Undo or fix ${bad.length > 1 ? "them" : "it"} in the Draft tab.</div>` : ""}
+    ${isMeta() ? "" : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
+    ${p.spend ? `<label class="tick"><input type="checkbox" id="lv_spend"> <span>${nSpend} change${nSpend > 1 ? "s" : ""} can raise spend. I know.</span></label>` : ""}
+    ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (removals). I know.</span></label>` : ""}
+    <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary>${details}</details>`;
+  showDialog("Push to " + where, body, [histLink(), ...(isMeta() ? [] : [["Send to Editor instead", sendToEditor]]), ["Push live", livePush, "live"]]);
+  const btn = $("#dlgF .live");
+  const upd = () => { btn.disabled = !p.ok || (p.spend && !$("#lv_spend").checked) || (p.permanent && !$("#lv_perm").checked) };
+  ["#lv_spend", "#lv_perm"].forEach(id => $(id) && ($(id).onchange = upd)); upd();
+  if ($("#lv_new")) $("#lv_new").onchange = e => { LIVE.enable_new = e.target.checked; livePreview() };
+}
+// ---- progress list while a push or undo runs (like Editor's Post window) ----
+const PST = {waiting:"Waiting", checking:"Checking", sending:"Sending", done:"Done", failed:"Failed", reversed:"Reversed"};
+function progressHTML(p, title){
+  const items = p.items || [];
+  const pct = x => Math.round(100 * (x.state === "done" ? 1 : (0.3 * x.checked + 0.7 * x.sent) / x.total));
+  const n = items.filter(x => x.state === "done").length;
+  const head = p.running ? `<span class="spin"></span>${esc(p.message || title)}` : p.ok ? `<span class="done">Done</span> ${esc(p.message || "")}` : `<span class="bad">Stopped</span> ${esc(p.message || "")}`;
+  return `<div class="prog-h">${head}</div><p class="hint" style="margin:0 0 6px">${n} of ${items.length} done · ${Math.round(p.elapsed || 0)}s</p>`
+    + items.map(x => `<div class="prog-row ${x.state} ${p.running && ["checking", "sending"].includes(x.state) ? "busy" : ""}"><div>${esc(x.summary)}</div>
+      <div class="bar"><i style="width:${pct(x)}%"></i></div><div class="st">${PST[x.state] || x.state} ${x.state === "done" ? "" : pct(x) + "%"}</div></div>`).join("");
+}
+async function withProgress(title, path, body, progUrl){
+  showDialog(title, `<div class="prog-h"><span class="spin"></span>Starting ...</div>`, []);
+  let stop = false, seen = false;
+  const tick = async () => {
+    if (stop) return;
+    try { const p = await api(progUrl || "/api/live/progress?" + qs({acct:S.acct}));
+      if (!stop && (p.running || seen)) { seen = true; $("#dlgB").innerHTML = progressHTML(p, title) } else if (!stop && p.running === false && !seen) {}
+    } catch(e) {}
+    if (!stop) setTimeout(tick, 600);
+  };
+  setTimeout(tick, 250);
+  try { return await api(path, body) } finally { stop = true }
+}
+async function lastProgress(progUrl){ try { return progressHTML(await api(progUrl || "/api/live/progress?" + qs({acct:S.acct})), "") } catch(e) { return "" } }
+async function livePush(){
+  const btn = $("#dlgF .live"); btn.disabled = true; btn.textContent = "Pushing ...";
+  const body = {enable_new:LIVE.enable_new, accept_spend:!!($("#lv_spend") && $("#lv_spend").checked), accept_permanent:!!($("#lv_perm") && $("#lv_perm").checked)};
+  try {
+    const r = await withProgress("Pushing live to " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/push", body);
+    const list = await lastProgress();
+    showDialog(r.ok ? (isMeta() ? "Live on Meta" : "Live in Google Ads") : "Not pushed", `${r.ok ? `<p class="pushok"><b>Everything is live.</b></p>` : ""}${list}<p>${esc(r.message)}</p>${r.errors ? `<pre class="out">${esc(JSON.stringify(r.errors, null, 1))}</pre>` : ""}
+      ${r.ok && !isMeta() ? `<p class="hint">Editor doesn't know about this yet: press Get recent changes in Editor so Studio and Editor show the live values.</p>` : ""}`,
+      r.ok ? [histLink(), ["Undo this push", () => liveUndo(r.push_id), "danger"], ["Done", () => dlg.close(), "primary"]] : [histLink()]);
+  } catch(e) { toast(e.message) }
+  poll(true);
+}
+async function liveUndo(id){
+  if (!confirm(`Reverse this push in ${isMeta() ? "Meta" : "Google Ads"} now?`)) return;
+  try {
+    const r = await withProgress("Undoing in " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/undo", {push_id:id});
+    const list = await lastProgress();
+    showDialog(r.ok ? "Undone" : "Not undone", `${list}<p>${esc(r.message)}</p>${r.not_undone && r.not_undone.length ? `<p class="hint">Not reversed automatically:</p><ul>${r.not_undone.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}${r.errors ? `<pre class="out">${esc(JSON.stringify(r.errors, null, 1))}</pre>` : ""}`, []);
+  } catch(e) { toast(e.message) }
+  poll(true);
+}
+async function liveHistory(){
+  const h = await api("/api/live/history?acct=" + S.acct);
+  showDialog("Live pushes", h.length ? h.map(r => `<div class="pv"><div><b>${esc(r.ts.replace("T", " "))}</b> ${r.undo_of ? "(undo)" : ""} ${r.ok ? "" : `<span class="flag perm">failed</span>`} ${r.undone ? `<span class="flag spend">undone</span>` : ""}</div>
+    ${r.summaries.map(x => `<div>${esc(x)}</div>`).join("")}
+    ${r.lines.map(l => `<div class="ln2">${esc(l)}</div>`).join("")}
+    ${r.can_undo ? `<button class="danger" data-undo="${r.id}" style="margin-top:6px">Undo</button>` : ""}</div>`).join("") : `<div class="empty">No live pushes yet.</div>`, [["Back to push", livePreview]]);
+  document.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => liveUndo(b.dataset.undo));
+}
+$("#pushHdr").onclick = async () => { await asFlush(); await poll(true); livePreview() };
+
+// ---- live sync: picks up Claude's MCP edits and Editor changes ----
+async function poll(force){
+  let st; try { st = await api("/api/state?" + qs({acct:S.acct, ...rangeQ()})) } catch(e) { return }
+  const g = st.google || {};
+  $("#refreshBtn").style.display = isMeta() || g.source === "api" ? "" : "none";
+  $("#pend").style.display = isMeta() ? "none" : "";
+  if (isMeta()){
+    $("#fresh").textContent = st.refreshing ? "Meta: refreshing ..." : "Meta data " + (st.last_download || "").replace("T", " ");
+    $("#fresh").className = "chip";
+    $("#fresh").title = "Pulled from the Meta API and kept until you refresh (Refresh data, or Push live / Undo for this account)";
+    $("#behind").style.display = "none";
+    if (S.wasRefreshing && !st.refreshing){ loadTree(); force = true }
+    S.wasRefreshing = st.refreshing;
+    if (force || st.draft.version !== S.draftV){ S.draftV = st.draft.version; renderDraft(st.draft); loadTree(); if (!document.querySelector("td.edit input, td.edit select")) loadGrid() } // the tree shows draft campaigns / ad sets
+    return;
+  }
+  const p = Object.values(st.editor_pending).reduce((a, b) => a + b, 0);
+  $("#pend").textContent = p ? `${p} unposted in Editor` : "Editor: nothing unposted"; $("#pend").className = "chip " + (p ? "warn" : "ok");
+  if (S.gsrc !== g.source){ const first = !S.gsrc; S.gsrc = g.source; renderTabs(); if (!first) { loadTree(); force = true } }
+  if (g.source === "api"){
+    $("#fresh").textContent = g.refreshing ? "Google: refreshing ..." : "Google API data " + String(g.fetched_at || "").replace("T", " ").slice(0, 16);
+    $("#fresh").className = "chip"; $("#fresh").title = "Read from the Google Ads API and kept until you refresh (Refresh data, or Push live / Undo for this account). Stats: " + (g.window || "");
+    $("#pend").style.display = p ? "" : "none";
+    if (S.wasRefreshing && !g.refreshing){ loadTree(); force = true }
+    S.wasRefreshing = g.refreshing;
+  } else if (st.last_download){
+    const age = (Date.now() - new Date(st.last_download)) / 864e5;
+    $("#fresh").textContent = "Editor data " + st.last_download.replace("T", " ");
+    $("#fresh").className = "chip " + (age >= 2 ? "warn" : "");
+    $("#fresh").title = age >= 2 ? "Old data - in Editor: Get recent changes" : "Last download in Editor";
+  }
+  $("#behind").style.display = g.source !== "api" && st.last_live_push && st.last_download && st.last_live_push.slice(0, 16) > st.last_download ? "" : "none";
+  if (force || st.draft.version !== S.draftV){
+    const changed = S.draftV !== -1 && st.draft.version !== S.draftV;
+    S.draftV = st.draft.version; renderDraft(st.draft);
+    if ((changed || force) && !document.querySelector("td.edit input, td.edit select")) loadGrid();
+  }
+}
+
+// ---- add dialogs ----
+function showDialog(title, body, buttons){
+  $("#dlgT").textContent = title; $("#dlgB").innerHTML = body;
+  $("#dlgF").innerHTML = ""; for (const [label, fn, cls] of buttons){ const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; $("#dlgF").appendChild(b) }
+  $("#dlg").showModal();
+}
+const val = id => document.getElementById(id).value.trim();
+const lines = id => val(id).split("\n").map(s => s.trim()).filter(Boolean);
+function needScope(level){
+  const sc = scopeNames();
+  if (level === "ad_group" && !sc.ad_group){ toast("Pick an ad group in the tree first"); return null }
+  if (level === "campaign" && !sc.campaign){ toast("Pick a campaign in the tree first"); return null }
+  return sc;
+}
+async function submit(changes, note){ try { await addChanges(changes, note); dlg.close() } catch(e) { toast(e.message) } }
+const noteRow = `<div class="row"><label>Why (optional)</label><input id="f_note" placeholder="Shown in the draft and the changelog"></div>`;
+const ADD = {
+  campaigns(){
+    showDialog("New campaign", `<p class="hint">New campaigns are created Paused in Editor.</p>
+      <div class="row"><label>Name</label><input id="f_name" placeholder="[15] - Search - ..."></div>
+      <div class="row"><label>${esc(curLabel("Budget/day"))}</label><input id="f_budget" type="number" step="0.01"></div>
+      <div class="row"><label>Bid strategy</label><select id="f_bid"><option>Manual CPC</option><option>Maximize clicks</option></select></div>
+      <div class="row"><label>${esc(curLabel("Max CPC cap"))}</label><input id="f_cap" type="number" step="0.01" placeholder="for Maximize clicks"></div>
+      <div class="row"><label>Location IDs</label><input id="f_loc" placeholder="2826, 2276"></div>
+      <div class="row"><label>Find location</label><span><input id="f_geo" placeholder="type a country or region"> <span id="geoOut" class="hint"></span></span></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"campaign", new:true, campaign:val("f_name"), budget:+val("f_budget"), bid_strategy:val("f_bid"),
+        ...(val("f_cap") ? {max_cpc_cap:+val("f_cap")} : {}), languages:"en", locations:val("f_loc").split(/[ ,]+/).filter(Boolean).map(id => ({id:+id}))}], val("f_note")), "primary"]]);
+    $("#f_geo").oninput = async e => { const r = await api("/api/geo?" + qs({acct:S.acct, q:e.target.value})); $("#geoOut").innerHTML = r.slice(0, 5).map(g => `${esc(g.location)} <b>${g.id}</b>`).join(" · ") };
+  },
+  ad_groups(){
+    const sc = needScope("campaign"); if (!sc) return;
+    showDialog("New ad group in " + sc.campaign, `<div class="row"><label>Name</label><input id="f_name"></div>
+      <div class="row"><label>${esc(curLabel("Default max CPC"))}</label><input id="f_cpc" type="number" step="0.01"></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"ad_group", new:true, campaign:sc.campaign, ad_group:val("f_name"), ...(val("f_cpc") ? {max_cpc:+val("f_cpc")} : {})}], val("f_note")), "primary"]]);
+  },
+  keywords(){
+    const sc = needScope("ad_group"); if (!sc) return;
+    showDialog("Keywords in " + sc.ad_group, `<div class="row"><label>Match type</label><select id="f_match"><option value="exact">Exact</option><option value="phrase">Phrase</option><option value="broad">Broad</option></select></div>
+      <div class="row"><label>${esc(curLabel("Max CPC"))}</label><input id="f_cpc" type="number" step="0.01" placeholder="blank = ad group default"></div>
+      <div class="row"><label>Keywords</label><textarea id="f_kw" rows="8" placeholder="one per line"></textarea></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"keyword", campaign:sc.campaign, ad_group:sc.ad_group, match:val("f_match"), keywords:lines("f_kw"), ...(val("f_cpc") ? {max_cpc:+val("f_cpc")} : {})}], val("f_note")), "primary"]]);
+  },
+  negatives(){
+    const sc = needScope("campaign"); if (!sc) return;
+    showDialog("Negative keywords", `<div class="row"><label>Level</label><select id="f_lvl"><option value="c">Campaign: ${esc(sc.campaign)}</option>${sc.ad_group ? `<option value="g" selected>Ad group: ${esc(sc.ad_group)}</option>` : ""}</select></div>
+      <div class="row"><label>Match type</label><select id="f_match"><option value="phrase">Phrase</option><option value="exact">Exact</option><option value="broad">Broad</option></select></div>
+      <div class="row"><label>Negatives</label><textarea id="f_kw" rows="8" placeholder="one per line"></textarea></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"negative", campaign:sc.campaign, ...(val("f_lvl") === "g" ? {ad_group:sc.ad_group} : {}), match:val("f_match"), keywords:lines("f_kw")}], val("f_note")), "primary"]]);
+  },
+  ads(){ const sc = needScope("ad_group"); if (sc) rsaDialog({campaign:sc.campaign, ad_group:sc.ad_group, headlines:[], descriptions:[], final_url:"", path1:"", path2:""}, true) },
+  sitelinks(){ const sc = needScope("campaign"); if (sc) sitelinkDialog({campaign:sc.campaign, text:"", line1:"", line2:"", final_url:""}, true) },
+  callouts(){
+    const sc = needScope("campaign"); if (!sc) return;
+    showDialog("Callouts on " + sc.campaign, `<div class="row"><label>Callouts</label><textarea id="f_kw" rows="6" placeholder="one per line, max 25 characters"></textarea></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"callout", campaign:sc.campaign, texts:lines("f_kw")}], val("f_note")), "primary"]]);
+  },
+  locations(){
+    const sc = needScope("campaign"); if (!sc) return;
+    showDialog("Exclude locations from " + sc.campaign, `<div class="row"><label>Location IDs</label><input id="f_loc" placeholder="2356, 2586"></div>
+      <div class="row"><label>Find location</label><span><input id="f_geo" placeholder="type a country or region"> <span id="geoOut" class="hint"></span></span></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"excluded_location", campaign:sc.campaign, locations:val("f_loc").split(/[ ,]+/).filter(Boolean).map(id => ({id:+id}))}], val("f_note")), "primary"]]);
+    $("#f_geo").oninput = async e => { const r = await api("/api/geo?" + qs({acct:S.acct, q:e.target.value})); $("#geoOut").innerHTML = r.slice(0, 5).map(g => `${esc(g.location)} <b>${g.id}</b>`).join(" · ") };
+  },
+  async asset_group_assets(){
+    const sc = needScope("campaign"); if (!sc) return;
+    const groups = [...new Set((await api("/api/grid?" + qs({acct:S.acct, kind:"asset_groups", campaign_id:S.camp}))).map(g => g.asset_group))];
+    if (!groups.length) return toast("This campaign has no asset groups (pick a Performance Max campaign)");
+    showDialog("Add PMax text assets", `<p class="hint">Push live only (Editor can't take these). New assets start Paused unless you tick "create as enabled" in the push dialog.</p>
+      <div class="row"><label>Asset group</label><select id="f_ag">${groups.map(g => `<option>${esc(g)}</option>`).join("")}</select></div>
+      <div class="row"><label>Field</label><select id="f_field"><option value="headline">Headline (max 30)</option><option value="long_headline">Long headline (max 90)</option><option value="description">Description (max 90)</option></select></div>
+      <div class="row"><label>Texts</label><textarea id="f_kw" rows="6" placeholder="one per line"></textarea></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"pmax_asset", campaign:sc.campaign, asset_group:val("f_ag"), field:val("f_field"), texts:lines("f_kw")}], val("f_note")), "primary"]]);
+  },
+  async user_lists(){
+    const sc = needScope("campaign"); if (!sc) return;
+    const lists = await api("/api/grid?" + qs({acct:S.acct, kind:"user_lists"}));
+    showDialog("Add audiences to " + sc.campaign, `<p class="hint">Push live only. Observation = report and bid only. Targeting = only show ads to these lists (can cut reach).</p>
+      <div class="row"><label>Lists</label><select id="f_lists" multiple size="10">${lists.map(l => `<option>${esc(l.list)}</option>`).join("")}</select></div>
+      <div class="row"><label>Mode</label><select id="f_mode"><option value="">Keep the campaign's setting</option><option value="observation">Observation</option><option value="targeting">Targeting</option></select></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"audience", campaign:sc.campaign, lists:[...$("#f_lists").selectedOptions].map(o => o.value), ...(val("f_mode") ? {mode:val("f_mode")} : {})}], val("f_note")), "primary"]]);
+  },
+  async shared_lists(){
+    const sc = needScope("campaign"); if (!sc) return;
+    const lists = await api("/api/grid?" + qs({acct:S.acct, kind:"shared_lists"}));
+    showDialog("Attach shared negative lists to " + sc.campaign, `<div class="row"><label>Lists</label><select id="f_lists" multiple size="8">${lists.map(l => `<option>${esc(l.list)}</option>`).join("")}</select></div>${noteRow}`,
+      [["Add to draft", () => submit([{type:"shared_list", campaign:sc.campaign, lists:[...$("#f_lists").selectedOptions].map(o => o.value)}], val("f_note")), "primary"]]);
+  },
+};
+$("#addBtn").onclick = () => isMeta() ? (META_ADD[S.kind] ? META_ADD[S.kind]() : toast(`${V()[S.kind].label} are read-only in Studio`)) : ADD[S.kind] ? ADD[S.kind]() : toast(`Adding ${V()[S.kind].label.toLowerCase()} isn't supported here yet`);
+
+function counter(inp, max){ const c = inp.parentElement.querySelector(".cnt"); const f = () => { c.textContent = inp.value.length + "/" + max; c.classList.toggle("over", inp.value.length > max) }; inp.oninput = f; f() }
+function rsaDialog(r, isNew){
+  const hl = r.headlines.length ? r.headlines : Array.from({length:3}, () => ({text:"", pin:0}));
+  const ds = r.descriptions.length ? r.descriptions : Array.from({length:2}, () => ({text:"", pin:0}));
+  const ln = (kind, x, i, max, pins) => `<div class="ln"><input class="${kind}" value="${esc(x.text)}" maxlength="${max + 20}"><span class="cnt"></span>
+    <select class="${kind}-pin">${[0, ...Array.from({length:pins}, (_, k) => k + 1)].map(p => `<option value="${p}" ${+x.pin === p ? "selected" : ""}>${p ? "Pin " + p : "-"}</option>`).join("")}</select>
+    <button class="link danger" onclick="this.parentElement.remove()">✕</button></div>`;
+  showDialog((isNew ? "New responsive search ad" : "Edit ad") + " · " + r.ad_group, `
+    ${isNew ? `<p class="hint">New ads are created Paused.</p>` : `<p class="hint">Saving replaces all headlines and descriptions of this ad.</p>`}
+    <div class="row"><label>Final URL</label><input id="f_url" value="${esc(r.final_url)}"></div>
+    <div class="row"><label>Path 1 / Path 2</label><span><input id="f_p1" value="${esc(r.path1)}" maxlength="15" style="width:45%"> / <input id="f_p2" value="${esc(r.path2)}" maxlength="15" style="width:45%"></span></div>
+    <b>Headlines</b> <span class="hint">(3-15, max 30)</span><div class="lines" id="hl">${hl.map((x, i) => ln("h", x, i, 30, 3)).join("")}</div>
+    <button class="link" id="addH">+ headline</button><br><br>
+    <b>Descriptions</b> <span class="hint">(2-4, max 90)</span><div class="lines" id="ds">${ds.map((x, i) => ln("d", x, i, 90, 2)).join("")}</div>
+    <button class="link" id="addD">+ description</button>${noteRow}`,
+    [[isNew ? "Add to draft" : "Save to draft", () => {
+      const get = (sel, max) => [...document.querySelectorAll(sel + " .ln")].map(l => ({text:l.querySelector("input").value.trim(), pin:+l.querySelector("select").value})).filter(x => x.text);
+      const c = {type:"rsa", campaign:r.campaign, ad_group:r.ad_group, final_url:val("f_url"), path1:val("f_p1"), path2:val("f_p2"), headlines:get("#hl"), descriptions:get("#ds")};
+      if (!isNew){ Object.assign(c, {edit:true, local_id:r.id}); if (c.final_url === r.final_url) delete c.final_url; delete c.path1; delete c.path2 }
+      submit([c], val("f_note"));
+    }, "primary"]]);
+  const wire = () => { document.querySelectorAll("#hl input.h").forEach(i => counter(i, 30)); document.querySelectorAll("#ds input.d").forEach(i => counter(i, 90)) };
+  $("#addH").onclick = () => { if ($("#hl").children.length < 15){ $("#hl").insertAdjacentHTML("beforeend", ln("h", {text:"", pin:0}, 0, 30, 3)); wire() } };
+  $("#addD").onclick = () => { if ($("#ds").children.length < 4){ $("#ds").insertAdjacentHTML("beforeend", ln("d", {text:"", pin:0}, 0, 90, 2)); wire() } };
+  wire();
+}
+function sitelinkDialog(r, isNew){
+  showDialog(isNew ? "New sitelink on " + r.campaign : "Edit sitelink", `
+    <div class="row"><label>Link text</label><span><input id="f_t" value="${esc(r.text)}"> <span class="cnt"></span></span></div>
+    <div class="row"><label>Description 1</label><span><input id="f_l1" value="${esc(r.line1)}"> <span class="cnt"></span></span></div>
+    <div class="row"><label>Description 2</label><span><input id="f_l2" value="${esc(r.line2)}"> <span class="cnt"></span></span></div>
+    <div class="row"><label>Final URL</label><input id="f_url" value="${esc(r.final_url)}"></div>${noteRow}`,
+    [[isNew ? "Add to draft" : "Save to draft", () => {
+      if (isNew) return submit([{type:"sitelink", campaign:r.campaign, text:val("f_t"), line1:val("f_l1"), line2:val("f_l2"), final_url:val("f_url")}], val("f_note"));
+      const c = {type:"sitelink", edit:true, campaign:r.campaign || "(account)", text:r.text, ...(r.level === "Account" ? {level:"account"} : {})};
+      if (val("f_t") !== r.text) c.new_text = val("f_t");
+      if (val("f_l1") !== r.line1) c.line1 = val("f_l1");
+      if (val("f_l2") !== r.line2) c.line2 = val("f_l2");
+      if (val("f_url") !== r.final_url) c.final_url = val("f_url");
+      submit([c], val("f_note"));
+    }, "primary"]]);
+  counter($("#f_t"), 25); counter($("#f_l1"), 35); counter($("#f_l2"), 35);
+}
+
+// ---- Meta dialogs ----
+const CTAS = ["LEARN_MORE", "BOOK_TRAVEL", "SHOP_NOW", "SIGN_UP", "CONTACT_US", "GET_OFFER", "SEE_MORE", "DOWNLOAD", "APPLY_NOW", "SUBSCRIBE"];
+const ctaSel = cur => `<select id="f_cta">${[...new Set([cur, ...CTAS].filter(Boolean))].map(c => `<option ${c === cur ? "selected" : ""}>${c}</option>`).join("")}</select>`;
+function copyFields(r){
+  return `<div class="row"><label>Primary text</label><textarea id="f_pt" rows="6">${esc(r.primary_text)}</textarea></div>
+    <div class="row"><label>Headline</label><span><input id="f_hl" value="${esc(r.headline)}" style="width:85%"> <span class="cnt"></span></span></div>
+    <div class="row"><label>Description</label><input id="f_ds" value="${esc(r.description)}"></div>
+    <div class="row"><label>Link</label><input id="f_ln" value="${esc(r.link)}"></div>
+    <div class="row"><label>Button</label>${ctaSel(r.cta)}</div>`;
+}
+function metaAdDialog(r){
+  const thumb = r.thumbnail ? `<img src="${esc(r.thumbnail)}" style="max-height:90px;border-radius:6px;float:right;margin-left:10px" alt="">` : "";
+  const ro = !r.editable;
+  showDialog("Meta ad · " + r.ad, `${thumb}<p class="hint">${esc(r.campaign)} / ${esc(r.ad_set)} · ${esc(r.format)} · ${esc(r.delivery)}</p>
+    ${ro ? `<div class="warnl" style="clear:both">${esc(r.why_not)}. You can still rename it or change its status.</div>` :
+      `<p class="hint" style="clear:both">Saving makes a new creative with this copy (same image/video) and points the ad at it. The ad goes back to Meta review; undo points it back.</p>`}
+    <div class="row"><label>Ad name</label><input id="f_name" value="${esc(r.ad)}"></div>
+    ${copyFields(r)}${noteRow}`,
+    [["Save to draft", () => {
+      const ch = [], n = val("f_name");
+      if (n !== r.ad) ch.push({type:"meta_rename", level:"ad", id:r.id, new_name:n});
+      if (!ro){
+        const c = {type:"meta_copy", level:"ad", id:r.id};
+        const pt = $("#f_pt").value.trim();
+        if (pt !== (r.primary_text || "").trim()) c.primary_text = pt;
+        if (val("f_hl") !== r.headline) c.headline = val("f_hl");
+        if (val("f_ds") !== r.description) c.description = val("f_ds");
+        if (val("f_ln") !== r.link) c.link = val("f_ln");
+        if (val("f_cta") !== r.cta) c.cta = val("f_cta");
+        if (Object.keys(c).length > 3) ch.push(c);
+      }
+      ch.length ? submit(ch, val("f_note")) : dlg.close();
+    }, "primary"]]);
+  if (ro) ["f_pt", "f_hl", "f_ds", "f_ln", "f_cta"].forEach(id => $("#" + id).disabled = true);
+  counter($("#f_hl"), 40);
+}
+function adsetDialog(r){
+  const [amin, amax] = (r.age || "-").split("-");
+  showDialog("Meta ad set · " + r.ad_set, `<p class="hint">${esc(r.campaign)} · ${esc(r.delivery)} · ${esc(r.optimisation)}</p>
+    <div class="row"><label>Ad set name</label><input id="f_name" value="${esc(r.ad_set)}"></div>
+    <div class="row"><label>Countries</label><input id="f_ctry" value="${esc(r.countries)}" placeholder="GB, DE, US (2-letter codes)"></div>
+    <div class="row"><label>Age</label><span><input id="f_amin" type="number" min="18" max="65" value="${esc(amin)}" style="width:80px"> to <input id="f_amax" type="number" min="18" max="65" value="${esc(amax)}" style="width:80px"></span></div>
+    <div class="row"><label>End date</label><input id="f_end" type="date" value="${esc(r.end)}"></div>
+    <p class="hint">Audiences: ${esc(r.audiences || "none")} · Excluded: ${esc(r.excluded || "none")}${r.advantage_audience ? " · Advantage+ audience on" : ""}</p>${noteRow}`,
+    [["Save to draft", () => {
+      const ch = [];
+      if (val("f_name") !== r.ad_set) ch.push({type:"meta_rename", level:"adset", id:r.id, new_name:val("f_name")});
+      const ctry = val("f_ctry").toUpperCase().split(/[ ,]+/).filter(Boolean), t = {type:"meta_targeting", level:"adset", id:r.id};
+      if (ctry.join(",") !== (r.countries || "").replace(/ /g, "")) t.countries = ctry;
+      if (val("f_amin") !== amin) t.age_min = +val("f_amin");
+      if (val("f_amax") !== amax) t.age_max = +val("f_amax");
+      if (Object.keys(t).length > 3) ch.push(t);
+      if (val("f_end") !== r.end) ch.push({type:"meta_end", level:"adset", id:r.id, end_date:val("f_end") || null});
+      ch.length ? submit(ch, val("f_note")) : dlg.close();
+    }, "primary"]]);
+}
+const META_OBJ = [["traffic", "Traffic"], ["awareness", "Awareness"], ["engagement", "Engagement"], ["leads", "Leads"], ["sales", "Sales"]];
+// objective -> optimisation goals Studio allows (first = the default), as in meta_ads.GOALS
+const META_GOALS = {Traffic:["LANDING_PAGE_VIEWS", "LINK_CLICKS", "REACH", "IMPRESSIONS"], Awareness:["REACH", "IMPRESSIONS", "THRUPLAY"],
+  Engagement:["POST_ENGAGEMENT", "THRUPLAY"], Leads:["OFFSITE_CONVERSIONS", "LEAD_GENERATION", "LANDING_PAGE_VIEWS"], Sales:["OFFSITE_CONVERSIONS", "LANDING_PAGE_VIEWS", "LINK_CLICKS"]};
+const META_SPECIAL = [["EMPLOYMENT", "Employment (job ads)"], ["HOUSING", "Housing"], ["FINANCIAL_PRODUCTS_SERVICES", "Financial products and services"], ["ISSUES_ELECTIONS_POLITICS", "Social issues, elections or politics"], ["ONLINE_GAMBLING_AND_GAMING", "Online gambling and gaming"]];
+const goalLabel = g => g.toLowerCase().replace(/_/g, " ").replace(/^./, x => x.toUpperCase());
+function readFile(f){ return new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => bad(new Error("Couldn't read the file")); fr.readAsDataURL(f) }) }
+const META_ADD = {
+  campaigns(){
+    showDialog("New Meta campaign", `<p class="hint">New campaigns are created <b>Paused</b>, with lowest-cost bidding. Nothing changes on Meta until you push live.</p>
+      <div class="row"><label>Name</label><input id="f_name"></div>
+      <div class="row"><label>Objective</label><select id="f_obj">${META_OBJ.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
+      <div class="row"><label>${esc(curLabel("Campaign budget/day"))}</label><input id="f_budget" type="number" step="0.01" min="1" placeholder="optional: blank = budgets on the ad sets"></div>
+      <p class="hint">A campaign budget (CBO) lets Meta share it across the ad sets. Leave it blank to set a budget on each ad set.</p>
+      <div class="row"><label>Special ad categories</label><span>${META_SPECIAL.map(([v, l]) => `<label class="tick" style="margin:2px 0"><input type="checkbox" data-sac="${v}"> ${l}</label>`).join("")}</span></div>
+      <p class="hint">Job ads need Employment. Leave all unticked for normal travel ads.</p>${noteRow}`,
+      [["Add to draft", () => {
+        if (!val("f_name")) return toast("Give the campaign a name");
+        submit([{type:"meta_new_campaign", name:val("f_name"), objective:val("f_obj"), ...(val("f_budget") ? {daily_budget:+val("f_budget")} : {}),
+          special_ad_categories:[...document.querySelectorAll("[data-sac]:checked")].map(b => b.dataset.sac)}], val("f_note"));
+      }, "primary"]]);
+  },
+  async adsets(){
+    const sc = needScope("campaign"); if (!sc) return;
+    const camps = await api("/api/grid?" + qs({acct:S.acct, kind:"campaigns", status:"all"}));
+    const camp = camps.find(c => String(c.id) === S.camp);
+    if (!camp) return toast("Couldn't find that campaign: refresh and try again");
+    const cbo = camp.budget_level === "Campaign (CBO)", goals = META_GOALS[camp.objective] || [];
+    const iso = d => d.toISOString().slice(0, 10);
+    showDialog("New ad set in " + sc.campaign, `<p class="hint">New ad sets are created <b>Paused</b>. Objective: ${esc(camp.objective)}${camp._new ? " (new campaign in the draft)" : ""}.</p>
+      <div class="row"><label>Name</label><input id="f_name"></div>
+      ${cbo ? `<p class="hint">The campaign has a campaign budget (CBO), so the ad set has none.</p>` : `<div class="row"><label>${esc(curLabel("Budget/day"))}</label><input id="f_budget" type="number" step="0.01" min="1"></div>`}
+      <div class="row"><label>Countries</label><input id="f_ctry" placeholder="GB, DE, US (2-letter codes)"></div>
+      <div class="row"><label>Age</label><span><input id="f_amin" type="number" min="18" max="65" value="18" style="width:80px"> to <input id="f_amax" type="number" min="18" max="65" value="65" style="width:80px"></span></div>
+      <div class="row"><label>Start date</label><input id="f_start" type="date" min="${iso(new Date())}" placeholder="blank = when it is turned on"></div>
+      <div class="row"><label>End date</label><input id="f_end" type="date" min="${iso(new Date())}"></div>
+      <div class="row"><label>Optimisation</label><select id="f_goal"><option value="">Default${goals.length ? ` (${goalLabel(goals[0])})` : ""}</option>${goals.slice(1).map(g => `<option value="${g}">${goalLabel(g)}</option>`).join("")}</select></div>
+      <div class="fld" style="margin-top:6px"><b>Placements</b>${plWidget({advantage:true, plats:{}})}</div>${noteRow}`,
+      [["Add to draft", () => {
+        const pl = readPl();
+        if (!pl.advantage && !Object.keys(pl.plats).length) return toast("Tick at least one platform, or turn Advantage+ placements on");
+        const c = {type:"meta_new_adset", campaign_id:S.camp, name:val("f_name"), countries:val("f_ctry").toUpperCase().split(/[ ,]+/).filter(Boolean),
+          age_min:+val("f_amin") || 18, age_max:+val("f_amax") || 65, placements:plChange(pl)};
+        if (!cbo && val("f_budget")) c.daily_budget = +val("f_budget");
+        if (val("f_start")) c.start_date = val("f_start");
+        if (val("f_end")) c.end_date = val("f_end");
+        if (val("f_goal")) c.optimization_goal = val("f_goal");
+        submit([c], val("f_note"));
+      }, "primary"]]);
+    wirePl();
+  },
+  async ads(){
+    const sc = needScope("ad_group"); if (!sc) return;
+    let ads = (await api("/api/grid?" + qs({acct:S.acct, kind:"ads", ad_group_id:S.ag}))).filter(a => a.editable && !a._new), where = "this ad set";
+    if (!ads.length){ ads = (await api("/api/grid?" + qs({acct:S.acct, kind:"ads"}))).filter(a => a.editable && !a._new); where = "the account" }
+    let media = null;
+    showDialog("New ad in " + sc.ad_group, `<p class="hint">New ads are created <b>Paused</b>. Nothing changes on Meta until you push live.</p>
+      <div class="row"><label>Image or video</label><span>
+        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="copy" ${ads.length ? "checked" : "disabled"}> Copy the image/video of an existing ad${ads.length ? "" : " (none to copy)"}</label>
+        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="upload" ${ads.length ? "" : "checked"}> Upload a new image or video</label></span></div>
+      <div id="srcCopy"><div class="row"><label>Copy from</label><select id="f_from">${ads.map(a => `<option value="${a.id}">${esc(a.ad)} (${esc(a.format)}${where === "the account" ? ", " + esc(a.ad_set) : ""})</option>`).join("")}</select></div></div>
+      <div id="srcUp"><div class="row"><label>File</label><span><input type="file" id="f_file" accept=".jpg,.jpeg,.png,.mp4,.mov,image/jpeg,image/png,video/mp4,video/quicktime"><div id="upOut" class="hint">JPG or PNG up to 30 MB, MP4 or MOV up to 250 MB. Kept on this Mac; uploaded to Meta only when you push live.</div></span></div><div id="upPrev"></div></div>
+      <div class="row"><label>New ad name</label><input id="f_name"></div><div id="copyBox"></div>${noteRow}`,
+      [["Add to draft", () => {
+        const name = val("f_name"); if (!name) return toast("Give the ad a name");
+        const pt = $("#f_pt").value.trim();
+        if (src() === "upload"){
+          if (!media) return toast("Upload an image or video first");
+          if (!pt || !val("f_hl") || !val("f_ln")) return toast("An uploaded image or video needs primary text, a headline and a link");
+          return submit([{type:"meta_new_ad", adset_id:S.ag, media_id:media.media_id, name, primary_text:pt, headline:val("f_hl"),
+            ...(val("f_ds") ? {description:val("f_ds")} : {}), link:val("f_ln"), cta:val("f_cta")}], val("f_note"));
+        }
+        const a = ads.find(a => a.id === val("f_from")), c = {type:"meta_new_ad", adset_id:S.ag, from_ad:a.id, name};
+        if (pt !== (a.primary_text || "").trim()) c.primary_text = pt;
+        if (val("f_hl") !== a.headline) c.headline = val("f_hl");
+        if (val("f_ds") !== a.description) c.description = val("f_ds");
+        if (val("f_ln") !== a.link) c.link = val("f_ln");
+        if (val("f_cta") !== a.cta) c.cta = val("f_cta");
+        submit([c], val("f_note"));
+      }, "primary"]]);
+    const src = () => (document.querySelector("[name=f_src]:checked") || {}).value;
+    const fill = () => {
+      const up = src() === "upload";
+      $("#srcCopy").style.display = up ? "none" : ""; $("#srcUp").style.display = up ? "" : "none";
+      const a = up ? {primary_text:"", headline:"", description:"", link:"", cta:"LEARN_MORE"} : ads.find(a => a.id === val("f_from"));
+      $("#copyBox").innerHTML = (up ? `<p class="hint">Primary text, headline and link are needed for an uploaded file.</p>` : "") + copyFields(a); counter($("#f_hl"), 40);
+    };
+    document.querySelectorAll("[name=f_src]").forEach(b => b.onchange = fill);
+    if (ads.length) $("#f_from").onchange = fill;
+    $("#f_file").onchange = async e => {
+      const f = e.target.files[0]; media = null; $("#upPrev").innerHTML = ""; if (!f) return;
+      $("#upOut").textContent = `Reading ${f.name} ...`;
+      try {
+        const data = await readFile(f);
+        $("#upOut").textContent = `Storing ${f.name} on this Mac ...`;
+        media = await api("/api/meta/media", {filename:f.name, data});
+        $("#upOut").textContent = `${media.name} · ${media.kind} · ${(media.size / 1048576).toFixed(1)} MB · stored, uploaded to Meta when you push live`;
+        const mu = mediaUrl(media.media_id);
+        $("#upPrev").innerHTML = `<div class="row"><label></label>${media.kind === "video" ? `<video src="${esc(mu)}" controls muted style="max-width:240px;max-height:180px;border-radius:6px"></video>` : `<img id="upThumb" src="${esc(mu)}" alt="" style="max-width:240px;max-height:180px;border-radius:6px;object-fit:contain">`}</div>`;
+        if (!val("f_name")) $("#f_name").value = media.name.replace(/\.[^.]+$/, "");
+      } catch(err) { media = null; $("#upOut").innerHTML = `<span class="prob">${esc(err.message)}</span>` }
+    };
+    fill();
+  },
+};
+$("#refreshBtn").onclick = async () => {
+  $("#fresh").textContent = (isMeta() ? "Meta" : "Google") + ": refreshing ...";
+  await dataRefresh(isMeta() ? "meta" : "google", S.acct);
+};
+// ---- data: Studio keeps what it fetched until you refresh (datapolicy.py). One menu to refresh one source or all ----
+const DS = {st:null, busy:new Set()};
+function fmtWhen(iso){
+  if (!iso) return "never";
+  const d = new Date(String(iso).length <= 16 ? iso + ":00" : iso); if (isNaN(d)) return String(iso);
+  return d.toLocaleDateString("en-GB", {day:"numeric", month:"short"}) + " " + d.toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"});
+}
+async function loadDataStatus(){
+  try { DS.st = await api("/api/data/status") } catch(e) { return }
+  $("#dataWarn").style.display = DS.st.activity_warning ? "inline-block" : "none";
+  $("#dataBtn").title = DS.st.activity_warning || "Studio keeps what it fetched until you refresh. Pick what to fetch again.";
+  if ($("#dataMenu").style.display !== "none") drawData();
+}
+const dkey = (src, acct) => src + "|" + (acct || "");
+function dBusy(src, acct){
+  if (DS.busy.has("all|") || DS.busy.has(dkey(src, acct))) return true;
+  if (acct && DS.busy.has(dkey(src, ""))) return true;
+  return !acct && [...DS.busy].some(k => k.startsWith(src + "|"));
+}
+function drawData(){
+  const st = DS.st || {sources:[]}, rows = st.sources, by = s => rows.filter(r => r.source === s);
+  const latest = list => list.map(r => r.fetched_at).filter(Boolean).sort()[0];  // the oldest of the group
+  const item = (src, acct, label, when, cls, dis, extra) => `<button data-ds="${esc(src)}" data-da="${esc(acct || "")}" class="${cls || ""}" ${dis ? "disabled" : ""}>${label}<span class="when">${dBusy(src, acct) ? `<span class="spin"></span>` : esc(dis ? (extra || "coming") : fmtWhen(when))}</span></button>`;
+  const g = by("google"), m = by("meta"), seo = by("seo"), so = by("social")[0] || {}, ac = by("activity")[0] || {}, em = by("email")[0] || {}, fxr = by("fx")[0] || {};
+  let h = `<div class="dh">Kept until you refresh. Each line shows when it was last fetched. Refreshing only reads: nothing is changed anywhere.</div>`;
+  h += item("all", "", "All", latest(rows.filter(r => r.source !== "fx")), "top");
+  h += `<div class="sep"></div>` + item("google", "", "Google Ads (all accounts)", latest(g), "top") + g.map(r => item("google", r.account, esc(r.label), r.fetched_at, "sub")).join("");
+  h += item("meta", "", "Meta (all ad accounts)", latest(m), "top", !m.length, "no account") + m.map(r => item("meta", r.account, esc(r.label), r.fetched_at, "sub")).join("");
+  h += `<div class="sep"></div>` + item("email", "", "Email", em.fetched_at, "top");
+  h += item("seo", "", "SEO (all three)", latest(seo), "top") + seo.map(r => item("seo", r.account, esc(r.label), r.fetched_at, "sub")).join("");
+  h += item("social", "", "SoMe", so.fetched_at, "top", !so.available);
+  h += item("activity", "", "Activity (sync the archive)", ac.fetched_at, "top") + (ac.warning ? `<div class="dwarn">${esc(ac.warning)}</div>` : "");
+  h += `<div class="sep"></div>` + item("fx", "", "Exchange rates", fxr.fetched_at, "sub");
+  $("#dataMenu").innerHTML = h;
+}
+$("#dataBtn").onclick = async e => {
+  e.stopPropagation();
+  const m = $("#dataMenu");
+  if (m.style.display !== "none"){ m.style.display = "none"; return }
+  drawData(); m.style.display = "block";
+  const b = $("#dataBtn").getBoundingClientRect();
+  m.style.top = b.bottom + 4 + "px"; m.style.left = Math.max(8, Math.min(b.left, innerWidth - m.offsetWidth - 8)) + "px";
+  loadDataStatus();
+};
+document.addEventListener("click", e => { const m = $("#dataMenu"); if (m.style.display !== "none" && !m.contains(e.target) && !e.target.closest("#dataBtn")) m.style.display = "none" });
+$("#dataMenu").onclick = e => { const b = e.target.closest("[data-ds]"); if (b && !b.disabled) dataRefresh(b.dataset.ds, b.dataset.da || null) };
+const DLABEL = {all:"everything", google:"Google Ads", meta:"Meta", email:"Email", seo:"SEO", social:"SoMe", activity:"Activity", fx:"exchange rates", overview:"Overview"};
+// Refresh one source (or one account of it). Area pages call this from their own Refresh buttons with {reload:false}.
+async function dataRefresh(source, account, opt){
+  opt = opt || {};
+  const k = dkey(source, account); if (DS.busy.has(k)) return;
+  DS.busy.add(k); drawData();
+  const body = {source, account: account || null, ...(opt.body || {})};
+  if (["all", "google", "meta"].includes(source)){ const r = S.range.start ? {start:S.range.start, end:S.range.end} : {days:S.range.days || "7"}; Object.assign(body, r) }
+  let res = null;
+  try {
+    res = await api("/api/data/refresh", body);
+    const bad = (res.results || []).filter(x => x.error || (x.errors || []).length);
+    toast(bad.length ? "Refreshed, with problems: " + bad.map(x => x.error || x.errors.join("; ")).join(" | ").slice(0, 300) : `Fresh data: ${DLABEL[source] || source}${account ? " (" + account + ")" : ""}`);
+  } catch(e) { toast(e.message) }
+  DS.busy.delete(k);
+  await loadDataStatus(); drawData();
+  if (opt.reload === false) return res;
+  const ads = source === "all" || (source === (isMeta() ? "meta" : "google") && (!account || account === S.acct));
+  if (document.body.classList.contains("ov")) overviewPage();
+  else if (S.area === "ads" && ads){ await loadTree(); await loadGrid(); poll(true) }
+  else if (S.area !== "ads" && (source === "all" || source === S.area) && AREAS[S.area]){ const el = $("#areaPage"); el.innerHTML = ""; try { AREAS[S.area].render(el) } catch(e) {} }
+  return res;
+}
+// ---- Overview dashboard: a page of its own; the same button goes back to the studio ----
+const fmtN = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB", {maximumFractionDigits:1});
+async function overviewPage(days){
+  days = days || localGet("ovdays") || "7";
+  const pg = $("#ovPage");
+  pg.innerHTML = `<div class="ov-top"><h2>Overview</h2><span class="hint">Loading (Google and Meta are asked only if this period is not fetched yet) ...</span></div>`;
+  let o; try { o = await api("/api/overview?days=" + days) } catch(e) { pg.innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
+  const keys = [...new Set(o.destinations.flatMap(d => Object.keys(d.spend)))].sort();
+  const tbl = (head, rows, nums) => `<div style="overflow:auto"><table><thead><tr>${head.map((h, i) => `<th class="${nums.includes(i) ? "num" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const tile = (k, v, hi, title) => `<div class="tile ${hi ? "hi" : ""}" ${title ? `title="${esc(title)}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  // o.display is set when Settings has a display currency: converted figures sit next to the native ones (native in the tooltips)
+  const dc = o.display && o.display.currency, nat = (v, cur) => v == null ? "" : `${money(v)} ${cur} (native)`;
+  const allT = dc && o.all_channels ? `<div class="ov-ch" id="ovAll">All channels (converted to ${esc(dc)}) · ${o.all_channels.campaigns} campaigns with spend</div><div class="tiles">
+    ${tile("Spend", esc(curFmt(o.all_channels.spend, dc)), 0, o.totals.map(t => `${t.channel}: ${nat(t.spend, t.currency)}`).join(" + "))}${tile("Clicks", fmtN(o.all_channels.clicks))}${tile("Results", fmtN(o.all_channels.results))}
+    ${tile("Select Cabin", fmtN(o.all_channels.select_cabin), 1)}${tile("Cost / Select Cabin", esc(curFmt(o.all_channels.cost_per_select_cabin, dc)), 1)}</div>` : "";
+  const tiles = allT + o.totals.map(t => `<div class="ov-ch">${esc(t.channel)} · ${esc(t.currency)}${dc ? ` (shown in ${esc(dc)})` : ""} · ${t.campaigns} campaigns with spend</div><div class="tiles">
+    ${dc ? tile("Spend", esc(curFmt(t.spend_display, dc)), 0, nat(t.spend, t.currency)) : tile("Spend", money(t.spend))}${tile("Clicks", fmtN(t.clicks))}${tile("Results", fmtN(t.results))}
+    ${tile("Select Cabin", fmtN(t.select_cabin), 1)}${dc ? tile("Cost / Select Cabin", esc(curFmt(t.cost_per_select_cabin_display, dc)), 1, nat(t.cost_per_select_cabin, t.currency)) : tile("Cost / Select Cabin", money(t.cost_per_select_cabin), 1)}</div>`).join("");
+  const n0 = 2 + keys.length;
+  pg.innerHTML = `<div class="ov-top"><h2>Overview</h2><select id="ovDays">${["7", "14", "30"].map(d => `<option value="${d}" ${d === String(o.days) ? "selected" : ""}>Last ${d} days</option>`).join("")}</select>
+    <span class="hint" id="ovFetched" title="Kept until you press this Refresh or Refresh data > All">Fetched ${esc(fmtWhen(o.fetched_at))}</span><button id="ovRefresh">Refresh</button>
+    <span class="spacer"></span><span class="hint" id="ovCurNote">${dc ? esc(o.display.note) : "Currencies are never added together."}</span></div>
+    ${(o.newer_sources || []).length ? `<div class="warnl" style="margin-bottom:10px">Refreshed after this Overview was built: ${esc(o.newer_sources.join(", "))}. Press Refresh here to rebuild it with the new data.</div>` : ""}
+    ${o.errors.map(e => `<div class="prob">${esc(e)}</div>`).join("")}
+    ${tiles}
+    ${(o.areas || []).map(b => `<div class="ov-ch">${esc(b.title)}</div><div class="tiles">${(b.tiles || []).map(t => tile(esc(t.k), esc(t.v ?? ""), t.hi)).join("")}</div>${b.note ? `<p class="hint">${esc(b.note)}</p>` : ""}`).join("")}
+    <p class="hint">${esc(o.note)}</p>
+    <h4>By destination</h4>
+    ${dc ? tbl(["Destination", "Spend (" + esc(dc) + ")", "Clicks", "Results", "Select Cabin"], o.destinations.map(d => `<tr><td>${esc(d.destination)}</td><td class="num" title="${esc(Object.entries(d.spend).map(([k, v]) => `${k}: ${money(v)}`).join(" + "))}">${esc(curFmt(d.spend_display, dc))}</td><td class="num">${fmtN(d.clicks)}</td><td class="num">${fmtN(d.results)}</td><td class="num"><b>${fmtN(d.select_cabin || "")}</b></td></tr>`), [1, 2, 3, 4])
+    : tbl(["Destination", ...keys.map(k => "Spend " + k), "Clicks", "Results", "Select Cabin"], o.destinations.map(d => `<tr><td>${esc(d.destination)}</td>${keys.map(k => `<td class="num">${d.spend[k] != null ? money(d.spend[k]) : ""}</td>`).join("")}<td class="num">${fmtN(d.clicks)}</td><td class="num">${fmtN(d.results)}</td><td class="num"><b>${fmtN(d.select_cabin || "")}</b></td></tr>`),
+      Array.from({length:n0 + 2}, (_, i) => i).filter(i => i > 0))}
+    <h4>Campaigns with spend</h4>
+    ${dc ? tbl(["Channel", "Campaign", "Destination", "Status", "Spend (" + esc(dc) + ")", "Native", "Clicks", "Results", "Select Cabin", "Cost / Select Cabin (" + esc(dc) + ")"], o.campaigns.map(r => `<tr><td>${r.channel}</td><td title="${esc(r.account)}">${esc(r.campaign)}</td><td>${esc(r.destination)}</td><td>${esc(r.status)}</td><td class="num" title="${esc(nat(r.spend, r.currency))}">${r.spend_display == null ? "not converted" : esc(curFmt(r.spend_display, dc))}</td><td>${esc(money(r.spend) + " " + r.currency)}</td><td class="num">${fmtN(r.clicks)}</td><td class="num">${fmtN(r.results)}</td><td class="num"><b>${fmtN(r.select_cabin || "")}</b></td><td class="num" title="${esc(r.select_cabin ? nat(r.spend / r.select_cabin, r.currency) : "")}">${r.select_cabin && r.spend_display != null ? esc(curFmt(r.spend_display / r.select_cabin, dc)) : ""}</td></tr>`), [4, 6, 7, 8, 9])
+    : tbl(["Channel", "Campaign", "Destination", "Status", "Spend", "Cur.", "Clicks", "Results", "Select Cabin", "Cost / Select Cabin"], o.campaigns.map(r => `<tr><td>${r.channel}</td><td title="${esc(r.account)}">${esc(r.campaign)}</td><td>${esc(r.destination)}</td><td>${esc(r.status)}</td><td class="num">${money(r.spend)}</td><td>${r.currency}</td><td class="num">${fmtN(r.clicks)}</td><td class="num">${fmtN(r.results)}</td><td class="num"><b>${fmtN(r.select_cabin || "")}</b></td><td class="num">${r.select_cabin ? money(r.spend / r.select_cabin) : ""}</td></tr>`), [4, 6, 7, 8, 9])}`;
+  $("#ovDays").onchange = e => { localSet("ovdays", e.target.value); overviewPage(e.target.value) };
+  $("#ovRefresh").onclick = async () => { $("#ovRefresh").disabled = true; $("#ovFetched").innerHTML = `<span class="spin"></span> Fetching ...`;
+    await dataRefresh("overview", null, {reload:false, body:{days:String(o.days)}}); overviewPage(String(o.days)) };
+}
+function setMode(ov){
+  document.body.classList.toggle("ov", ov); $("#ovLbl").textContent = ov ? "Marketing Studio" : "Overview";
+  $("#ovBtn").title = ov ? "Back to the studio: accounts, campaigns, edits and pushes" : "Dashboard: spend, results and Select Cabin across Google and Meta";
+  localSet("mode", ov ? "overview" : "studio"); if (ov) overviewPage();
+}
+$("#ovBtn").onclick = () => setMode(!document.body.classList.contains("ov"));
+if (localGet("mode") === "overview") setMode(true);
+// ---- areas: Ads (this page) + Email, SEO, SoMe (static/<name>.js registers window.AREAS.<name> = {label, render(el)}) ----
+window.AREAS = window.AREAS || {};
+S.area = "ads";
+function setArea(name){
+  if (name !== "ads" && !AREAS[name]) name = "ads";
+  S.area = name; localSet("area", name);
+  document.body.classList.toggle("area", name !== "ads");
+  $("#areaTabs").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.area === name));
+  if (document.body.classList.contains("ov")) setMode(false);
+  if (name !== "ads"){ const el = $("#areaPage"); el.innerHTML = ""; try { AREAS[name].render(el) } catch(e) { el.innerHTML = `<div class="prob">${esc(e.message)}</div>` } }
+}
+$("#areaTabs").onclick = e => { const b = e.target.closest("[data-area]"); if (b) setArea(b.dataset.area) };
+(async () => {
+  let list = []; try { list = await api("/api/areas") } catch(e) {}
+  for (const a of list){
+    await new Promise(res => { const sc = document.createElement("script"); sc.src = "/static/" + a.name + ".js"; sc.onload = sc.onerror = res; document.head.appendChild(sc) });
+    if (AREAS[a.name]) $("#areaTabs").insertAdjacentHTML("beforeend", `<button data-area="${esc(a.name)}">${esc(AREAS[a.name].label || a.label)}</button>`);
+  }
+  const want = localGet("area"); if (want && want !== "ads" && AREAS[want] && localGet("mode") !== "overview") setArea(want);
+})();
+
+// ---- right panel: Edit | Draft ----
+function showPane(p){ $("#rtEdit").classList.toggle("on", p === "edit"); $("#rtDraft").classList.toggle("on", p === "draft");
+  $("#paneEdit").classList.toggle("on", p === "edit"); $("#paneDraft").classList.toggle("on", p === "draft") }
+$("#rtEdit").onclick = () => showPane("edit");
+$("#rtDraft").onclick = () => showPane("draft");
+// close / open the right panel (remembered on this Mac)
+const sideOpen = on => { document.querySelector("main").classList.toggle("noside", !on); localSet("side", on ? "open" : "closed") };
+$("#sideClose").onclick = () => sideOpen(false);
+$("#sideOpen").onclick = () => sideOpen(true);
+if (localGet("side") === "closed") sideOpen(false);
+const fld = (id, label, val, live, opt = {}) => {
+  const chg = String(val ?? "") !== String(live ?? "");
+  const inner = opt.area ? `<textarea id="${id}" rows="${opt.area}">${esc(val)}</textarea>`
+    : opt.sel ? `<select id="${id}">${opt.sel.map(o => `<option ${o === val ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
+    : `<input id="${id}" value="${esc(val ?? "")}" ${opt.type ? `type="${opt.type}" step="0.01" min="0"` : ""}>`;
+  return `<div class="fld ${chg ? "chg" : ""}"><label><span>${label}${chg ? " · in draft" : ""}</span><span class="cnt" data-for="${id}" data-max="${opt.max || ""}"></span></label>${inner}
+    ${chg ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(live) || "(empty)"}</div>` : ""}</div>`;
+};
+const dv = (r, k) => r._draft && r._draft[k] ? r._draft[k].value : r[k];
+const draftIdsFor = (r, keys) => [...new Set(keys.map(k => r._draft && r._draft[k] && r._draft[k].draft_id).filter(Boolean))];
+function focusRow(r){
+  if (!r) return;
+  S.focus = String(r.id);
+  document.querySelectorAll("tr.focus").forEach(t => t.classList.remove("focus"));
+  const tr = document.querySelector(`tr[data-i="${S.rows.indexOf(r)}"]`); if (tr) tr.classList.add("focus");
+  renderEdit(r); showPane("edit");
+}
+function editFoot(buttons){
+  const f = $("#editFoot"); f.innerHTML = ""; f.style.display = buttons.length ? "flex" : "none";
+  for (const [label, fn, cls] of buttons){ const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; f.appendChild(b) }
+}
+function wireCounts(){ document.querySelectorAll("#editBody .cnt[data-max]").forEach(c => { const max = +c.dataset.max; if (!max) return; const i = document.getElementById(c.dataset.for);
+  const f = () => { c.textContent = i.value.length + "/" + max; c.classList.toggle("over", i.value.length > max) }; i.addEventListener("input", f); f() }) }
+async function replaceInDraft(oldIds, changes){
+  if (oldIds.length) await api("/api/draft/remove", {ids:oldIds});
+  if (changes.length) await addChanges(changes, ""); else { toast(oldIds.length ? "Back to the live version" : "Nothing changed"); await poll(true) }
+}
+// ---- autosave: Edit-panel edits go into the draft on their own, ~1s after you stop typing ----
+const AUTO = {t:null, job:null, chain:Promise.resolve(), ids:{}};
+function asStatus(txt, cls){ const s = $("#asState"); if (s){ s.textContent = txt; s.className = "asstate " + (cls || "") } }
+// collect() reads the panel right now -> list of changes (throws Error("why") when it can't be saved yet)
+function autoSave(r, keys, collect){ AUTO.job = {r, keys, collect, acct:S.acct}; clearTimeout(AUTO.t); AUTO.t = setTimeout(asFlush, 1000); asStatus("Saving ...") }
+function asFlush(){
+  clearTimeout(AUTO.t); AUTO.t = null; const j = AUTO.job; AUTO.job = null; if (!j) return AUTO.chain;
+  let ch; try { ch = j.collect() } catch(e) { asStatus("Not saved: " + e.message, "bad"); return AUTO.chain }
+  const key = j.acct + ":" + j.r.id;
+  AUTO.chain = AUTO.chain.then(async () => {
+    const have = new Set((S.draftItems || []).map(i => i.id));
+    const old = [...new Set([...(AUTO.ids[key] || []), ...draftIdsFor(j.r, j.keys)])].filter(id => have.has(id));
+    if (!old.length && !ch.length){ asStatus("No changes", ""); return }
+    const send = (path, body) => fetch(path, {method:"POST", headers:{"Content-Type":"application/json", "X-Studio-Press":PRESS}, body:JSON.stringify({acct:j.acct, ...body})})
+      .then(async r => { const x = await r.json(); if (!r.ok) throw new Error(x.error || r.statusText); return x });
+    if (old.length) await send("/api/draft/remove", {ids:old});
+    const items = ch.length ? await send("/api/draft/add", {changes:ch, note:"", by:"you"}) : [];
+    AUTO.ids[key] = items.map(i => i.id);
+    const bad = items.filter(i => i.problems.length);
+    asStatus(bad.length ? `Saved, but ${bad.length} need fixing (see Draft)` : ch.length ? "Saved to draft" : "Back to the live version", bad.length ? "bad" : "ok");
+    if (j.acct === S.acct) await poll(true);
+  }).catch(e => { asStatus("Not saved: " + e.message, "bad"); toast(e.message) });
+  return AUTO.chain;
+}
+// wire the panel: every edit (except the preview picker) schedules a save; Revert drops this row's draft changes
+function wireAutoSave(r, keys, collect, onInput){
+  const b = $("#editBody");
+  const go = e => { if (onInput) onInput(e); if (e.target.closest("#pvPlace, .prevbox")) return; autoSave(r, keys, collect) };
+  b.oninput = go; b.onchange = go;
+  const trigger = () => autoSave(r, keys, collect);
+  editFoot([["Revert to live", async () => { AUTO.job = {r, keys, collect:() => [], acct:S.acct}; await asFlush(); renderEdit({...r, _draft:undefined}) }]]);
+  $("#editFoot").insertAdjacentHTML("beforeend", `<span id="asState" class="asstate">${r._draft && Object.keys(r._draft).length ? "In the draft. Edits save on their own." : "Edits save to the draft on their own."}</span>`);
+  return trigger;
+}
+window.addEventListener("pagehide", () => asFlush());
+function renderEdit(r){
+  asFlush();
+  const b = $("#editBody"); b.oninput = null; b.onchange = null;
+  if (!isMeta()){
+    const v = V()[S.kind];
+    b.innerHTML = `<div class="edit-head"><div><div class="t">${esc(r.ad || r.keyword || r.text || r.ad_group || r.campaign || r.audience || "")}</div><div class="s">${esc([r.campaign, r.ad_group].filter(Boolean).join(" / "))}</div></div></div>
+      ${colsFor().filter(c => !c.thumb).map(c => { const v = cellVal(r, c), mon = isMoney(c) ? moneyCell(c, v) : null;
+        return `<div class="fld"><label><span>${esc(isMoney(c) && acctCur() && c.edit === "money" ? curLabel(c.label) : colLabel(c))}</span></label><div ${mon ? `title="${esc(mon[1])}"` : ""}>${mon ? mon[0] || "-" : c.fmt ? c.fmt(v) : esc(v) || "-"}</div></div>` }).join("")}
+      <p class="hint">${v.open ? "Use Edit below to change this." : "Change status and amounts straight in the grid."}</p>`;
+    editFoot(v.open && !r._new ? [["Edit", () => v.open(r), "primary"]] : []);
+    return;
+  }
+  if (r._new && S.kind === "ads") return editNewAd(r);
+  if (r._new){ b.innerHTML = `<div class="empty">New ${S.kind === "campaigns" ? "campaign" : "ad set"} in the draft: <b>${esc(r.campaign && S.kind === "campaigns" ? r.campaign : r.ad_set)}</b>.<br>Created Paused when you push live.<br><br>Pick it in the tree to add ${S.kind === "campaigns" ? "ad sets" : "ads"} to it. Undo it in the Draft tab to change it.</div>`; editFoot([]); return }
+  if (S.kind === "ads") return editAd(r);
+  if (S.kind === "adsets") return editAdset(r);
+  if (S.kind === "campaigns") return editCampaign(r);
+  b.innerHTML = S.kind === "leadforms"
+    ? `<div class="edit-head"><div><div class="t">${esc(r.lead_form)}</div><div class="s">${esc(r.status)} · ${esc(r.leads ?? "?")} leads · created ${esc(r.created)}</div></div></div><p class="hint">Lead forms are read-only in Studio. Studio never downloads the leads.</p><div class="warnl">${esc(r.note || GDPR_HINT)}</div>`
+    : `<div class="edit-head"><div><div class="t">${esc(r.audience)}</div><div class="s">${esc(r.type)} · ${esc(r.size)}</div></div></div><p class="hint">Audiences are read-only in Studio.</p>${r.note ? `<div class="warnl">${esc(r.note)}</div>` : ""}`;
+  editFoot([]);
+}
+const ST_OPTS = ["Active", "Paused"];
+const COPY_KEYS = ["primary_text", "headline", "description", "link", "cta"];
+const FEED_KEYS = [["bodies", "Primary texts"], ["titles", "Headlines (one per line)"], ["descriptions", "Descriptions (one per line)"], ["link_urls", "Website URLs (one per line)"]];
+const spentTxt = r => r.spend != null ? ` · <span title="${esc(dispCur() ? `${money(r.spend)} ${acctCur()} (account currency), converted at today's rate` : "")}">${dispCur() ? esc(curFmt(toDisp(r.spend), S.disp)) : money(r.spend)}</span> spent, ${esc(r.window || "this period")}` : "";
+function previewBox(){
+  return `<div class="prevbox"><div class="bar">Preview <select id="pvPlace" data-remember><option value="facebook">Facebook feed</option><option value="instagram">Instagram feed</option><option value="stories">Instagram Stories</option><option value="reels">Instagram Reels</option><option value="desktop">Facebook desktop</option></select>
+      <span id="pvWhich" class="chip"></span><span class="spacer"></span><button class="link" id="pvLoad">Show</button></div><div id="pvFrame" class="frame"></div></div>`;
+}
+function bodyBox(i, text){ return `<div class="fld bodyopt"><label><span>Primary text ${i + 1}</span><button class="link danger" data-rmbody>Remove</button></label><textarea rows="5">${esc(text)}</textarea></div>` }
+function editAd(r){
+  const et = r.edit_type || "", ro = !et;
+  let copy;
+  if (et === "meta_carousel_copy"){
+    const cards = dv(r, "cards") || r.cards || [];
+    copy = fld("e_pt", "Primary text", dv(r, "primary_text"), r.primary_text, {area:6}) + fld("e_ln", "Website URL", dv(r, "link"), r.link)
+      + cards.map((c, i) => { const lc = (r.cards || [])[i] || {};
+        return `<div class="cardbox"><div class="cardh">${lc.picture ? `<img class="bigok" src="${esc(lc.picture)}" data-big="${esc(lc.picture)}" alt="">` : ""}<b>Card ${i + 1}</b></div>
+          ${fld("e_cn" + i, "Headline", c.name, lc.name, {max:40})}${fld("e_cd" + i, "Description", c.description, lc.description)}${fld("e_cl" + i, "Link", c.link, lc.link)}</div>` }).join("");
+  } else if (et === "meta_feed_copy"){
+    const bodies = dv(r, "bodies") || r.bodies || [];
+    copy = `<p class="hint">This ad has several text options (flexible / Advantage+ creative). Meta mixes them. Up to 5 per list.</p>
+      <div id="e_bodies">${(bodies.length ? bodies : [""]).map((b, i) => bodyBox(i, b)).join("")}</div>
+      <button class="link" id="addBody" style="margin:-4px 0 12px">+ primary text option</button>
+      ${r._draft && r._draft.bodies ? `<div class="hint" style="margin:-8px 0 12px">Primary texts are in the draft.</div>` : ""}`
+      + FEED_KEYS.slice(1).map(([k, l]) => fld("e_" + k, l, (dv(r, k) || []).join("\n"), (r[k] || []).join("\n"), {area:4})).join("");
+  } else {
+    copy = `${fld("e_pt", "Primary text", dv(r, "primary_text"), r.primary_text, {area:7})}
+    ${fld("e_hl", "Headline", dv(r, "headline"), r.headline, {max:40})}
+    ${fld("e_ds", "Description", dv(r, "description"), r.description)}
+    ${fld("e_ln", "Website URL", dv(r, "link"), r.link)}
+    ${fld("e_cta", "Call to action", dv(r, "cta"), r.cta, {sel:[...new Set([dv(r, "cta"), r.cta, ...CTAS].filter(Boolean))]})}`;
+  }
+  $("#editBody").innerHTML = `<div class="edit-head">${r.thumbnail ? `<img class="bigok" src="${esc(r.image || r.thumbnail)}" data-big="${esc(r.image || r.thumbnail)}" alt="">` : ""}
+      <div><div class="t">${esc(dv(r, "ad"))}</div><div class="s">${esc(r.campaign)} / ${esc(r.ad_set)}</div><div class="s">${esc(r.format)} · Delivery: ${esc(r.delivery)}${spentTxt(r)}</div></div></div>
+    ${previewBox()}
+    ${fld("e_status", "Status", dv(r, "status"), r.status, {sel:ST_OPTS})}
+    ${fld("e_name", "Ad name", dv(r, "ad"), r.ad)}
+    ${ro ? `<div class="warnl" style="margin-bottom:12px">${esc(r.why_not)}. You can still rename it or change its status.</div>` : et !== "meta_copy" ? `<div class="hint">${esc(r.why_not)}.</div>` : ""}
+    ${copy}
+    ${!ro ? `<p class="hint">Saving a text change makes a new creative with the same ${et === "meta_carousel_copy" ? "card images" : "image or video"} and points the ad at it. The ad goes back to Meta review. Undo points it back.</p>` : ""}`;
+  if (ro) ["e_pt", "e_hl", "e_ds", "e_ln", "e_cta"].forEach(id => $("#" + id) && ($("#" + id).disabled = true));
+  if (et === "meta_feed_copy"){
+    $("#addBody").onclick = () => { const n = document.querySelectorAll("#e_bodies .bodyopt").length; if (n >= 5) return toast("Up to 5 primary texts"); $("#e_bodies").insertAdjacentHTML("beforeend", bodyBox(n, "")); pvLabel(r) };
+    $("#e_bodies").onclick = e => { if (e.target.closest("[data-rmbody]")){ e.target.closest(".bodyopt").remove(); pvLabel(r) } };
+  }
+  wireCounts();
+  $("#pvLoad").onclick = () => loadPreview(r);
+  { const pl = localGet("pvPlace"); if (pl && [...$("#pvPlace").options].some(o => o.value === pl)) $("#pvPlace").value = pl }
+  $("#pvPlace").onchange = () => { localSet("pvPlace", val("pvPlace")); loadPreview(r) };
+  autoPreview(r);
+  pvLabel(r);
+  const save = wireAutoSave(r, ["status", "ad", ...COPY_KEYS, "cards", "bodies", "titles", "descriptions", "link_urls"], () => {
+    const ch = [];
+    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
+    if (val("e_name") !== r.ad) ch.push({type:"meta_rename", level:"ad", id:r.id, new_name:val("e_name")});
+    const c = adCopyChange(r); if (c) ch.push(c);
+    return ch;
+  }, () => pvLabel(r));
+  if (et === "meta_feed_copy") $("#e_bodies").addEventListener("click", e => { if (e.target.closest("[data-rmbody]")) save() });
+}
+// the copy fields in the Edit panel -> one draft change with only what differs from the live ad (null = no copy change)
+function adCopyChange(r){
+  const et = r.edit_type; if (!et || !$("#e_name")) return null;
+  const c = {type:et, level:"ad", id:r.id};
+  if (et === "meta_copy"){
+    if ($("#e_pt").value.trim() !== (r.primary_text || "").trim()) c.primary_text = $("#e_pt").value.trim();
+    for (const [id, k] of [["e_hl", "headline"], ["e_ds", "description"], ["e_ln", "link"], ["e_cta", "cta"]]) if (val(id) !== (r[k] || "")) c[k] = val(id);
+  } else if (et === "meta_carousel_copy"){
+    if ($("#e_pt").value.trim() !== (r.primary_text || "").trim()) c.primary_text = $("#e_pt").value.trim();
+    if (val("e_ln") !== (r.link || "")) c.link = val("e_ln");
+    const cards = [];
+    (r.cards || []).forEach((lc, i) => { const x = {index:i};
+      for (const [p, k] of [["e_cn", "name"], ["e_cd", "description"], ["e_cl", "link"]]){ const el = document.getElementById(p + i); if (el && el.value.trim() !== (lc[k] || "")) x[k] = el.value.trim() }
+      if (Object.keys(x).length > 1) cards.push(x) });
+    if (cards.length) c.cards = cards;
+  } else if (et === "meta_feed_copy"){
+    const bodies = [...document.querySelectorAll("#e_bodies textarea")].map(t => t.value.trim()).filter(Boolean);
+    if (JSON.stringify(bodies) !== JSON.stringify(r.bodies || [])) c.bodies = bodies;
+    for (const [k] of FEED_KEYS.slice(1)){ const v = lines("e_" + k); if (JSON.stringify(v) !== JSON.stringify(r[k] || [])) c[k] = v }
+  }
+  return Object.keys(c).length > 3 ? c : null;
+}
+function pvMode(r){
+  if (r._new) return ["new", null];
+  let ov = null; try { ov = adCopyChange(r) } catch(e) {}
+  return ov ? ["changes", ov] : ["live", null];
+}
+function pvLabel(r){
+  const l = $("#pvWhich"); if (!l) return;
+  const [m] = pvMode(r);
+  l.textContent = m === "live" ? "Live ad" : m === "changes" ? "With your changes" : "Drafted new ad";
+  l.className = "chip " + (m === "live" ? "ok" : "draft");
+  l.title = m === "live" ? "Meta's preview of the ad as it runs now" : "Meta renders the drafted copy. Nothing is created and nothing goes live.";
+}
+const PV = {};
+// show the preview on its own when an ad is opened (short wait so arrowing fast doesn't fire a call per row),
+// then quietly fetch the next few ads' previews so arrowing down shows them at once
+let PVT = null, PVQ = 0;
+function autoPreview(r){
+  clearTimeout(PVT);
+  PVT = setTimeout(async () => {
+    if (S.focus !== String(r.id) || !$("#pvFrame")) return;
+    await loadPreview(r);
+    prefetchPreviews(r);
+  }, 250);
+}
+async function prefetchPreviews(r){
+  const run = ++PVQ, place = val("pvPlace");
+  const trs = [...document.querySelectorAll("#grid tr[data-i]")], at = trs.findIndex(t => S.rows[+t.dataset.i] === r || String(S.rows[+t.dataset.i].id) === String(r.id));
+  const next = [1, 2, 3, -1].map(d => trs[at + d]).filter(Boolean).map(t => S.rows[+t.dataset.i])
+    .filter(x => x && !x._new && !(x._draft && Object.keys(x._draft).length));
+  for (const x of next){
+    if (run !== PVQ) return;  // the user moved on: start again from the new row
+    const k = JSON.stringify([S.acct, x.id, place, null]);
+    if (PV[k]) continue;
+    try { PV[k] = await api("/api/meta/preview?" + qs({acct:S.acct, id:x.id, placement:place, ...(x.creative_id ? {creative:x.creative_id} : {})})) } catch(e) {}
+  }
+}
+async function loadPreview(r){
+  const place = val("pvPlace"), box = $("#pvFrame"), [mode, ov] = pvMode(r);
+  pvLabel(r);
+  const k = JSON.stringify([S.acct, r.id, place, mode === "new" ? r._new.draft_id : ov]);
+  box.style.height = ""; box.innerHTML = `<div class="empty" style="padding:20px">Asking Meta for the preview ...</div>`;
+  try {
+    PV[k] = PV[k] || (mode === "live" ? await api("/api/meta/preview?" + qs({acct:S.acct, id:r.id, placement:place, ...(r.creative_id ? {creative:r.creative_id} : {})}))
+      : await api("/api/meta/draft_preview", mode === "new" ? {draft_id:r._new.draft_id, placement:place} : {ad_id:r.id, placement:place, overrides:ov}));
+    const p = PV[k];
+    if (p.html){
+      box.innerHTML = p.html;
+      const f = box.querySelector("iframe"); if (f){ const w = +f.getAttribute("width") || 320, sc = Math.min(1, (box.clientWidth - 8) / w); f.style.transform = `scale(${sc})`;
+        box.style.height = Math.round((+f.getAttribute("height") || 600) * sc + 8) + "px" }
+    } else if (p.media_id){
+      const mu = mediaUrl(p.media_id);
+      box.innerHTML = `<div class="localprev">${p.media_kind === "video" ? `<video src="${esc(mu)}" controls muted></video>` : `<img src="${esc(mu)}" alt="">`}
+        <div class="pt">${esc(p.primary_text || "")}</div><div class="hl">${esc(p.headline || "")}</div><div class="hint" style="margin:2px 0">${esc(p.description || "")}</div>
+        <div class="hint" style="margin:2px 0">${esc(p.link || "")} · ${esc(p.cta || "LEARN_MORE")}</div></div>`;
+    } else box.innerHTML = `<div class="empty">Meta returned no preview for this placement.</div>`;
+    if (p.note && mode !== "live") box.insertAdjacentHTML("afterbegin", `<div class="hint" style="margin:6px;width:100%">${esc(p.note)}</div>`);
+    if (p.note) box.style.height = "";
+  } catch(e) { delete PV[k]; box.innerHTML = `<div class="prob">${esc(e.message)}</div>` }
+}
+function editNewAd(r){
+  const it = (S.draftItems || []).find(i => i.id === r._new.draft_id);
+  $("#editBody").innerHTML = `<div class="edit-head">${r.media_id && r.format !== "Video" ? `<img class="bigok" src="${esc(mediaUrl(r.media_id))}" alt="">` : r.thumbnail ? `<img class="bigok" src="${esc(r.image || r.thumbnail)}" alt="">` : ""}
+      <div><div class="t">${esc(r.ad)} <span class="chip draft">draft</span></div><div class="s">${esc(r.campaign)} / ${esc(r.ad_set)}</div><div class="s">New ad, created Paused when you push live</div></div></div>
+    ${previewBox()}
+    ${[["Primary text", r.primary_text], ["Headline", r.headline], ["Description", r.description], ["Website URL", r.link], ["Call to action", r.cta]].map(([l, v]) => `<div class="fld"><label><span>${l}</span></label><div style="white-space:pre-wrap">${esc(v) || "-"}</div></div>`).join("")}
+    ${it ? it.problems.map(p => `<div class="prob">${esc(p)}</div>`).join("") + it.warnings.map(p => `<div class="warnl">${esc(p)}</div>`).join("") : ""}
+    <p class="hint">To change it, Undo it in the Draft tab and add it again.</p>`;
+  $("#pvLoad").onclick = () => loadPreview(r);
+  $("#pvPlace").onchange = () => loadPreview(r);
+  pvLabel(r); editFoot([]);
+}
+// ---- placements (ad sets): Advantage+ on, or picked platforms and positions ----
+const META_POS = {facebook:["feed", "right_hand_column", "marketplace", "video_feeds", "story", "search", "instream_video", "facebook_reels", "facebook_reels_overlay", "profile_feed", "notification", "biz_disco_feed"],
+  instagram:["stream", "story", "explore", "explore_home", "reels", "profile_feed", "ig_search", "profile_reels"]};
+const PLAT_LABEL = {facebook:"Facebook", instagram:"Instagram", audience_network:"Audience Network", messenger:"Messenger", threads:"Threads"};
+const posLabel = p => p === "stream" ? "Feed" : p.replace(/_/g, " ").replace(/^ig /, "").replace(/^./, x => x.toUpperCase());
+function parsePl(txt){
+  if (!txt || /^Advantage/.test(txt)) return {advantage:true, plats:{}};
+  const plats = {};
+  String(txt).split("; ").forEach(b => { const i = b.indexOf(": "), p = b.slice(0, i).trim(), pos = b.slice(i + 2).trim(); if (p) plats[p] = pos === "all" ? [] : pos.split(", ").map(x => x.trim()) });
+  return {advantage:false, plats};
+}
+const plCanon = pl => pl.advantage ? "advantage" : Object.keys(pl.plats).sort().map(p => p + ":" + [...pl.plats[p]].sort().join(",")).join(";");
+function plWidget(pl, extra){
+  const plats = [...new Set(["facebook", "instagram", "audience_network", "messenger", ...Object.keys(pl.plats), ...Object.keys((extra || {}).plats || {})])];
+  return `<label class="tick"><input type="checkbox" id="pl_adv" ${pl.advantage ? "checked" : ""}> <span><b>Advantage+ placements</b>: Meta picks where the ads show (recommended)</span></label>
+    <div id="pl_manual" style="${pl.advantage ? "display:none" : ""}">${plats.map(p => { const on = p in pl.plats, cur = pl.plats[p] || [];
+      const pos = [...new Set([...(META_POS[p] || []), ...cur, ...(((extra || {}).plats || {})[p] || [])])];
+      return `<div class="plat"><label class="tick" style="margin:4px 0"><input type="checkbox" data-plat="${p}" ${on ? "checked" : ""}> <b>${esc(PLAT_LABEL[p] || p)}</b></label>
+        ${pos.length ? `<div class="pos">${pos.map(x => `<label><input type="checkbox" data-pos="${p}" value="${esc(x)}" ${cur.includes(x) ? "checked" : ""}> ${esc(posLabel(x))}</label>`).join("")}</div>` : ""}</div>` }).join("")}
+      <p class="hint">No position ticked on a platform = all of its positions.</p></div>`;
+}
+function wirePl(){ const a = $("#pl_adv"); if (!a) return; a.onchange = () => { $("#pl_manual").style.display = a.checked ? "none" : "" };
+  document.querySelectorAll("[data-pos]").forEach(b => b.addEventListener("change", () => { if (b.checked){ const p = document.querySelector(`[data-plat="${b.dataset.pos}"]`); if (p) p.checked = true } })) }
+function readPl(){
+  if ($("#pl_adv").checked) return {advantage:true, plats:{}};
+  const plats = {};
+  document.querySelectorAll("[data-plat]:checked").forEach(b => { plats[b.dataset.plat] = [...document.querySelectorAll(`[data-pos="${b.dataset.plat}"]:checked`)].map(x => x.value) });
+  return {advantage:false, plats};
+}
+function plChange(pl){ // parsed placements -> the change fields
+  if (pl.advantage) return {advantage:true};
+  const out = {advantage:false, publisher_platforms:Object.keys(pl.plats)};
+  for (const [p, pos] of Object.entries(pl.plats)) if (pos.length) out[p + "_positions"] = pos;
+  return out;
+}
+function editAdset(r){
+  const [amin, amax] = String(dv(r, "age") || "-").split("-"), [lmin, lmax] = String(r.age || "-").split("-");
+  const livePl = parsePl(r.placements), curPl = parsePl(dv(r, "placements"));
+  $("#editBody").innerHTML = `<div class="edit-head"><div><div class="t">${esc(dv(r, "ad_set"))}</div><div class="s">${esc(r.campaign)}</div><div class="s">Delivery: ${esc(r.delivery)} · ${esc(r.optimisation)}${spentTxt(r)}</div></div></div>
+    ${fld("e_status", "Status", dv(r, "status"), r.status, {sel:ST_OPTS})}
+    ${fld("e_name", "Ad set name", dv(r, "ad_set"), r.ad_set)}
+    ${r.cbo ? `<p class="hint">Budget is set on the campaign (CBO).</p>` : fld("e_budget", curLabel("Daily budget"), dv(r, "budget"), r.budget, {type:"number"}) + fxHint("e_budget")}
+    ${fld("e_ctry", "Countries (2-letter codes)", dv(r, "countries"), r.countries)}
+    <div class="fld"><label><span>Age</span></label><span><input id="e_amin" type="number" min="18" max="65" value="${esc(amin)}" style="width:44%"> to <input id="e_amax" type="number" min="18" max="65" value="${esc(amax)}" style="width:44%"></span></div>
+    ${fld("e_end", "End date", dv(r, "end"), r.end, {type:"date"})}
+    <div class="fld ${r._draft && r._draft.placements ? "chg" : ""}"><label><span>Placements${r._draft && r._draft.placements ? " · in draft" : ""}</span></label>${plWidget(curPl, livePl)}
+      ${r._draft && r._draft.placements ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(r.placements)}</div>` : ""}</div>
+    <p class="hint">Audiences: ${esc(r.audiences || "none")} · Excluded: ${esc(r.excluded || "none")}${r.advantage_audience ? " · Advantage+ audience on" : ""}</p>`;
+  $("#e_end").removeAttribute("step");
+  wirePl(); wireFx();
+  wireAutoSave(r, ["status", "ad_set", "budget", "countries", "age", "end", "placements"], () => {
+    const ch = [];
+    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
+    if (val("e_name") !== r.ad_set) ch.push({type:"meta_rename", level:"adset", id:r.id, new_name:val("e_name")});
+    if (!r.cbo && val("e_budget") !== "" && +val("e_budget") !== r.budget) ch.push({type:"meta_budget", level:"adset", id:r.id, budget:+val("e_budget")});
+    const ctry = val("e_ctry").toUpperCase().split(/[ ,]+/).filter(Boolean), t = {type:"meta_targeting", level:"adset", id:r.id};
+    if (ctry.join(",") !== (r.countries || "").replace(/ /g, "")) t.countries = ctry;
+    if (val("e_amin") !== lmin) t.age_min = +val("e_amin");
+    if (val("e_amax") !== lmax) t.age_max = +val("e_amax");
+    if (Object.keys(t).length > 3) ch.push(t);
+    if (val("e_end") !== (r.end || "")) ch.push({type:"meta_end", level:"adset", id:r.id, end_date:val("e_end") || null});
+    const pl = readPl();
+    if (!pl.advantage && !Object.keys(pl.plats).length) throw new Error("tick at least one platform, or turn Advantage+ placements on");
+    if (plCanon(pl) !== plCanon(livePl)) ch.push({type:"meta_placements", level:"adset", id:r.id, ...plChange(pl)});
+    return ch;
+  });
+}
+function editCampaign(r){
+  $("#editBody").innerHTML = `<div class="edit-head"><div><div class="t">${esc(dv(r, "campaign"))}</div><div class="s">${esc(r.objective)} · ${esc(r.budget_level)} · Delivery: ${esc(r.delivery)}</div></div></div>
+    ${fld("e_status", "Status", dv(r, "status"), r.status, {sel:ST_OPTS})}
+    ${fld("e_name", "Campaign name", dv(r, "campaign"), r.campaign)}
+    ${r.budget != null ? fld("e_budget", curLabel("Daily budget (campaign)"), dv(r, "budget"), r.budget, {type:"number"}) + fxHint("e_budget") : `<p class="hint">Budgets are set on the ad sets.</p>`}
+    <p class="hint">${r.ad_sets} ad sets · ${r.ads} ads${spentTxt(r)}</p>`;
+  wireFx();
+  wireAutoSave(r, ["status", "campaign", "budget"], () => {
+    const ch = [];
+    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
+    if (val("e_name") !== r.campaign) ch.push({type:"meta_rename", level:"campaign", id:r.id, new_name:val("e_name")});
+    if (r.budget != null && val("e_budget") !== "" && +val("e_budget") !== r.budget) ch.push({type:"meta_budget", level:"campaign", id:r.id, budget:+val("e_budget")});
+    return ch;
+  });
+}
+function refreshFocus(){
+  if (!S.focus || document.activeElement && document.activeElement.closest && document.activeElement.closest("#editBody")) return;
+  const r = S.rows.find(x => String(x.id) === S.focus); if (r) renderEdit(r);
+}
+
+// ---- columns + saved views ----
+async function loadViews(){ try { S.views = (await api("/api/settings")).views } catch(e) { S.views = [] } renderViews() }
+function renderViews(){
+  const mine = S.views.filter(v => v.channel === chan() && v.kind === S.kind), cur = localGet("view." + chan() + "." + S.kind) || "";
+  const bi = Object.keys(builtins());
+  if (bi.includes(cur.replace(/^b:/, "")) && cur.startsWith("b:")){
+    $("#viewSel").innerHTML = `<option value="">View: Current columns</option>` + bi.map(n => `<option value="b:${n}" ${"b:" + n === cur ? "selected" : ""}>View: ${n}</option>`).join("")
+      + mine.map(v => `<option value="v:${esc(v.name)}">View: ${esc(v.name)}</option>`).join("") + `<option value="save">Save current as a view ...</option><option value="reset">Reset to default columns</option>`;
+    $("#viewSel").value = cur; return;
+  }
+  $("#viewSel").innerHTML = `<option value="">View: ${mine.some(v => v.name === cur) ? "" : "Current columns"}</option>`
+    + bi.map(n => `<option value="b:${n}">View: ${n}</option>`).join("")
+    + mine.map(v => `<option value="v:${esc(v.name)}" ${v.name === cur ? "selected" : ""}>View: ${esc(v.name)}</option>`).join("")
+    + `<option value="save">Save current as a view ...</option>${mine.some(v => v.name === cur) ? `<option value="del">Delete view "${esc(cur)}"</option>` : ""}<option value="reset">Reset to default columns</option>`;
+  if (mine.some(v => v.name === cur)) $("#viewSel").value = "v:" + cur; else $("#viewSel").value = "";
+}
+$("#viewSel").onchange = async e => {
+  const v = e.target.value, vk = "view." + chan() + "." + S.kind;
+  if (v.startsWith("b:")){
+    const cols = builtins()[v.slice(2)].filter(k => V()[S.kind].cols.some(c => c.key === k));
+    localSet(layoutKey(S.kind), JSON.stringify(cols)); localSet(vk, v); renderViews(); return loadGrid();
+  }
+  if (v.startsWith("v:")){
+    const x = S.views.find(w => w.channel === chan() && w.kind === S.kind && w.name === v.slice(2));
+    localSet(layoutKey(S.kind), JSON.stringify(x.cols)); localSet(vk, x.name);
+    if (x.filter){ S.filter = x.filter; localSet("filter", S.filter) }
+    S.sort = x.sort ? {...x.sort, key:newKey(x.sort.key)} : null; renderViews(); return loadGrid();
+  }
+  if (v === "save"){
+    const name = prompt("Name for this view (columns, filter and sort):", localGet(vk) || ""); 
+    if (name){ try { await api("/api/settings/view/save", {name, channel:chan(), kind:S.kind, cols:colsFor().map(c => c.key), filter:S.filter, sort:S.sort}); localSet(vk, name.trim()); await loadViews(); toast("View saved") } catch(err) { toast(err.message) } }
+    return renderViews();
+  }
+  if (v === "del"){ const name = localGet(vk); if (confirm(`Delete the view "${name}"?`)){ await api("/api/settings/view/delete", {name, channel:chan(), kind:S.kind}); localSet(vk, ""); await loadViews() } return renderViews() }
+  if (v === "reset"){ try { localStorage.removeItem("adsstudio." + layoutKey(S.kind)) } catch(err) {} localSet(vk, ""); S.sort = null; renderViews(); return renderGrid() }
+};
+$("#colBtn").onclick = () => {
+  const all = V()[S.kind].cols.filter(c => c.label);
+  let chosen = colsFor().map(c => c.key);
+  const thumbs = V()[S.kind].cols.filter(c => c.thumb).map(c => c.key);
+  const draw = () => {
+    $("#colAll").innerHTML = all.map(c => `<label class="c"><input type="checkbox" data-ck="${c.key}" ${chosen.includes(c.key) ? "checked" : ""}> ${esc(c.label)}</label>`).join("")
+      + V()[S.kind].cols.filter(c => c.thumb).map(c => `<label class="c"><input type="checkbox" data-ck="${c.key}" ${chosen.includes(c.key) ? "checked" : ""}> Image preview</label>`).join("");
+    $("#colSel").innerHTML = chosen.map((k, i) => { const c = V()[S.kind].cols.find(x => x.key === k); return `<div class="r"><span>${esc(c.label || "Image preview")}</span><button data-up="${i}" title="Move up">↑</button><button data-dn="${i}" title="Move down">↓</button></div>` }).join("");
+  };
+  showDialog("Columns · " + V()[S.kind].label, `<p class="hint">Tick the columns you want and set their order. Save it as a view from the View menu to keep it under a name.</p>
+    <div class="colpick"><div><b>Available</b><div id="colAll" class="list"></div></div><div><b>Shown, in this order</b><div id="colSel" class="list sel"></div></div></div>`,
+    [["Default columns", () => { try { localStorage.removeItem("adsstudio." + layoutKey(S.kind)) } catch(e) {} dlg.close(); renderGrid() }],
+     ["Apply", () => { if (!chosen.length) return toast("Pick at least one column"); localSet(layoutKey(S.kind), JSON.stringify(chosen)); localSet("view." + chan() + "." + S.kind, ""); renderViews(); dlg.close(); renderGrid() }, "primary"]]);
+  $("#colAll").onchange = e => { const k = e.target.dataset.ck; if (!k) return; chosen = e.target.checked ? [...chosen, k] : chosen.filter(x => x !== k); draw() };
+  $("#colSel").onclick = e => { const u = e.target.dataset.up, d = e.target.dataset.dn, i = +(u ?? d); if (u === undefined && d === undefined) return;
+    const j = u !== undefined ? i - 1 : i + 1; if (j < 0 || j >= chosen.length) return; [chosen[i], chosen[j]] = [chosen[j], chosen[i]]; draw() };
+  draw();
+};
+
+// ---- connection health ----
+const hcls = ok => ok === true ? "green" : ok === false ? "red" : "amber";
+const CH_LABEL = {google:"Google Ads", meta:"Meta", email:"Email", seo:"SEO", social:"SoMe", some:"SoMe"};
+const chLabel = c => CH_LABEL[String(c || "").toLowerCase()] || c;
+async function healthDot(){
+  try { const h = await api("/api/health"); const sm = h.summary || {};
+    $("#hlDot").className = "hdot " + (sm.status === "unknown" ? "" : sm.status || "");
+    $("#hlBtn").title = sm.status === "unknown" ? "Not checked yet: open and press Check now" : `Last check: ${sm.ok} OK, ${sm.warn} warnings, ${sm.red} problems · checked ${fmtWhen(sm.checked_at)}${sm.stale ? " (old)" : ""}. Checks run only when you press Check now.`;
+    const ah = sm.age_hours; $("#hlAge").textContent = ah == null ? "" : ah < 1 ? "<1 h" : ah < 48 ? Math.round(ah) + " h" : Math.round(ah / 24) + " d";
+    return h } catch(e) { return null }
+}
+function healthHtml(h){
+  if (!h || !h.results || !h.results.length) return `<p class="hint">Not checked yet.</p>`;
+  return `<p class="hint">Checked ${esc(String(h.checked_at || "").replace("T", " ").slice(0, 16))}. Read-only checks: nothing is changed in Google, Meta, ML Suite, WordPress or the social channels.</p>`
+    + h.results.map(r => `<div class="hl-row"><span class="hdot ${hcls(r.ok)}"></span><div><b>${esc(chLabel(r.channel))}</b><div class="sub hint" style="margin:0">${esc(r.account || "")}</div></div>
+      <div>${esc(r.check)}: ${esc(r.detail)}${r.ok !== true && r.fix ? `<div class="hint" style="margin:2px 0 0">Fix: ${esc(r.fix)}</div>` : ""}</div></div>`).join("");
+}
+async function healthDialog(run){
+  showDialog("Connections", `<div id="hlBody">${run ? `<div class="empty">Checking every connection ...</div>` : healthHtml(await healthDot())}</div>`, [["Check now", () => healthDialog(true), "primary"]]);
+  if (run){ try { const h = await api("/api/settings/health/check", {}); $("#hlBody").innerHTML = healthHtml(h) } catch(e) { $("#hlBody").innerHTML = `<div class="prob">${esc(e.message)}</div>` } healthDot() }
+}
+$("#hlBtn").onclick = () => healthDialog(false);
+// No automatic checks: the dot shows the last result and its age; checking happens on Check now in this dialog.
+
+// ---- settings: ad accounts ----
+async function switchAcct(key){
+  S.acct = key; localSet("acct", key); $("#acct").value = key; S.camp = S.ag = null; S.open.clear(); S.draftV = -1; S.sort = null; S.focus = null;
+  $("#editBody").innerHTML = `<div class="empty">Click a row to see and edit it here.</div>`; editFoot([]);
+  renderTabs(); renderViews(); noteFetch(); loadTree(); loadGrid(); poll(true);
+}
+async function reloadAccounts(){
+  const accts = await api("/api/accounts");
+  const g = accts.filter(a => !String(a.key).startsWith("meta")), m = accts.filter(a => String(a.key).startsWith("meta"));
+  $("#acct").innerHTML = (g.length ? `<optgroup label="Google Ads">${g.map(a => `<option value="${a.key}">${esc(a.name)}</option>`).join("")}</optgroup>` : "")
+    + (m.length ? `<optgroup label="Meta (Facebook + Instagram)">${m.map(a => `<option value="${a.key}">${esc(a.name)}</option>`).join("")}</optgroup>` : "");
+  S.accts = accts;
+  if (!accts.some(a => a.key === S.acct)) return switchAcct(accts[0].key);
+  $("#acct").value = S.acct;
+}
+async function settingsDialog(){
+  showDialog("Settings", `<div class="empty">Loading ...</div>`, []);
+  let st; try { st = await api("/api/settings") } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
+  $("#dlgB").innerHTML = `
+    <div class="set-sec"><h3>Google Ads accounts</h3>
+      ${st.google.map(a => `<div class="set-row"><div class="grow"><div>${esc(a.name)}</div><div class="sub">${esc(a.id)} · Editor download ${esc((a.last_download || "never").replace("T", " "))}</div><div class="sub" id="gt_${esc(a.key)}"></div></div><select data-gsrc="${esc(a.key)}" title="Where Studio reads this account from"><option value="api" ${a.source === "api" ? "selected" : ""}>Read from Google Ads API</option><option value="editor" ${a.source === "editor" ? "selected" : ""}>Read from Ads Editor</option></select><button data-gtest="${esc(a.key)}">Test live access</button></div>`).join("") || `<p class="hint">No accounts downloaded in Google Ads Editor yet.</p>`}
+      <p class="hint">Studio reads Google straight from the API by default (live data, with stats). Ads Editor is optional: pick "Read from Ads Editor" to see Editor's copy instead. Send to Editor works either way.</p><p class="hint"><b>Add a Google Ads account:</b> in Google Ads Editor choose Accounts, then Add, sign in and download the account. It shows up here on its own (Studio reads Editor's data). Then press Test live access to check Push live can reach it through the API. Accounts outside our manager account also need API access in Google Ads.</p></div>
+    <div class="set-sec"><h3>Meta ad accounts</h3>
+      ${st.meta.map(a => `<div class="set-row"><div class="grow"><input data-mname="${esc(a.act)}" value="${esc(a.name)}" style="width:100%"><div class="sub">${esc(a.act)} · data ${esc((a.last_download || "not pulled yet").replace("T", " "))}</div></div>
+        <button data-mrn="${esc(a.act)}">Save name</button><button class="danger" data-mrm="${esc(a.act)}">Remove</button></div>`).join("") || `<p class="hint">No Meta ad accounts in Studio yet.</p>`}
+      ${st.meta_token ? `<div id="metaVis" class="hint">Checking which ad accounts the Meta token can reach ...</div>
+      <div class="set-row"><div class="grow"><input id="m_act" placeholder="Ad account ID, e.g. act_1234567890" style="width:100%"></div><input id="m_name" placeholder="Name in Studio (optional)"><button class="primary" id="m_add">Add</button></div>
+      <p class="hint">Studio uses the system user token in shared/.env. To add an account the token can't see yet, give the system user access to it in Meta Business Settings (Users > System users > Assign assets), then add it here. Removing an account here only hides it in Studio.</p>`
+      : `<p class="prob">No META_ACCESS_TOKEN in shared/.env.</p>`}</div>
+    <div class="set-sec" id="curSec"><h3>Currency</h3>
+      <div class="set-row"><div class="grow"><div>Display currency</div><div class="sub">The same in every view. Display only: budgets and bids are always typed, saved in the draft and pushed in each account's own currency.</div></div>
+        <select id="dispCur"><option value="own" ${st.display_currency === "own" ? "selected" : ""}>Each account's own</option>${st.currencies.map(c => `<option value="${esc(c)}" ${c === st.display_currency ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
+      <p class="hint" id="fxNote">${esc(st.fx.note)}${st.fx.fallback ? ". Built-in rough rates: Frankfurter could not be reached." : ""}</p>
+      <p class="hint">Account currencies: ${(S.accts || []).map(a => `${esc(a.name)} ${esc(a.currency || "unknown")}`).join(" · ")}. Stats for a period are converted at today's ECB rate, not each day's rate. Rates are kept for 12 hours.</p>
+      <button id="fxRefresh">Refresh rates</button></div>
+    <div class="set-sec"><h3>Saved views</h3>${st.views.length ? st.views.map(v => `<div class="set-row"><div class="grow">${esc(v.name)}<div class="sub">${v.channel === "meta" ? "Meta" : "Google"} · ${esc(v.kind)} · ${v.cols.length} columns${v.filter && v.filter !== "all" ? " · filter: " + esc(v.filter) : ""}</div></div><button class="danger" data-vdel='${esc(JSON.stringify({name:v.name, channel:v.channel, kind:v.kind}))}'>Delete</button></div>`).join("") : `<p class="hint">None yet. Use the View menu above the grid to save one.</p>`}</div>`;
+  const b = $("#dlgB");
+  b.onchange = async e => {
+    if (e.target.id === "dispCur"){ try { await api("/api/settings/currency", {currency:e.target.value}); await loadFx(); toast(S.disp === "own" ? "Showing each account's own currency" : "Showing money in " + S.disp); reshowMoney() } catch(err) { toast(err.message) } return }
+    const k = e.target.dataset.gsrc; if (!k) return;
+    try { await api("/api/settings/google/source", {acct:k, source:e.target.value}); toast("Saved"); if (k === S.acct){ S.gsrc = null; poll(true); loadTree() } } catch(err) { toast(err.message) } };
+  b.onclick = async e => {
+    const t = e.target;
+    try {
+      if (t.id === "fxRefresh"){ t.disabled = true; const r = await api("/api/settings/fx/refresh", {}); S.fx = r; $("#fxNote").textContent = r.note; t.disabled = false; toast("Rates refreshed"); reshowMoney() }
+      if (t.dataset.gtest){ const out = $("#gt_" + t.dataset.gtest); out.textContent = "Checking ..."; const r = await api("/api/settings/google/test", {acct:t.dataset.gtest}); out.textContent = r.message; out.style.color = r.ok ? "var(--ok)" : "var(--bad)" }
+      if (t.dataset.mrn){ await api("/api/settings/meta/rename", {act:t.dataset.mrn, name:document.querySelector(`[data-mname="${t.dataset.mrn}"]`).value}); toast("Name saved"); await reloadAccounts() }
+      if (t.dataset.mrm){ if (!confirm("Hide this ad account in Studio? Nothing changes in Meta. Its draft and push log stay on disk.")) return; await api("/api/settings/meta/remove", {act:t.dataset.mrm}); await reloadAccounts(); settingsDialog() }
+      if (t.id === "m_add" || t.dataset.madd){ t.disabled = true; const r = await api("/api/settings/meta/add", {act:t.dataset.madd || val("m_act"), name:t.dataset.madd ? "" : val("m_name")}); toast("Added " + r.name); await reloadAccounts(); settingsDialog() }
+      if (t.dataset.vdel){ await api("/api/settings/view/delete", JSON.parse(t.dataset.vdel)); await loadViews(); settingsDialog() }
+    } catch(err) { t.disabled = false; toast(err.message) }
+  };
+  if (st.meta_token){
+    try { const vis = await api("/api/settings/meta/visible", {});
+      $("#metaVis").innerHTML = "<b>Ad accounts the token can reach:</b> " + vis.map(a => `${esc(a.name)} (${esc(a.act)}, ${esc(a.currency)})${a.active ? "" : " - not active"} ${a.added ? "<span class='chip ok'>in Studio</span>" : `<button class="link" data-madd="${esc(a.act)}">Add</button>`}`).join(" · ");
+    } catch(e) { $("#metaVis").textContent = "Couldn't list ad accounts: " + e.message }
+  }
+}
+$("#setBtn").onclick = settingsDialog;
+function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage(); if (S.rows) renderGrid(); const r = S.focus && S.rows.find(x => String(x.id) === S.focus); if (r) renderEdit(r) }
+
+// ---- start ----
+(async () => {
+  const accts = await api("/api/accounts");
+  const g = accts.filter(a => !String(a.key).startsWith("meta")), m = accts.filter(a => String(a.key).startsWith("meta"));
+  $("#acct").innerHTML = (g.length ? `<optgroup label="Google Ads">${g.map(a => `<option value="${a.key}">${esc(a.name)}</option>`).join("")}</optgroup>` : "")
+    + (m.length ? `<optgroup label="Meta (Facebook + Instagram)">${m.map(a => `<option value="${a.key}">${esc(a.name)}</option>`).join("")}</optgroup>` : "");
+  $("#acct").value = S.acct;
+  $("#acct").onchange = e => switchAcct(e.target.value);
+  if (!accts.some(a => a.key === S.acct) && accts.length){ S.acct = accts[0].key; $("#acct").value = S.acct }
+  S.accts = accts; await loadFx(); await loadViews(); healthDot(); loadDataStatus();
+  renderRange(); renderTabs(); noteFetch(); await loadTree(); await loadGrid(); poll(true);
+  setInterval(poll, 2500);  // local state only (draft, Editor pending, cache times): never asks Google or Meta
+})();
+</script>
+<!-- [mac-app updater] begin: version in the footer + "Update available" banner (only inside the Mac app, MSTUDIO_APP=1). Self-contained; see updater.py -->
+<style>
+#msUpd{position:fixed;right:16px;bottom:40px;z-index:9999;display:none;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--line,#dadce0);border-radius:8px;background:var(--panel,#fff);color:var(--text,#202124);box-shadow:0 2px 10px rgba(0,0,0,.15);font-size:13px}
+#msUpd.on{display:flex}
+#msUpd button{font:inherit;cursor:pointer;border:0;border-radius:4px;padding:4px 10px;background:#1a73e8;color:#fff}
+#msUpd button.ghost{background:transparent;color:var(--muted,#5f6368)}
+#msUpd button:disabled{opacity:.6;cursor:default}
+</style>
+<div id="msUpd" role="status"><span id="msUpdMsg"></span><button id="msUpdGo">Update now</button><button id="msUpdX" class="ghost" title="Hide until next start">Later</button></div>
+<script>
+(function(){
+  const box = document.getElementById("msUpd"), msg = document.getElementById("msUpdMsg"),
+        go = document.getElementById("msUpdGo"), later = document.getElementById("msUpdX");
+  const press = (document.querySelector('meta[name="studio-press"]') || {}).content || "";
+  const getJ = async u => { try { const r = await fetch(u); return r.ok ? await r.json() : null } catch(e) { return null } };
+  let poll = null;
+  later.onclick = () => box.classList.remove("on");
+  function show(text, canGo){ msg.textContent = text; go.style.display = canGo ? "" : "none"; go.disabled = false; box.classList.add("on") }
+  async function check(force){
+    const st = await getJ("/api/app/update/check" + (force ? "?force=1" : ""));
+    if (!st || !st.available || st.skipped || !st.release) return;
+    if (st.canInstall) show("Update available: v" + st.latest + " - ", true);
+    else show("Update available: v" + st.latest + " (this copy can't update itself: " + (st.cannotInstall || "unknown") + ")", false);
+  }
+  go.onclick = async () => {
+    go.disabled = true; msg.textContent = "Downloading update...";
+    let j = null;
+    try { j = await (await fetch("/api/app/update/apply", {method:"POST", headers:{"Content-Type":"application/json", "X-Studio-Press":press}, body:"{}"})).json() } catch(e) {}
+    if (!j || !j.ok) { show("Update failed: " + ((j && j.error) || "no answer") + ". Nothing was changed.", false); return }
+    poll = setInterval(async () => {
+      const st = await getJ("/api/app/update/check"); const job = st && st.job;
+      if (!job) return;
+      if (job.phase === "downloading") msg.textContent = "Downloading update... " + (job.progress || 0) + "%";
+      else if (job.phase === "verifying") msg.textContent = "Checking the download...";
+      else if (job.phase === "installing") { msg.textContent = "Installing - Marketing Studio restarts in a moment..."; clearInterval(poll) }
+      else if (job.phase === "error") { clearInterval(poll); show("Update failed: " + (job.error || "unknown error") + ". Nothing was changed.", false) }
+    }, 700);
+  };
+  (async () => {
+    const v = await getJ("/api/app/version");
+    if (!v) return;
+    const f = document.querySelector("footer > span");
+    if (f && v.version) f.textContent = "Marketing Studio v" + v.version;
+    if (!v.app) return;
+    setTimeout(() => check(false), 6000);
+    setInterval(() => { if (!box.classList.contains("on")) check(false) }, 24 * 3600 * 1000);
+  })();
+})();
+</script>
+<!-- [mac-app updater] end -->
+<script>window.addEventListener("unhandledrejection", e => { const m = e.reason && e.reason.message; if (m && typeof toast === "function"){ toast(m); e.preventDefault() } });</script>
+<script src="/static/setup.js"></script>
+</body>
+</html>

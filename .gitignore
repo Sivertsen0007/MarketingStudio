@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+macapp/.build/
+macapp/build/
+dist/
+*.env
+.env*
+settings.json
+*_cache*.json

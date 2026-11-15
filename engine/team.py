@@ -37,6 +37,7 @@ import datetime as dt
 import fcntl
 import json
 import os
+import re
 import shutil
 import socket
 import tempfile
@@ -60,6 +61,12 @@ SOFT = ("at", "ts", "by", "edited_by", "edited_at")  # bookkeeping: on both side
 DEFAULT_CS = "Untitled changes"
 ROOT = None  # tests may point this elsewhere; default core.STUDIO_DIR (where every area keeps its drafts)
 _MISSING = object()
+MAX_REQUEST_BYTES = 1_500_000  # one push request (the server takes 4 MB)
+MAX_ITEM_BYTES = 512 * 1024    # the server's limit for one item's data
+MAX_OPS = 200                  # per request (the server takes 500)
+COLL_RE = re.compile(r"^[a-z_]+(:[A-Za-z0-9_.-]+)?$")
+ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
+COLOUR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class TeamError(Exception):
@@ -256,18 +263,19 @@ def join(link=None, server=None, invite=None, device_name=None):
 
 
 def leave():
-    """Revoke this device, forget the team (config, token, sync state). Local drafts stay."""
-    st = _state()
-    dev = (st.get("device") or {}).get("id")
-    if dev is not None and _server() and _token() and not st.get("removed"):
-        with contextlib.suppress(TeamError):
-            _http("DELETE", f"/api/v1/devices/{int(dev)}", token=_token(), timeout=8)
+    """Revoke this device, forget the team (config, token, sync state). Local drafts stay. Waits for a running sync."""
     stop_listener()
-    with _lock:
-        appconfig.set_many({"TEAM_SERVER_URL": None})
-        appconfig.set_secret("TEAM_DEVICE_TOKEN", None)
-        with contextlib.suppress(OSError):
-            shutil.rmtree(_root() / draftstore.TEAM_DIR)
+    with _sync_lock, _flock():
+        st = _state()
+        dev = (st.get("device") or {}).get("id")
+        if dev is not None and _server() and _token() and not st.get("removed"):
+            with contextlib.suppress(TeamError):
+                _http("DELETE", f"/api/v1/devices/{int(dev)}", token=_token(), timeout=8)
+        with _lock:
+            appconfig.set_many({"TEAM_SERVER_URL": None})
+            appconfig.set_secret("TEAM_DEVICE_TOKEN", None)
+            with contextlib.suppress(OSError):
+                shutil.rmtree(_root() / draftstore.TEAM_DIR)
     return status()
 
 
@@ -275,8 +283,10 @@ def leave():
 
 def _refresh_members():
     r = _api("GET", "/api/v1/members")
-    m = {str(x["id"]): {"name": x.get("name") or x.get("email") or f"member {x['id']}", "colour": x.get("colour") or "",
-                        "role": x.get("role") or "", "email": x.get("email") or ""} for x in r.get("members") or []}
+    m = {str(x["id"]): {"name": str(x.get("name") or x.get("email") or f"member {x['id']}")[:100],
+                        "colour": x["colour"] if COLOUR_RE.match(str(x.get("colour") or "")) else "#888888",
+                        "role": str(x.get("role") or ""), "email": str(x.get("email") or "")}
+         for x in r.get("members") or [] if isinstance(x, dict) and "id" in x}
     _update_state(members=m, members_at=_now())
     return m
 
@@ -323,7 +333,7 @@ def changeset_set(cs_id=None, name=None):
             if not cs:
                 raise ValueError("No such changeset")
         else:
-            name = (name or "").strip()[:200]
+            name = (name or "").strip()[:100]
             if not name:
                 raise ValueError("Give the changeset a name")
             me = (_state().get("member") or {}).get("id", "x")
@@ -335,7 +345,7 @@ def changeset_set(cs_id=None, name=None):
 
 
 def changeset_rename(cs_id, name):
-    name = (name or "").strip()[:200]
+    name = (name or "").strip()[:100]
     if not name:
         raise ValueError("Give the changeset a name")
     with _lock:
@@ -392,7 +402,7 @@ def merge3(base, theirs, mine, path=()):
             v = t
         elif _eq(t, b):
             v = m
-        elif k in SOFT:
+        elif not path and k in SOFT:
             v = m
         else:
             conflicts.append((path + (k,), b, t, m))
@@ -478,13 +488,58 @@ def _record_conflict(ctx, key, coll, iid, S, item, base, fields):
     ctx["tally"]["conflicts"] += len(fields)
 
 
-def _incoming(ctx, S):
-    """One item from the server (pull, or the server copy in a push conflict)."""
-    coll, iid = str(S["coll"]), str(S["id"])
+def check_item(S):
+    """Why a server item can't be stored here, or None. Nothing from the server is used in a file name or written
+    before this passes."""
+    if not isinstance(S, dict):
+        return "not an object"
+    coll, iid = S.get("coll"), S.get("id")
+    if not isinstance(coll, str) or not COLL_RE.match(coll):
+        return "bad collection name"
+    if not isinstance(iid, str) or not ID_RE.match(iid):
+        return "bad item id"
     try:
-        draftstore.layout(coll)
+        lay = draftstore.layout(coll)
     except ValueError:
-        return  # a collection this Studio does not know (a newer version's area)
+        return f"unknown collection {coll}"
+    v = S.get("version")
+    if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+        return "bad version"
+    if S.get("deleted"):
+        return None
+    data = S.get("data")
+    if not isinstance(data, dict):
+        return "data is not an object"
+    kind = lay.colls[coll][1]
+    if kind == "list" and str(data.get("id")) != iid:
+        return "data.id does not match the item id"
+    if kind == "single" and iid != draftstore.SINGLE_ID:
+        return "bad item id"
+    return None
+
+
+def _skip(ctx, S, why):
+    c = S.get("coll") if isinstance(S, dict) else None
+    i = S.get("id") if isinstance(S, dict) else None
+    ctx["skipped"].append({"coll": str(c)[:200], "id": str(i)[:200], "reason": str(why)[:300], "at": _now()})
+
+
+def _incoming(ctx, S):
+    """One item from the server, checked first; a bad one is skipped and listed (status "skipped"), never fatal."""
+    why = check_item(S)
+    if why:
+        return _skip(ctx, S, why)
+    try:
+        _incoming_ok(ctx, S)
+    except TeamError:
+        raise
+    except Exception as e:  # noqa: BLE001 - one broken item must not stop the sync
+        _skip(ctx, S, f"could not store it: {e}")
+
+
+def _incoming_ok(ctx, S):
+    """One valid item from the server (pull, or the server copy in a push conflict)."""
+    coll, iid = S["coll"], S["id"]
     key, root, synced = _key(coll, iid), _root(), ctx["synced"]
     s = synced.get(key)
     if s and int(s.get("v", 0)) >= int(S["version"]):
@@ -495,13 +550,41 @@ def _incoming(ctx, S):
             "deleted": bool(S.get("deleted")), "changeset": S.get("changeset")}
     new_s = {"v": int(S["version"]), "base": theirs, "deleted": theirs is None}
     mine, h = draftstore.peek(coll, iid, root)
+    if key not in ctx["conflicts"] and mine == theirs and (theirs is not None or s):
+        synced[key] = new_s  # already the same here (e.g. read again after a reset)
+        return
     if key not in ctx["conflicts"] and not _local_changed(s, mine):
         if draftstore.apply_remote(coll, item, root, expect=h):
             synced[key] = new_s
             ctx["tally"]["received"] += 1
             return
         mine, h = draftstore.peek(coll, iid, root)  # edited just now: merge instead
-    ctx["conflicts"].pop(key, None)
+    old = ctx["conflicts"].pop(key, None)
+    _merge_in(ctx, key, coll, iid, S, item, new_s, s, mine, h)
+    c = ctx["conflicts"].get(key)
+    if old and c:
+        _carry_answers(old, c)
+        if all(f.get("choice") for f in c["fields"]) and _finalise(ctx, key, c):
+            ctx["repush"] = True
+
+
+def _carry_answers(old, new):
+    """A newer server copy of an item already in conflict: keep the answers given so far where they still mean the
+    same thing (keep mine: my value unchanged; take theirs / custom: their value unchanged)."""
+    prev = {tuple(f["path"]): f for f in old["fields"] if f.get("choice")}
+    for f in new["fields"]:
+        p = prev.get(tuple(f["path"]))
+        if not p:
+            continue
+        same_mine = (p["mine"], p["mine_missing"]) == (f["mine"], f["mine_missing"])
+        same_theirs = (p["theirs"], p["theirs_missing"]) == (f["theirs"], f["theirs_missing"])
+        if (p["choice"] == "mine" and same_mine) or (p["choice"] in ("theirs", "custom") and same_theirs):
+            f["choice"], f["value"] = p["choice"], p.get("value")
+
+
+def _merge_in(ctx, key, coll, iid, S, item, new_s, s, mine, h):
+    root, synced = _root(), ctx["synced"]
+    theirs = item["data"]
     base = s.get("base") if s and not s.get("deleted") else None
     if theirs is None and mine is None:
         draftstore.apply_remote(coll, item, root, expect=h)
@@ -531,8 +614,59 @@ def _incoming(ctx, S):
         ctx["repush"] = True
 
 
+def _role():
+    return ((_state().get("member") or {}).get("role") or "").lower()
+
+
+def _failed():
+    return _load("failed.json", {})
+
+
+def _mark_failed(ctx, coll, iid, h, reason):
+    """The server refused this op: it is not sent again until the item changes (h = the hash that was refused)."""
+    ctx["failed"][_key(coll, iid)] = {"coll": coll, "id": iid, "h": h, "reason": str(reason)[:300], "at": _now()}
+    ctx["errors"].append(f"{coll}/{iid}: {reason}")
+
+
+def _chunks(ops, sent):
+    """Split ops into requests of at most MAX_OPS ops and MAX_REQUEST_BYTES bytes."""
+    out, cur, size = [], [], 0
+    for op, meta in zip(ops, sent):
+        n = len(json.dumps(op, separators=(",", ":"), ensure_ascii=False).encode()) + 1
+        if cur and (len(cur) >= MAX_OPS or size + n > MAX_REQUEST_BYTES):
+            out.append(cur)
+            cur, size = [], 0
+        cur.append((op, meta))
+        size += n
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _send(ctx, chunk):
+    """POST one chunk. A request the server refuses as a whole (4xx) is retried op by op, so one bad op is marked
+    failed and the rest still go. -> [(result, meta)]."""
+    try:
+        r = _api("POST", "/api/v1/items", {"ops": [op for op, _ in chunk]})
+    except Offline:
+        raise
+    except TeamError as e:
+        if e.status in (401, 429, 503) or not 400 <= e.status < 500:
+            raise
+        if len(chunk) == 1:
+            return [({"ok": False, "error": str(e)}, chunk[0][1])]
+        out = []
+        for one in chunk:
+            out += _send(ctx, [one])
+        return out
+    return list(zip(r.get("results") or [], [m for _, m in chunk]))
+
+
 def _push(ctx):
     root, synced = _root(), ctx["synced"]
+    if _role() == "viewer":
+        ctx["notes"].append("Viewers can't send changes")
+        return
     for _ in range(4):
         ops, sent, acks, peek = [], [], {}, _snapshot()
         for e in draftstore.outbox(root):
@@ -544,6 +678,11 @@ def _push(ctx):
                 data, h = peek(coll, iid)
             except ValueError:
                 continue
+            f = ctx["failed"].get(key)
+            if f:
+                if f.get("h") == h:
+                    continue  # refused before and not edited since
+                ctx["failed"].pop(key)
             s = synced.get(key)
             if data is None:
                 if not s or s.get("deleted"):
@@ -554,63 +693,92 @@ def _push(ctx):
                 if s and not s.get("deleted") and same(s.get("base"), data):
                     acks.setdefault(coll, []).append((iid, h))  # only derived fields changed
                     continue
+                if not COLL_RE.match(coll) or not ID_RE.match(iid):
+                    _mark_failed(ctx, coll, iid, h, "this item's id can't be shared with the team")
+                    continue
+                try:
+                    size = len(json.dumps(data, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode())
+                except ValueError:
+                    _mark_failed(ctx, coll, iid, h, "holds a number that can't be shared (NaN or infinity)")
+                    continue
+                if size > MAX_ITEM_BYTES:
+                    _mark_failed(ctx, coll, iid, h, "too large to share (over 512 KB)")
+                    continue
                 op = {"op": "put", "coll": coll, "id": iid, "base_version": int(s["v"]) if s else 0, "data": data}
             op["changeset"] = _cs_for(e.get("cs"))
             ops.append(op)
             sent.append((coll, iid, data, h))
         retry = False
-        for n in range(0, len(ops), 200):
-            chunk, meta = ops[n:n + 200], sent[n:n + 200]
-            r = _api("POST", "/api/v1/items", {"ops": chunk})
-            for res, (coll, iid, data, h) in zip(r.get("results") or [], meta):
-                key = _key(coll, iid)
-                if res.get("ok"):
-                    synced[key] = {"v": int(res["version"]), "base": data, "deleted": data is None}
-                    acks.setdefault(coll, []).append((iid, h))
-                    ctx["tally"]["sent"] += 1
-                elif res.get("conflict"):
-                    S = res.get("server")
-                    if S is None:  # the server does not have it (any more)
-                        if data is None:
+        try:
+            for chunk in _chunks(ops, sent):
+                for res, (coll, iid, data, h) in _send(ctx, chunk):
+                    key = _key(coll, iid)
+                    if res.get("ok"):
+                        synced[key] = {"v": int(res["version"]), "base": data, "deleted": data is None}
+                        acks.setdefault(coll, []).append((iid, h))
+                        ctx["tally"]["sent"] += 1
+                    elif res.get("conflict"):
+                        S = res.get("server")
+                        if S is not None and check_item(S):
+                            _mark_failed(ctx, coll, iid, h, f"the team's copy can't be read here ({check_item(S)})")
+                            continue
+                        if S is None:  # the server does not have it (any more)
                             synced.pop(key, None)
-                            acks.setdefault(coll, []).append((iid, ""))
+                            if data is None:
+                                acks.setdefault(coll, []).append((iid, ""))
+                            else:
+                                retry = True
                         else:
-                            synced.pop(key, None)
+                            _incoming(ctx, S)
                             retry = True
-                    else:
-                        _incoming(ctx, S)
-                        retry = True
-                else:  # e.g. delete of an item the server never had
-                    synced.pop(key, None)
-                    if data is None:
+                    elif data is None and res.get("error") == "not found":
+                        synced.pop(key, None)  # a delete of an item the server never had
                         acks.setdefault(coll, []).append((iid, ""))
                     else:
-                        ctx["errors"].append(f"{coll}/{iid}: {res.get('error') or 'refused'}")
-            _save("synced.json", synced)
-        for coll, a in acks.items():
-            draftstore.outbox_ack(coll, a, root)
-        _save("conflicts.json", ctx["conflicts"])
+                        _mark_failed(ctx, coll, iid, h, res.get("error") or "refused by the team server")
+        finally:
+            for coll, a in acks.items():
+                draftstore.outbox_ack(coll, a, root)
         if not retry:
             return
 
 
 def _pull(ctx):
-    cursor = int(_state().get("cursor") or 0)
-    for _ in range(10000):
+    cursor, reset_done = int(ctx["cursor"]), False
+    for _ in range(100000):
         r = _api("GET", f"/api/v1/items?since={cursor}&limit=1000")
+        if r.get("reset") and cursor and not reset_done:
+            # the server's history is behind my cursor (restored from a backup): forget the versions I knew and read
+            # everything again. The synced copies stay as merge bases, so pending local edits still merge; items equal
+            # to the local copy are only re-recorded, not applied or counted again.
+            cursor, reset_done = 0, True
+            ctx["cursor"] = 0
+            for v in ctx["synced"].values():
+                v["v"] = 0
+            continue
         for S in r.get("items") or []:
             _incoming(ctx, S)
-        cursor = int(r.get("cursor") or cursor)
-        _save("synced.json", ctx["synced"])
-        _save("conflicts.json", ctx["conflicts"])
-        _update_state(cursor=cursor)
+        c = r.get("cursor")
+        cursor = c if isinstance(c, int) and not isinstance(c, bool) and c >= 0 else cursor
+        ctx["cursor"] = cursor
         if not r.get("more"):
             break
 
 
 def _ctx():
-    return {"synced": _load("synced.json", {}), "conflicts": _load("conflicts.json", {}), "errors": [], "repush": False,
+    return {"synced": _load("synced.json", {}), "conflicts": _load("conflicts.json", {}), "failed": _failed(),
+            "cursor": int(_state().get("cursor") or 0), "errors": [], "notes": [], "skipped": [], "repush": False,
             "tally": {"sent": 0, "received": 0, "merged": 0, "conflicts": 0}}
+
+
+def _save_ctx(ctx):
+    """Everything a sync learnt, written once at its end."""
+    _save("synced.json", ctx["synced"])
+    _save("conflicts.json", ctx["conflicts"])
+    _save("failed.json", ctx["failed"])
+    st = _state()
+    skipped = (st.get("skipped") or []) + ctx["skipped"]
+    _update_state(cursor=ctx["cursor"], skipped=skipped[-50:])
 
 
 _sync_lock = threading.Lock()
@@ -626,38 +794,59 @@ def _summary(t):
 
 
 def sync():
-    """Push my changes, pull everyone else's. -> {ok, sent, received, merged, conflicts, message, ...}."""
+    """Push my changes, pull everyone else's. A failed push never stops the pull.
+    -> {ok, sent, received, merged, conflicts, skipped, failed, message, ...}."""
     if not joined():
         raise ValueError("Join a team first (Setup > Team)")
     if _state().get("removed"):
-        return {"ok": False, "removed": True, "message": "This Mac was removed from the team", **status()}
+        return {"ok": False, "removed": True, "message": "This Mac was removed from the team", "status": status()}
     _tls.syncing = True
     try:
         with _sync_lock, _flock():
             ctx = _ctx()
-            out = {"ok": True}
+            problems, offline, removed = [], False, False
+
+            def step(fn):
+                nonlocal offline, removed
+                if removed:
+                    return
+                try:
+                    fn(ctx)
+                except Offline as e:
+                    offline = True
+                    problems.append(str(e))
+                except TeamError as e:
+                    removed = removed or e.status == 401
+                    problems.append(str(e))
             try:
-                _push(ctx)
-                _pull(ctx)
-                if ctx["repush"]:
-                    _push(ctx)
-                _update_state(last_sync=_now(), last_error="", remote_waiting=0, online=True)
-            except Offline as e:
-                out = {"ok": False, "offline": True, "error": str(e)}
-                _update_state(last_error=str(e) + ". Your changes wait in the outbox.", online=False)
-            except TeamError as e:
-                out = {"ok": False, "error": str(e), "removed": e.status == 401}
-                _update_state(last_error=str(e))
+                step(_push)
+                if not offline:
+                    step(_pull)
+                if ctx["repush"] and not offline:
+                    step(_push)
             finally:
-                _save("synced.json", ctx["synced"])
-                _save("conflicts.json", ctx["conflicts"])
+                _save_ctx(ctx)
+            ok = not problems
             t = ctx["tally"]
             t["conflicts"] = sum(len(c["fields"]) for c in ctx["conflicts"].values()) if t["conflicts"] else 0
-            msg = _summary(t) if out["ok"] else out["error"]
+            t["skipped"], t["failed"] = len(ctx["skipped"]), len(ctx["errors"])
+            msg = _summary(t)
             if ctx["errors"]:
-                msg += f" ({len(ctx['errors'])} refused: {ctx['errors'][0]})"
-            out.update(t, message=msg, errors=ctx["errors"])
-            _update_state(last_result={**t, "message": msg, "at": _now()})
+                msg += f". {len(ctx['errors'])} not accepted: {ctx['errors'][0]}"
+            if ctx["skipped"]:
+                msg += f". {len(ctx['skipped'])} from the team skipped: {ctx['skipped'][0]['reason']}"
+            for n in ctx["notes"]:
+                msg += f". {n}"
+            if offline:
+                msg = problems[0] + ". Your changes wait in the outbox."
+            elif problems:
+                msg = problems[0] + (f" ({msg})" if t["sent"] or t["received"] else "")
+            fields = {"last_error": "" if ok else msg, "online": not offline, "last_result": {**t, "message": msg, "at": _now()}}
+            if not offline:
+                fields.update(last_sync=_now(), remote_waiting=0)
+            _update_state(**fields)
+            out = {"ok": ok, "offline": offline, "removed": removed, "message": msg, "error": "" if ok else msg,
+                   "errors": ctx["errors"], **t}
     finally:
         _tls.syncing = False
     return {**out, "status": status()}
@@ -785,7 +974,10 @@ def status():
     if not (server and _token() and st.get("member")):
         return {"joined": False, "removed": False, "server": "", "auto_sync": False}
     me = dict(st.get("member") or {})
+    if not COLOUR_RE.match(str(me.get("colour") or "")):
+        me["colour"] = "#888888"
     cf = _load("conflicts.json", {})
+    failed = [{k: f.get(k) for k in ("coll", "id", "reason", "at")} for f in _failed().values()]
     try:
         pending = pending_count()
     except Exception:  # noqa: BLE001 - status must always answer
@@ -796,7 +988,8 @@ def status():
             "last_error": st.get("last_error") or "", "pending_out": pending,
             "remote_waiting": int(st.get("remote_waiting") or 0), "conflicts": sum(len(c["fields"]) for c in cf.values()),
             "auto_sync": bool(st.get("auto_sync")), "online": st.get("online"), "listening": _LISTENER["alive"],
-            "changeset": _changesets()["active"], "members": members()}
+            "changeset": _changesets()["active"], "members": members(), "failed": failed,
+            "skipped": (st.get("skipped") or [])[-20:], "can_send": _role() != "viewer"}
 
 
 def settings(auto_sync=None):
@@ -849,7 +1042,8 @@ def remote_waiting():
     st = _state()
     r = _api("GET", f"/api/v1/items?since={int(st.get('cursor') or 0)}&limit=1000")
     synced = _load("synced.json", {})
-    n = sum(1 for S in r.get("items") or [] if int((synced.get(_key(S["coll"], str(S["id"]))) or {}).get("v", 0)) < int(S["version"]))
+    n = sum(1 for S in r.get("items") or [] if not check_item(S)
+            and int((synced.get(_key(S["coll"], S["id"])) or {}).get("v", 0)) < S["version"])
     _update_state(remote_waiting=n)
     return n
 

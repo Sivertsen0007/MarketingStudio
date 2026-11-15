@@ -22,18 +22,39 @@ REPO = ENGINE.parent
 
 PRELUDE = """
 import json, sys, time
-sys.path.insert(0, {engine!r})
+sys.path.insert(0, ENGINE_DIR)
 import appconfig, core, draftstore, team
 from areas import email as em
 ROOT = core.STUDIO_DIR
 def seo_put(iid, data):
     with draftstore.tx("seo:changes", ROOT, by="you") as t:
-        t.put(iid, {{"id": iid, **data}}, "you")
+        t.put(iid, {"id": iid, **data}, "you")
 def seo_get(iid):
     return draftstore.peek("seo:changes", iid, ROOT)[0]
 def seo_delete(iid):
     with draftstore.tx("seo:changes", ROOT) as t:
         t.delete(iid)
+def fake_join(role="editor", colour="#112233"):
+    appconfig.set_many({"TEAM_SERVER_URL": "http://127.0.0.1:9"})
+    appconfig.set_secret("TEAM_DEVICE_TOKEN", "t")
+    team._save("state.json", {"member": {"id": 7, "name": "Me", "role": role, "colour": colour}, "team": "T", "cursor": 0})
+def fake_api(pages, fail_post=None):
+    calls = []
+    def api(method, path, body=None, timeout=None):
+        calls.append((method, path))
+        if method == "POST":
+            if fail_post:
+                raise fail_post
+            return {"results": [{"ok": True, "version": 1, "coll": o["coll"], "id": o["id"]} for o in body["ops"]]}
+        if path.startswith("/api/v1/members"):
+            return {"members": []}
+        since = int(path.split("since=")[1].split("&")[0])
+        return pages[since]
+    team._api = api
+    return calls
+def item(coll, iid, v, data, deleted=False):
+    return {"coll": coll, "id": iid, "version": v, "data": data, "deleted": deleted, "author": 1, "updated_by": 1,
+            "updated_at": "2026-11-15T10:00:00Z", "changeset": None}
 out = None
 """
 
@@ -92,7 +113,7 @@ class TeamSync(unittest.TestCase):
                "STUDIO_DATA_DIR": os.path.join(home, "dp")}
         for k in ("SEO_STUDIO_DIR", "SOCIAL_DIR", "TEAM_SERVER_URL", "TEAM_DEVICE_TOKEN"):
             env.pop(k, None)
-        src = PRELUDE.format(engine=str(ENGINE)) + textwrap.dedent(code) + "\nprint('@@' + json.dumps(out, default=str))\n"
+        src = f"ENGINE_DIR = {str(ENGINE)!r}\n" + PRELUDE + textwrap.dedent(code) + "\nprint('@@' + json.dumps(out, default=str))\n"
         r = subprocess.run([sys.executable, "-c", src], cwd=ENGINE, env=env, capture_output=True, text=True, timeout=timeout)
         if r.returncode != 0:
             self.fail(f"client failed:\n{r.stderr}")
@@ -370,6 +391,153 @@ out = {{"via_stream": via_stream, "sync": s, "status": team.status()}}""")
         self.assertNotIn("TEAM_DEVICE_TOKEN", json.loads(Path(a, "secrets.json").read_text()))
         out = self.cli("members")
         self.assertIn("REVOKED", out)
+
+    # ---------- sync error handling (review fixes) ----------
+
+    def test_push_failures_do_not_block_the_pull(self):
+        a, _ = self.member("Ivy")
+        b, _ = self.member("Jon")
+        self.sync(a)
+        self.run_in(b, 'seo_put("p-from-b", {"title": "from b"}); team.sync()')
+        r = self.run_in(a, """
+seo_put("p-big", {"title": "x" * 600000})
+seo_put("p-nan", {"title": "n", "score": float("nan")})
+seo_put("p-ok", {"title": "fine"})
+s = team.sync()
+s2 = team.sync()
+st = team.status()
+seo_put("p-big", {"title": "small now"})
+s3 = team.sync()
+out = {"s": s, "s2": s2, "st": st, "s3": s3, "got": seo_get("p-from-b"), "box": draftstore.outbox(ROOT)}""")
+        self.assertTrue(r["s"]["ok"], r["s"])
+        self.assertFalse(r["s"]["offline"])
+        self.assertEqual(r["s"]["sent"], 1)
+        self.assertEqual(r["s"]["failed"], 2)
+        self.assertEqual(r["got"]["title"], "from b")  # the pull ran
+        reasons = {f["id"]: f["reason"] for f in r["st"]["failed"]}
+        self.assertIn("too large", reasons["p-big"])
+        self.assertIn("NaN", reasons["p-nan"])
+        self.assertEqual((r["s2"]["sent"], r["s2"]["failed"]), (0, 0))  # not sent again until edited
+        self.assertEqual(r["s3"]["sent"], 1)  # edited: sent
+        self.assertEqual([e["id"] for e in r["box"]], ["p-nan"])
+
+    def test_refused_request_is_retried_op_by_op(self):
+        a, _ = self.member("Kim")
+        r = self.run_in(a, """
+c = team.changeset_get()
+c["list"].append({"id": "7-long", "name": "n" * 150}); c["active"] = {"id": "7-long", "name": "n" * 150}
+team._save("changeset.json", c)
+seo_put("r-bad", {"title": "under a name the server refuses"})
+team.changeset_set(name="Normal")
+seo_put("r-good", {"title": "ok"})
+out = team.sync()""")
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(r["offline"])
+        self.assertEqual(r["sent"], 1)
+        failed = {f["id"]: f["reason"] for f in r["status"]["failed"]}
+        self.assertEqual(list(failed), ["r-bad"])
+        self.assertIn("too long", failed["r-bad"])
+
+    def test_viewer_never_pushes(self):
+        v, _ = self.member("Lou", role="viewer")
+        r = self.run_in(v, 'seo_put("v1", {"title": "mine"}); out = team.sync()')
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["sent"], 0)
+        self.assertIn("Viewers can't send changes", r["message"])
+        self.assertFalse(r["status"]["can_send"])
+
+    def test_malformed_remote_items_are_skipped(self):
+        h = self.home()
+        r = self.run_in(h, """
+fake_join()
+good = item("seo:changes", "g1", 1, {"id": "g1", "title": "good"})
+pages = {0: {"items": [
+    item("ads:../../evil", "x", 1, {"id": "x"}),
+    item("ads:12ab", "x", 1, {"id": "x"}),
+    item("seo:changes", "bad id/..", 1, {"id": "bad id/.."}),
+    item("seo:changes", "m1", 1, {"id": "other"}),
+    item("seo:changes", "m2", 1, ["not", "a", "dict"]),
+    item("seo:changes", "m3", "1", {"id": "m3"}),
+    item("nope:coll", "z", 1, {}),
+    "not an object",
+    good], "cursor": 9, "more": False}}
+fake_api(pages)
+s = team.sync()
+import os
+out = {"s": s, "st": team.status(), "g1": seo_get("g1"), "files": sorted(os.listdir(ROOT)),
+       "parent": sorted(os.listdir(ROOT.parent)), "cursor": team._state()["cursor"]}""")
+        self.assertTrue(r["s"]["ok"], r["s"])
+        self.assertEqual(r["s"]["received"], 1)
+        self.assertEqual(r["s"]["skipped"], 8)
+        self.assertEqual(r["g1"]["title"], "good")
+        self.assertEqual(r["cursor"], 9)  # kept advancing
+        self.assertEqual(len(r["st"]["skipped"]), 8)
+        self.assertFalse([f for f in r["files"] if "evil" in f or f.startswith("draft_")])
+        self.assertNotIn("evil", " ".join(r["parent"]))
+
+    def test_cursor_reset_resyncs_without_duplicates(self):
+        h = self.home()
+        r = self.run_in(h, """
+fake_join()
+a1 = item("seo:changes", "a1", 1, {"id": "a1", "title": "one"})
+fake_api({0: {"items": [a1], "cursor": 5, "more": False}})
+s1 = team.sync()
+a2 = item("seo:changes", "a2", 1, {"id": "a2", "title": "two"})
+calls = fake_api({5: {"items": [], "cursor": 0, "more": False, "reset": True},
+                  0: {"items": [a1, a2], "cursor": 2, "more": False}})
+s2 = team.sync()
+out = {"s1": s1, "s2": s2, "cursor": team._state()["cursor"], "calls": calls, "a2": seo_get("a2"),
+       "box": draftstore.outbox(ROOT)}""")
+        self.assertEqual(r["s1"]["received"], 1)
+        self.assertEqual(r["s2"]["received"], 1)  # a1 already known (same version): not applied twice
+        self.assertEqual(r["a2"]["title"], "two")
+        self.assertEqual(r["cursor"], 2)
+        self.assertEqual(r["box"], [])
+
+    def test_pull_runs_when_push_fails(self):
+        h = self.home()
+        r = self.run_in(h, """
+fake_join()
+seo_put("mine1", {"title": "local"})
+fake_api({0: {"items": [item("seo:changes", "t1", 1, {"id": "t1", "title": "theirs"})], "cursor": 3, "more": False}},
+         fail_post=team.TeamError("server error", 500))
+s = team.sync()
+out = {"s": s, "t1": seo_get("t1"), "box": [e["id"] for e in draftstore.outbox(ROOT)]}""")
+        self.assertFalse(r["s"]["ok"])
+        self.assertFalse(r["s"]["offline"])  # a server error is not "offline"
+        self.assertIn("server error", r["s"]["message"])
+        self.assertEqual(r["t1"]["title"], "theirs")  # pulled anyway
+        self.assertEqual(r["box"], ["mine1"])  # still waiting
+
+    def test_newer_remote_change_keeps_answers(self):
+        a, _ = self.member("Max")
+        b, _ = self.member("Ned")
+        self.run_in(a, 'seo_put("q1", {"title": "T0", "meta": "M0"}); team.sync()')
+        self.sync(b)
+        self.run_in(a, 'seo_put("q1", {"title": "T-a", "meta": "M-a"}); team.sync()')
+        rb = self.run_in(b, """
+seo_put("q1", {"title": "T-b", "meta": "M-b"}); team.sync()
+out = team.resolve("seo:changes", "q1", "title", "mine")""")
+        self.assertFalse(rb["resolved"])
+        self.run_in(a, 'seo_put("q1", {"title": "T-a", "meta": "M-a2"}); team.sync()')  # only meta changes again
+        rb = self.run_in(b, 'team.sync(); out = team.conflicts()["conflicts"]')
+        got = {c["field"]: c for c in rb}
+        self.assertEqual(got["title"]["choice"], "mine")  # still valid: kept
+        self.assertIsNone(got["meta"]["choice"])
+        self.assertEqual(got["meta"]["theirs"], "M-a2")
+        rb = self.run_in(b, 'r = team.resolve("seo:changes", "q1", "meta", "theirs"); out = {"r": r, "v": seo_get("q1")}')
+        self.assertTrue(rb["r"]["resolved"])
+        self.assertEqual(rb["v"], {"id": "q1", "title": "T-b", "meta": "M-a2"})
+        self.assertEqual(self.run_in(a, 'team.sync(); out = seo_get("q1")'), {"id": "q1", "title": "T-b", "meta": "M-a2"})
+
+    def test_colour_sanitised_and_nested_bookkeeping_conflicts(self):
+        h = self.home()
+        r = self.run_in(h, """
+fake_join(colour='red;background:url(x)')
+m, cf = team.merge3({"fields": {"at": "1"}}, {"fields": {"at": "2"}}, {"fields": {"at": "3"}})
+out = {"colour": team.status()["me"]["colour"], "cf": [list(c[0]) for c in cf]}""")
+        self.assertEqual(r["colour"], "#888888")
+        self.assertEqual(r["cf"], [["fields", "at"]])
 
 
 if __name__ == "__main__":

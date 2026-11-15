@@ -35,6 +35,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -73,11 +74,19 @@ def ads_layout(acct):
     return Layout(f"draft_{acct}.json", f".draft_{acct}.lock", {f"ads:{acct}": ("items", "list")}, "version", {"version": 0, "items": []})
 
 
+ADS_ACCT = re.compile(r"^(?:[0-9]{1,20}|meta_[0-9]{1,20})$")  # a Google account id or meta_<ad account id>
+
+
 def layout(coll):
-    """The Layout that holds a collection (or a Layout passed through)."""
+    """The Layout that holds a collection (or a Layout passed through). The ads account part becomes part of a file
+    name, so only digits or meta_<digits> are accepted (a collection name from the team server is never trusted)."""
     if isinstance(coll, Layout):
         return coll
-    if coll.startswith("ads:") and len(coll) > 4:
+    if not isinstance(coll, str):
+        raise ValueError("a draft collection name must be text")
+    if coll.startswith("ads:"):
+        if not ADS_ACCT.match(coll[4:]):
+            raise ValueError(f"unknown draft collection {coll!r}")
         return ads_layout(coll[4:])
     for lay in FIXED:
         if coll in lay.colls:
@@ -458,8 +467,9 @@ def _files(root):
     r = _root(root)
     out = [lay for lay in FIXED if (r / lay.file).exists()]
     for f in sorted(r.glob("draft_*.json")):
-        if not f.name.endswith(BACKUP_SUFFIX) and ".corrupt-" not in f.name:
-            out.append(ads_layout(f.name[len("draft_"):-len(".json")]))
+        acct = f.name[len("draft_"):-len(".json")]
+        if ADS_ACCT.match(acct):
+            out.append(ads_layout(acct))
     return out
 
 

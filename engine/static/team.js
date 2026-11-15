@@ -51,7 +51,8 @@
     const last = T.last_sync ? new Date(T.last_sync).toLocaleString() : "never";
     btn.title = T.removed ? "This Mac was removed from the team. Open Setup > Team."
       : `Team ${T.team}: last sync ${last}. ${T.remote_waiting || 0} change(s) from the team waiting, ${T.pending_out || 0} of yours to send`
-        + (T.conflicts ? `, ${T.conflicts} conflict(s)` : "") + (T.last_error ? `. ${T.last_error}` : "");
+        + (T.conflicts ? `, ${T.conflicts} conflict(s)` : "") + ((T.failed || []).length ? `, ${T.failed.length} not accepted by the server` : "")
+        + (T.can_send === false ? ". Viewers can't send changes" : "") + (T.last_error ? `. ${T.last_error}` : "");
   }
   async function refresh(){
     try { T = await call("/api/team/status") } catch(e) { return }
@@ -139,8 +140,13 @@
     const me = T.me || {};
     el.innerHTML = `<h3><span class="su-dot ${T.removed ? "" : "ok"}"></span>Team: ${esc(T.team)}</h3>
       ${T.removed ? `<p class="su-help" style="margin:0 0 8px;color:#d93025">This Mac was removed from the team. Your drafts are still here. Leave the team to clear it, then join again with a new invite if you need to.</p>` : ""}
-      <p class="su-help" style="margin:0 0 8px"><span class="tm-who" style="background:${esc(me.colour || "#999")}"></span><b>${esc(me.name)}</b> (${esc(me.role)}${me.approver ? ", approver" : ""}) on ${esc(T.server)}.
+      <p class="su-help" style="margin:0 0 8px"><span class="tm-who" style="background:${/^#[0-9a-fA-F]{6}$/.test(me.colour || "") ? me.colour : "#888888"}"></span><b>${esc(me.name)}</b> (${esc(me.role)}${me.approver ? ", approver" : ""}) on ${esc(T.server)}.
         Last sync: ${T.last_sync ? esc(new Date(T.last_sync).toLocaleString()) : "never"}${T.last_error ? `. <span style="color:#d93025">${esc(T.last_error)}</span>` : ""}</p>
+      ${T.can_send === false ? `<p class="su-help" style="margin:0 0 8px">You are a viewer: you receive the team's drafts, but viewers can't send changes.</p>` : ""}
+      ${(T.failed || []).length ? `<div class="su-help" style="margin:0 0 8px;color:#d93025">Not accepted by the team server (sent again once you edit them):<ul style="margin:4px 0 0 18px;padding:0">
+        ${T.failed.map(f => `<li>${esc(f.coll)} ${esc(f.id)}: ${esc(f.reason)}</li>`).join("")}</ul></div>` : ""}
+      ${(T.skipped || []).length ? `<details class="su-help" style="margin:0 0 8px"><summary style="cursor:pointer">${T.skipped.length} item(s) from the team could not be used here</summary><ul style="margin:4px 0 0 18px;padding:0">
+        ${T.skipped.map(f => `<li>${esc(f.coll)} ${esc(f.id)}: ${esc(f.reason)}</li>`).join("")}</ul></details>` : ""}
       <div class="su-row"><label for="tmCs">Changeset</label><div><input id="tmCs" value="${esc((T.changeset || {}).name)}">
         <div class="su-help">Your edits are grouped under this name for your team. <a href="#" id="tmCsNew">Start a new changeset</a></div></div></div>
       <div class="su-row"><label for="tmAuto">Auto-sync</label><div><label style="padding:0"><input type="checkbox" id="tmAuto" style="width:auto" ${T.auto_sync ? "checked" : ""}> Sync on its own (3 seconds after your edits, and when teammates change something)</label></div></div>

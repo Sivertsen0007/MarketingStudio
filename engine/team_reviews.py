@@ -105,8 +105,9 @@ def approvals():
             continue  # the approver has lost the right to approve since
         for it in rv.get("items") or []:
             if not it.get("stale"):
+                h = it.get("content_hash") if it["coll"] in CONTENT else it.get("hash")  # never trust a hash meant elsewhere
                 out.setdefault(team._key(it["coll"], it["id"]), []).append(
-                    {"review": rv["id"], "hash": it.get("content_hash") or it.get("hash") or "", "title": rv.get("title") or ""})
+                    {"review": rv["id"], "hash": h or "", "title": rv.get("title") or ""})
     return out
 
 
@@ -404,6 +405,7 @@ def gated_push(area, coll, body, fn, what, kind="push"):
             pushed = [k.split("\t", 1) for k in p["allowed"] if only is None or k.split("\t", 1)[1] in only]
             res["reported"] = report_push(area, f"{what} ({len(pushed)} change{'s' if len(pushed) != 1 else ''})", why,
                                           {"items": len(pushed), "operations": n}, pushed, p["scope"], kind)
+            res["team_event"] = res["reported"]  # the feed already has it (ts-04's after_post skips these)
     return res
 
 
@@ -448,6 +450,7 @@ def single_action(area, coll, iid, body, what, fn):
     res = fn()
     if isinstance(res, dict) and res.get("ok"):
         res["reported"] = report_push(area, f"{what}: {label}", why, {"items": 1}, [(coll, str(iid))])
+        res["team_event"] = res["reported"]
     if isinstance(res, dict):
         res["team"] = public(p)
     return res
@@ -555,10 +558,21 @@ def decide(body):
         raise ValueError("decision must be approve or request_changes")
     rid = int(body["id"])
     out = {"decision": d, "note": str(body.get("note") or "")[:500]}
-    if d == "approve":  # content-checked items: I confirm the content I see now is what was asked about
-        rv = _api("GET", f"/api/v1/reviews/{rid}")
-        out["confirm"] = [{"coll": i["coll"], "id": i["id"], "content_hash": content_hash(content_of(i["coll"], i["id"]))}
-                          for i in rv.get("items") or [] if i.get("content_hash")]
+    if d == "approve":
+        # Every item: the hash of exactly what the review screen showed (the UI sends view()'s shown_hash back), or,
+        # without a screen (tests, scripts), of my synced copy now. The server only accepts what was asked about.
+        v = view({"id": rid})
+        if any(i.get("stale") for i in v["items"]):
+            # Changed since it was asked about: approving now would cover content nobody reviewed. Nothing is sent;
+            # the review stays open (ask for changes, or the requester asks again).
+            v["refused"] = "Some items changed after the request, so this review can't be approved. Ask for changes, or ask the requester to send it again."
+            return v
+        shown = body.get("shown")
+        if isinstance(shown, list) and shown:
+            out["confirm"] = [{"coll": str(x.get("coll")), "id": str(x.get("id")), "content_hash": str(x.get("hash") or "")}
+                              for x in shown if isinstance(x, dict)]
+        else:
+            out["confirm"] = [{"coll": i["coll"], "id": i["id"], "content_hash": i["shown_hash"]} for i in v["items"]]
     return _decorate(_api("POST", f"/api/v1/reviews/{rid}/decide", out))
 
 
@@ -623,15 +637,15 @@ def view(q):
             data, _ = draftstore.peek(i["coll"], i["id"], _root())
         except ValueError:
             data = None
-        same = content_hash(data) == i.get("hash")
-        if i.get("content_hash"):
+        if i["coll"] in CONTENT:
             try:
                 data = content_of(i["coll"], i["id"])
-                same = content_hash(data) == i["content_hash"]
             except ValueError:
-                same = False
+                data = None
+        shown = content_hash(data)  # what this screen shows; Approve confirms exactly this
+        same = shown == (i.get("content_hash") if i["coll"] in CONTENT else i.get("hash"))
         items.append({**i, "label": label_of(i["coll"], data) or f"{i['coll']} {i['id']}", "area": area_of(i["coll"]),
-                      "lines": lines_of(i["coll"], data), "local_matches": same})
+                      "lines": lines_of(i["coll"], data), "local_matches": same, "shown_hash": shown})
     rv["items"] = items
     return _decorate(rv)
 

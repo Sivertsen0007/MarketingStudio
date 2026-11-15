@@ -165,6 +165,20 @@ def _authored_by(db, items, mid):
     return False
 
 
+def _edited_since(db, items, mid, since):
+    """Did this member write any of these items since `since`? Read from their edit_session events (a session's time is
+    its last write), so an edit that was later put back still counts."""
+    keys = {(it["coll"], it["id"]) for it in items}
+    for e in db.execute("SELECT data FROM events WHERE kind='edit_session' AND actor=? AND at>=?", (mid, since)):
+        try:
+            got = json.loads(e["data"] or "{}").get("items") or []
+        except ValueError:
+            continue
+        if any((x.get("coll"), x.get("id")) in keys for x in got if isinstance(x, dict)):
+            return True
+    return False
+
+
 def _reviewers(db, actor, raw, items=()):
     if not isinstance(raw, list) or not raw:
         raise ApiError(400, "pick at least one reviewer (reviewers: [member id])")
@@ -244,7 +258,8 @@ def request_review(store, actor, body):
 
 
 def list_reviews(store, actor, query):
-    """GET /reviews?mine=1|to_me=1|status=open,approved|current=1 (current: approved with at least one item not stale)."""
+    """GET /reviews?mine=1|to_me=1|status=open,approved|current=1&before=<id> (current: approved with at least one item
+    not stale and a decider who may still approve). Newest first, MAX_LIST per page; `more` + `next_before` page on."""
     def flag(k):
         v = query.get(k)
         return bool(v) and v[0] in ("1", "true", "yes")
@@ -261,12 +276,21 @@ def list_reviews(store, actor, query):
     if flag("mine"):
         where.append("requested_by=?")
         args.append(actor["id"])
+    before = (query.get("before") or [""])[0]
+    if before:
+        if not before.isdigit() or len(before) > 12:
+            raise ApiError(400, "before must be a review id")
+        where.append("id<?")
+        args.append(int(before))
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY id DESC"
-    out = []
+    out, more = [], False
     with store.lock:
         for r in store.db.execute(sql, args).fetchall():
+            if len(out) >= MAX_LIST:
+                more = True
+                break
             if flag("to_me") and actor["id"] not in json.loads(r["reviewers"]):
                 continue
             rv = _review_out(store.db, r)
@@ -274,9 +298,7 @@ def list_reviews(store, actor, query):
                                     or (rv["status"] == "approved" and not rv["decider_ok"])):
                 continue
             out.append(rv)
-            if len(out) >= MAX_LIST:
-                break
-    return {"reviews": out}
+    return {"reviews": out, "more": more, "next_before": out[-1]["id"] if more else None}
 
 
 def get_review(store, actor, rid):
@@ -313,15 +335,21 @@ def decide(store, actor, rid, body):
         if decision == "approve":
             if _authored_by(db, items, actor["id"]):
                 raise ApiError(403, "you made or changed items in this review: another approver must decide it")
+            if _edited_since(db, items, actor["id"], r["at"]):
+                raise ApiError(403, "you changed items in this review after it was asked for: another approver must decide it")
             confirm = body.get("confirm") or []
             if not isinstance(confirm, list):
                 raise ApiError(400, "confirm must be a list of {coll, id, content_hash}")
             seen = {(c.get("coll"), str(c.get("id"))): c.get("content_hash") for c in confirm if isinstance(c, dict)}
             for it in items:
-                if it.get("content_hash") and seen.get((it["coll"], it["id"])) != it["content_hash"]:
+                # Every item: the approver's Studio names the hash of exactly what its review screen showed. It must be
+                # what was asked about, and (for items the server can see) still what the server holds.
+                want = it.get("content_hash") or it["hash"]
+                stale = not it.get("content_hash") and _current(db, it["coll"], it["id"])[1] != it["hash"]
+                if stale or seen.get((it["coll"], it["id"])) != want:
                     raise ApiError(409, "%s/%s is not what was asked about any more (changed in Studio or on the"
-                                        " platform): it has to be asked about again" % (it["coll"], it["id"]),
-                                   {"coll": it["coll"], "id": it["id"]})
+                                        " platform, or your copy is not in sync): it has to be asked about again"
+                                   % (it["coll"], it["id"]), {"coll": it["coll"], "id": it["id"]})
         status = "approved" if decision == "approve" else "changes_requested"
         db.execute("UPDATE reviews SET status=?, decision_note=?, decided_by=?, decided_at=?, updated_at=? WHERE id=?",
                    (status, note, actor["id"], now, now, rid))

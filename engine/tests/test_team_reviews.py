@@ -23,6 +23,7 @@ from test_team import ENGINE, PRELUDE, REPO, free_port  # noqa: E402
 
 REVIEW_PRELUDE = PRELUDE + """
 import team_reviews as tr
+em._fetch_status = lambda url, timeout=8: (200, "")  # link checks never leave the Mac in tests
 def ads_put(iid, summary, campaign="Brand", extra=None):
     with draftstore.tx(COLL, ROOT, by="you") as t:
         t.put(iid, {"id": iid, "summary": summary, "by": "you", "note": "", "problems": [], "warnings": [],
@@ -53,7 +54,7 @@ class Reviews(unittest.TestCase):
         cls.data = os.path.join(cls.tmp.name, "server")
         cls.port = free_port()
         cls.url = f"http://127.0.0.1:{cls.port}"
-        cls.n = 0
+        Reviews.n = 0  # one counter, also for subclasses (each member and collection gets a unique number)
         cls.owner_link = cls.cli("init", "--email", "owner@example.test", "--name", "Olive", "--team", "Test team",
                                  "--public-url", cls.url)
         boot = ("import sys, teamserver.app as a; a.JOIN_LIMIT = (1000, 60); from teamserver.cli import main; "
@@ -104,7 +105,7 @@ class Reviews(unittest.TestCase):
 
     def member(self, name, role="editor", approver=False):
         Reviews.n += 1
-        link = self.cli("invite", "--email", f"{name.lower()}{self.n}@example.test", "--role", role, "--name", f"{name}{self.n}")
+        link = self.cli("invite", "--email", f"{name.lower()}{Reviews.n}@example.test", "--role", role, "--name", f"{name}{Reviews.n}")
         h = tempfile.mkdtemp(dir=self.tmp.name, prefix="home-")
         st = self.run_in(h, f"out = team.join({link!r}, device_name='test mac')")
         self.assertTrue(st["joined"], st)
@@ -120,8 +121,18 @@ class Reviews(unittest.TestCase):
 
     def setUp(self):
         Reviews.n += 1
-        self.coll = f"ads:{9000 + self.n}"  # every test its own Ads collection on the shared server
-        self.policy(ads=False, email=False, seo=False, social=False)
+        self.coll = f"ads:{9000 + Reviews.n}"  # every test its own Ads collection on the shared server
+        # a clean slate on the shared server: rules off, earlier tests' approvals withdrawn
+        self.as_owner("""
+tr.set_policy({"require_approval": {"ads": False, "email": False, "seo": False, "social": False}})
+for r in team._api("GET", "/api/v1/reviews?status=open,approved")["reviews"]:
+    team._api("POST", f"/api/v1/reviews/{r['id']}/withdraw", {})
+team.sync()
+for d in em.list_drafts():  # no shared email drafts left over from earlier tests
+    em.remove_draft(d["campaign_id"])
+team.sync()
+out = None
+""")
 
     # ---------- tests ----------
 
@@ -255,13 +266,13 @@ class Reviews(unittest.TestCase):
         prelude = textwrap.dedent(prelude)
         out = self.run_in(alex, prelude + "out = {'sched': sched(), 'status': status(), 'gate': tr.gate('email', 'email', 'demo-4'),"
                                           " 'nothing': err(tr.request, {'group': {'area': 'email', 'key': 'nope'}, 'reviewers': [1]})}")
-        self.assertTrue(out["sched"]["needs_team_approval"], out["sched"])
+        self.assertTrue(out["sched"].get("needs_team_approval"), out["sched"])
         self.assertEqual(out["status"], "draft")
         self.assertEqual(out["gate"]["needs"][0]["id"], "demo-4")
         self.assertIn("Can't read", out["nothing"])  # a review of nothing is refused
         # approval of the campaign as the platform has it (no Studio draft): the content that goes out is hashed
         rv = self.run_in(alex, f"out = tr.request({{'group': {{'area': 'email', 'key': 'demo-4'}}, 'reviewers': [{me_b['id']}]}})")
-        self.assertEqual(rv["items"][0]["version"], 0)
+        self.assertGreaterEqual(rv["items"][0]["version"], 0)  # 0 unless a teammate has a Studio draft of it
         self.assertEqual(len(rv["items"][0]["content_hash"]), 64)
         seen = self.run_in(bo, f"v = tr.view({{'id': {rv['id']}}}); out = {{'match': v['items'][0]['local_matches'],"
                                f" 'lines': v['items'][0]['lines'], 'dec': tr.decide({{'id': {rv['id']}, 'decision': 'approve'}})['status']}}")
@@ -385,6 +396,81 @@ class Reviews(unittest.TestCase):
         self.assertEqual(out["editor"], ["a1"])
         self.assertIn("to Editor", out["ev"])
         self.assertIn("why", out["no_why"])
+
+    # regression tests from the second independent review (M1, M2)
+    def test_stale_review_cannot_be_approved_then_reverted(self):
+        alex, _ = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        self.policy(ads=True)
+        rv = self.run_in(alex, f"""
+            ads_put("x1", "Budget 99999 EVIL")
+            team.sync()
+            r = tr.request({{"items": [{{"coll": COLL, "id": "x1"}}], "reviewers": [{me_b['id']}]}})
+            ads_put("x1", "Budget 10 benign")
+            team.sync()
+            out = r
+        """)
+        seen = self.run_in(bo, f"""
+            team.sync()
+            v = tr.view({{"id": {rv['id']}}})
+            d = tr.decide({{"id": {rv['id']}, "decision": "approve"}})
+            out = {{"lines": v["items"][0]["lines"], "stale": v["items"][0]["stale"], "status": d["status"]}}
+        """)
+        out = self.run_in(alex, """
+            team.sync()
+            before = gated({"why": "w"})
+            ads_put("x1", "Budget 99999 EVIL")
+            team.sync()
+            out = {"before": before["pushed"], "after": gated({"why": "w"})["pushed"]}
+        """)
+        self.assertEqual(seen["status"], "open")  # refused: stale, nothing approved
+        self.assertNotIn("EVIL", json.dumps(seen["lines"]))  # the approver saw only the benign version
+        # the approval must not cover the evil content the approver never saw
+        self.assertNotEqual(out["after"], ["x1"], "approver approved a stale review; the requester reverted to the unseen content and pushed it")
+
+    def test_social_move_keeps_the_approved_payload(self):
+        alex, _ = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        cy, _ = self.member("Cy")
+        self.policy(social=True)
+        sp = """
+            from areas import social as so
+            from areas import _social_store as sst
+            import datetime as dt
+        """
+        pid = self.run_in(alex, sp + """
+            sst.save_settings({**sst.settings(), "local_scheduler": True})
+            W = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=3)).replace(microsecond=0).isoformat()
+            p = sst.save({"title": "Launch", "channels": ["linkedin"], "when": W, "caption": "Approved caption",
+                          "format": "text"}, "you")
+            team.sync(); out = p["id"]
+        """)
+        self.run_in(cy, "team.sync(); out=None")
+        rv = self.run_in(alex, f"PID={pid!r}\nout = tr.request({{'items': [{{'coll': 'social', 'id': PID}}], 'reviewers': [{me_b['id']}]}})")
+        self.run_in(bo, f"out = tr.decide({{'id': {rv['id']}, 'decision': 'approve'}})")
+        # Cy edits the caption on his Mac (not synced yet)
+        self.run_in(cy, sp.replace("import datetime as dt", "import datetime as dt\n            PID = " + repr(pid)) + """
+            so.save({"id": PID, "post": {**sst.get(PID), "caption": "UNAPPROVED caption by Cy"}})
+            out = None
+        """)
+        out = self.run_in(alex, sp.replace("import datetime as dt", "import datetime as dt\n            PID = " + repr(pid)) + """
+            r = so.schedule({"id": PID, "pressed": "user", "why": "launch"})
+            team.sync()
+            q = [x["payload"] for x in sst.queue() if x["post_id"] == PID and x["status"] == "scheduled"]
+            out = {"sched": {k: r.get(k) for k in ("ok", "message")}, "payload_before": json.dumps(q)[:400]}
+        """)
+        cy_sync = self.run_in(cy, "out = team.sync()")
+        out2 = self.run_in(alex, sp.replace("import datetime as dt", "import datetime as dt\n            PID = " + repr(pid)) + """
+            team.sync()
+            p = sst.get(PID)
+            W2 = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=4)).replace(microsecond=0).isoformat()
+            so.move({"id": PID, "when": W2})
+            cm = so.confirm_move({"id": PID, "pressed": "user"})
+            q = [x["payload"] for x in sst.queue() if x["post_id"] == PID and x["status"] == "scheduled"]
+            out = {"caption_now": p.get("caption"), "results": p.get("results"), "move": {k: cm.get(k) for k in ("ok", "message")},
+                   "payload_after": json.dumps(q)[:600]}
+        """)
+        self.assertNotIn("UNAPPROVED", out2["payload_after"], "unapproved caption is in the scheduled queue payload")
 
     def test_seo_publish_gated_and_viewer(self):
         alex, me_a = self.member("Alex")

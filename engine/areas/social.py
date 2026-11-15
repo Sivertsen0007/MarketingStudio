@@ -736,8 +736,14 @@ def fmt_when(v):
 def _move_queued(p, ch, r, when):
     """Move one channel queued for Studio's scheduler on this Mac, as a transaction: build the new item first, then swap
     it in for the old one under the queue lock. If any step fails, the old schedule stays as it was. -> the new result.
-    (Posts queued on the VPS are never moved: cancel and schedule again.)"""
-    payload = pub.build_job(p, ch, media_lookup, tracker(p))  # fails -> nothing has changed
+    (Posts queued on the VPS are never moved: cancel and schedule again.)
+    Only the time changes: the queued payload is what was checked (and, in a team, approved) when it was scheduled, so
+    it is kept as it is and never rebuilt from the post, which may have taken in other changes since."""
+    old = next((x for x in store.queue() if x.get("id") == r.get("queue_id")), None)
+    if not old or old.get("status") != "scheduled" or not old.get("payload"):
+        raise RuntimeError("too late to move: it is being posted now" if (old or {}).get("status") == "publishing"
+                           else "nothing left to move: it has already gone out or finished")
+    payload = old["payload"]
     new = store.queue_new({"post_id": p["id"], "channel": ch, "due": store.iso(when), "payload": payload, "runner": "local",
                            "max_late": grace()})
     it, st = store.queue_replace(r.get("queue_id", ""), new)

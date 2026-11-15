@@ -1038,7 +1038,10 @@ class Round3(unittest.TestCase):
     def test_move_build_failure_keeps_old_schedule(self):
         p = self.scheduled()
         old = p["results"]["instagram"]["queue_id"]
-        with mock.patch.object(pub, "build_job", side_effect=RuntimeError("media gone")):
+        # A move keeps the queued payload (what was checked / approved) and only changes the time, so it never rebuilds
+        # the job; a failure while making the new queue item still keeps the old schedule.
+        with mock.patch.object(pub, "build_job", side_effect=AssertionError("a move must not rebuild the job")), \
+                mock.patch.object(store, "queue_new", side_effect=RuntimeError("disk full")):
             r = self.move(p)
         self.assertFalse(r["ok"])
         self.assertIn("still scheduled for", r["results"]["instagram"]["error"])

@@ -20,6 +20,11 @@ class ReviewBase(Base):
         # Bo may approve
         self.ok("PATCH", "/api/v1/members/%d" % self.bo["member"]["id"], {"approver": True}, self.owner["token"])
 
+    @staticmethod
+    def conf(rv):
+        """What the approver's Studio sends: the hash of each item as its review screen showed it."""
+        return [{"coll": i["coll"], "id": i["id"], "content_hash": i.get("content_hash") or i["hash"]} for i in rv["items"]]
+
     def ask(self, who, items, reviewers, **kw):
         body = {"items": items, "reviewers": [r["member"]["id"] for r in reviewers], **kw}
         return self.call("POST", "/api/v1/reviews", body, who["token"])
@@ -41,7 +46,10 @@ class TestReviews(ReviewBase):
         self.assertEqual(s, 403, out)
         s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve"}, self.owner["token"])
         self.assertEqual(s, 403, out)
-        out = self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve", "note": "Fine"},
+        s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve"}, self.bo["token"])
+        self.assertEqual(s, 409, out)  # no confirm: the approver must name what they saw
+        out = self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve", "note": "Fine",
+                                                                       "confirm": self.conf(rv)},
                       self.bo["token"])
         self.assertEqual(out["status"], "approved")
         self.assertEqual(out["decided_by"], self.bo["member"]["id"])
@@ -184,12 +192,47 @@ class TestApproverRules(ReviewBase):
     def test_approval_lapses_when_decider_loses_rights(self):
         self.put(self.alex, "social", "p1", 0, {"id": "p1", "text": "x"})
         s, rv = self.ask(self.alex, [{"coll": "social", "id": "p1", "version": 1}], [self.bo])
-        out = self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve"}, self.bo["token"])
+        out = self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve", "confirm": self.conf(rv)},
+                      self.bo["token"])
         self.assertTrue(out["decider_ok"])
         self.assertEqual(len(self.ok("GET", "/api/v1/reviews?status=approved&current=1", token=self.alex["token"])["reviews"]), 1)
         self.ok("PATCH", "/api/v1/members/%d" % self.bo["member"]["id"], {"approver": False}, self.owner["token"])
         self.assertEqual(self.ok("GET", "/api/v1/reviews?status=approved&current=1", token=self.alex["token"])["reviews"], [])
         self.assertFalse(self.ok("GET", "/api/v1/reviews/%d" % rv["id"], token=self.alex["token"])["decider_ok"])
+
+    def test_stale_review_cannot_be_approved(self):
+        self.put(self.alex, "seo:changes", "x1", 0, {"id": "x1", "new": "EVIL"})
+        s, rv = self.ask(self.alex, [{"coll": "seo:changes", "id": "x1", "version": 1}], [self.bo])
+        self.put(self.alex, "seo:changes", "x1", 1, {"id": "x1", "new": "benign"})
+        benign = [{"coll": "seo:changes", "id": "x1", "content_hash": content_hash({"id": "x1", "new": "benign"})}]
+        for confirm in (self.conf(rv), benign):  # neither what was asked (now stale) nor what the approver now sees
+            s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve", "confirm": confirm},
+                               self.bo["token"])
+            self.assertEqual(s, 409, out)
+        # put back as asked: still refused for Bo, who edited it since the request (someone else put it back)
+        self.put(self.bo, "seo:changes", "x1", 2, {"id": "x1", "new": "Bo was here"})
+        self.put(self.alex, "seo:changes", "x1", 3, {"id": "x1", "new": "EVIL"})
+        s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve", "confirm": self.conf(rv)},
+                           self.bo["token"])
+        self.assertEqual(s, 403, out)
+        self.assertIn("after it was asked", out["error"])
+
+    def test_list_paging(self):
+        from teamserver import reviews as rmod
+        old = rmod.MAX_LIST
+        rmod.MAX_LIST = 2
+        try:
+            self.put(self.alex, "social", "p1", 0, {"id": "p1", "text": "x"})
+            ids = [self.ask(self.alex, [{"coll": "social", "id": "p1", "version": 1}], [self.bo])[1]["id"] for _ in range(5)]
+            page = self.ok("GET", "/api/v1/reviews", token=self.bo["token"])
+            got = [r["id"] for r in page["reviews"]]
+            while page["more"]:
+                page = self.ok("GET", "/api/v1/reviews?before=%d" % page["next_before"], token=self.bo["token"])
+                got += [r["id"] for r in page["reviews"]]
+            self.assertEqual(got, sorted(ids, reverse=True))
+            self.assertEqual(self.call("GET", "/api/v1/reviews?before=x", token=self.bo["token"])[0], 400)
+        finally:
+            rmod.MAX_LIST = old
 
     def test_send_to_editor_event_kind(self):
         ev = self.ok("POST", "/api/v1/events", {"kind": "send_to_editor", "area": "ads", "summary": "Sent: why"},

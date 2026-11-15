@@ -613,12 +613,16 @@ def publish(body, link_check=None, w=None):
     msg = f"{ok_n} of {len(results)} posts {'recorded (dry run, nothing sent)' if not w.live else 'published'} on {s['target']}" \
           + (f", {n_new} of them new" if new_done else "") + "."
     progress.finish(PKEY, ok, msg)
+    team_event = False
     if ok_n and team_plan.get("joined"):  # [team reviews] the why note goes to the team feed
-        team_reviews.report_push("seo", f"Published {ok_n} post{'s' if ok_n != 1 else ''} on {s['target']}", why,
+        team_event = team_reviews.report_push("seo", f"Published {ok_n} post{'s' if ok_n != 1 else ''} on {s['target']}", why,
                                  {"posts": ok_n, "failed": len(results) - ok_n, "new_pages": n_new},
                                  [("seo:changes", i) for i in done_ids] + [("seo:new_posts", x["id"]) for x, r in zip(news, new_done) if r["ok"]],
                                  team_plan["scope"])
-    return {"ok": ok, "message": msg, "push_id": push_id, "results": results, "live": w.live, "target": s["target"]}
+    out = {"ok": ok, "message": msg, "push_id": push_id, "results": results, "live": w.live, "target": s["target"]}
+    if team_event:
+        out["team_event"] = True
+    return out
 
 
 def _publish_new(news, s, w, push_id):

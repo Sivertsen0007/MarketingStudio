@@ -116,15 +116,19 @@
         ${linesHTML(it.lines)}<div class="tr-cm" data-cm="${i}"><a href="#" data-cmo="${i}">Comments on this item</a></div></div>`).join("");
     const body = `<p class="tr-meta">${esc(AREA[v.area] || v.area)} · asked by ${esc(v.requested_by_name)} of ${esc(v.reviewer_names.join(", "))} · ${esc(when(v.at))} ${chip(v.status, STATUS[v.status] || v.status)}</p>
       ${v.note ? `<p><b>Note:</b> ${esc(v.note)}</p>` : ""}${v.decision_note ? `<p><b>${esc(v.decided_by_name)}:</b> ${esc(v.decision_note)}</p>` : ""}
-      ${v.stale ? `<p class="tr-warn">Some items changed after the request. An approval only covers items that are still as they were asked about.</p>` : ""}
+      ${v.stale ? `<p class="tr-warn">Some items changed after the request, so this review can't be approved: ask for changes, or the requester asks again.</p>`
+        : v.items.some(it => !it.local_matches) ? `<p class="tr-warn">What you see here is not what was asked about (your copy is not in sync, or it changed on the platform). Sync, then open the review again.</p>` : ""}
       ${items}<h4 style="margin:12px 0 4px">Discussion</h4><div class="tr-cm" id="trThread">${await commentsHTML("review", String(v.id))}
       <textarea id="trThreadIn" placeholder="Add a comment"></textarea><button id="trThreadSend">Comment</button></div>
       ${v.can_decide ? `<h4 style="margin:12px 0 4px">Your decision</h4><textarea class="tr-note" id="trDecNote" placeholder="A note for ${esc(v.requested_by_name)} (optional)"></textarea>` : ""}`;
     const btns = [["Back", () => showList()]];
     if (v.mine && v.status !== "withdrawn") btns.push(["Withdraw", async () => { try { await post("withdraw", {id:v.id}); say("Withdrawn"); showList() } catch(e) { say(e.message) } }, "danger"]);
     if (v.can_decide){
-      const decide = d => async () => { try { await post("decide", {id:v.id, decision:d, note:(document.getElementById("trDecNote") || {}).value || ""}); say(d === "approve" ? "Approved" : "Changes requested"); refresh(); showList() } catch(e) { say(e.message) } };
-      btns.push(["Request changes", decide("request_changes")], ["Approve", decide("approve"), "primary"]);
+      const shown = v.items.map(it => ({coll:it.coll, id:it.id, hash:it.shown_hash})); // Approve covers exactly what this screen shows
+      const decide = d => async () => { try { const r = await post("decide", {id:v.id, decision:d, shown, note:(document.getElementById("trDecNote") || {}).value || ""});
+        if (r.refused) return say(r.refused); say(d === "approve" ? "Approved" : "Changes requested"); refresh(); showList() } catch(e) { say(e.message) } };
+      btns.push(["Request changes", decide("request_changes")]);
+      if (!v.stale && v.items.every(it => it.local_matches)) btns.push(["Approve", decide("approve"), "primary"]);
     }
     open(v.title || "Review", body, btns);
     document.getElementById("trThreadSend").onclick = async () => {

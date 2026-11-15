@@ -81,12 +81,15 @@ review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, h
   takes every live item whose last write was the requester's, tagged with that changeset. Reviewers must be active
   members who may approve (`approver: true`, or admin / owner), not the requester, and not the author or last writer of
   any item in the review (400 otherwise).
-- `GET /api/v1/reviews?mine=1&to_me=1&status=open,approved&current=1` (filters combine; newest first, at most 200).
+- `GET /api/v1/reviews?mine=1&to_me=1&status=open,approved&current=1&before=<id>` (filters combine; newest first, 200
+  per page; `{reviews, more, next_before}`: pass `before=next_before` for the next page).
   `current=1` leaves out reviews whose every item is stale, and approvals whose decider may no longer approve. `GET /api/v1/reviews/<id>` -> review.
 - `POST /api/v1/reviews/<id>/decide {decision: approve|request_changes, note?, confirm?:[{coll, id, content_hash}]}`: only
   a listed reviewer who may approve, never the requester (403), only while open (409). Approving needs that the approver
-  did not write any item in it (403), and for every item with a `content_hash` a matching entry in `confirm` (the
-  approver's own hash of what they saw; 409 when it differs or is missing).
+  is not the author or last writer of any item and wrote none of them since the request (from their edit sessions,
+  so an edit put back later still counts; 403), that no item is stale, and for EVERY item an entry in `confirm`: the
+  approver's own hash of exactly what their review screen showed, equal to the item's `content_hash` (or `hash` when
+  it has none). Otherwise 409: the review has to be asked for again.
 - An approval counts only while the member who gave it may still approve: `decider_ok` is false once they are
   deactivated, or are neither approver nor admin / owner any more, and `current=1` then leaves the review out.
 - `POST /api/v1/reviews/<id>/withdraw`: the requester or an admin / owner (409 if already withdrawn).

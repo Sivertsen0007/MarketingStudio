@@ -1437,15 +1437,15 @@ def _schedule(a, body, when, now_send):
     c, err, probs = _prepare(a, cid, "send" if now_send else "schedule", lines)
     if err:
         return {"ok": False, "message": err, "problems": probs}
-    if body.get("_team_expect"):  # [team reviews] still the approved content, as the platform has it now?
+    if c["status"] != "draft":
+        progress.finish(KEY, False, f"It is {c['status']}, not a draft.")
+        return {"ok": False, "message": f"Only a draft can be scheduled (this one is {c['status']})."}
+    if body.get("_team_expect"):  # [team reviews] last check, as the platform has it now, just before scheduling
         import team_reviews  # noqa: PLC0415
         why = team_reviews.recheck(body, "email", str(cid))
         if why:
             progress.finish(KEY, False, why)
             return {"ok": False, "needs_team_approval": True, "message": why}
-    if c["status"] != "draft":
-        progress.finish(KEY, False, f"It is {c['status']}, not a draft.")
-        return {"ok": False, "message": f"Only a draft can be scheduled (this one is {c['status']})."}
     progress.phase(KEY, "scheduling", "Scheduling")
     c = a.schedule(cid, _iso(when))
     progress.sent(KEY, "schedule")

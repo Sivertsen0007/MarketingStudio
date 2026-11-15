@@ -28,17 +28,24 @@ claim   `{coll, id, member, note, at}`
 
 ## Items (sync)
 
-- `GET /api/v1/items?since=<cursor>` -> `{items:[item...], cursor}`. cursor is an opaque int (server change seq). since=0 = all.
+- `GET /api/v1/items?since=<cursor>[&limit=1000]` -> `{items:[item...], cursor, more, reset}`. cursor is an opaque int
+  (server change seq). since=0 = all. `more: true` = page full, pull again from `cursor`. `reset: true` = `since` is ahead
+  of the server (for example after a restore): drop local sync state and pull again from 0.
+- coll must match `^[a-z_]+(:[A-Za-z0-9_.-]+)?$` (max 200); item id `^[A-Za-z0-9_.:-]{1,200}$` (integers become strings).
+  The same shapes apply wherever coll / id appear (comments, claims, events, presence).
 - `POST /api/v1/items {ops:[{op:"put"|"delete", coll, id, base_version, data?, changeset?}]}` -> `{results:[...], cursor}`
   - base_version 0 = new item. If base_version != current version -> result `{ok:false, conflict:true, server:item}`.
     The client merges field by field (top-level keys of data) and retries with the new base_version.
-  - ok -> `{ok:true, version}`.
+  - ok -> `{ok:true, version}`. Every result also carries `coll` and `id`.
+  - A bad op (bad coll / id shape, data not an object or over 512 KB, base_version not an integer, unknown op) fails
+    alone with `{ok:false, error}`; the other ops still apply. Delete of a missing item -> `{ok:false, error:"not found"}`.
+  - Whole-request errors stay: 403 for viewers, 413 for a body over 4 MB, 400 for a body that is not JSON or has no ops.
 - The server groups each member's item writes into one `edit_session` event: a session ends after 10 minutes without
   writes; the event says e.g. "24 changes in ads:4387091070" and lists the item ids. Item writes never notify anyone.
 
 ## Events (activity feed)
 
-- `GET /api/v1/events?since=<seq>&limit=200` -> `{events, seq}` (newest last).
+- `GET /api/v1/events?since=<seq>&limit=200` -> `{events, seq, reset}` (newest last; `reset` as for items).
 - `POST /api/v1/events {kind, area, coll?, id?, summary, data?}` -> event. Clients report push / publish / undo here.
 
 ## Comments and mentions
@@ -56,8 +63,17 @@ claim   `{coll, id, member, note, at}`
 
 ## Members (admin)
 
-- `GET /api/v1/me`, `GET /api/v1/members`. Admin/owner: `POST /api/v1/invites {email, role, name?}` -> links,
-  `PATCH /api/v1/members/<id> {role?, approver?, active?}`, `DELETE /api/v1/devices/<id>`.
+- `GET /api/v1/me`, `GET /api/v1/members` (admin/owner also get each member's `devices` and pending `invites`
+  `[{id, email, name, role, created_by, member_id, expires_at}]`). Admin/owner: `POST /api/v1/invites {email, role, name?}`
+  -> `{id, web, app, email, role, device, expires_at}`, `PATCH /api/v1/members/<id> {role?, approver?, active?}`,
+  `DELETE /api/v1/devices/<id>` (only an owner revokes an owner's device; anyone revokes their own).
+- `DELETE /api/v1/invites/<id>` withdraws a pending invite: its creator or an admin/owner; owner invites only by an owner.
+  409 if already used.
+- An invite for an email that already belongs to a member is a device invite (`device: true`): only that member may
+  make one (any role), it keeps their role, and nobody else (owners included) can make one over the API.
+- An invite only works while its creator could still grant it (active; owner for owner invites, admin/owner otherwise).
+  Demoting or deactivating a member voids the pending invites they can no longer grant; deactivation also revokes
+  all their device tokens.
 
 ## Live updates
 
@@ -69,6 +85,9 @@ claim   `{coll, id, member, note, at}`
 
 - `GET /api/v1/health` -> `{ok, protocol: 1, version, team}` (no auth).
 
-## Errors
+## Errors and limits
+
+JSON bodies: no NaN or Infinity, integers of at most 20 digits, valid unicode (else 400). A member may have at most 10
+active devices (409 on join or device invite beyond that).
 
 `{error: "<message>"}` with 400 (bad input), 401 (no/bad token), 403 (role), 404, 409 (conflict on non-item writes), 429.

@@ -530,6 +530,42 @@ out = team.resolve("seo:changes", "q1", "title", "mine")""")
         self.assertEqual(rb["v"], {"id": "q1", "title": "T-b", "meta": "M-a2"})
         self.assertEqual(self.run_in(a, 'team.sync(); out = seo_get("q1")'), {"id": "q1", "title": "T-b", "meta": "M-a2"})
 
+    def test_pull_writes_each_page_once_and_keeps_local_edits(self):
+        """A pull page is written with one atomic write per collection (not one per item), and the batch still never
+        overwrites a pending local edit: one made before the sync (p1) or by another writer while the page was being
+        checked (c5) goes through the merge and stays."""
+        h = self.home()
+        r = self.run_in(h, """
+fake_join()
+seo_put("p1", {"title": "mine"})
+page0 = [item("seo:changes", "p1", 1, {"id": "p1", "title": "theirs"})]
+page0 += [item("seo:changes", "c%d" % n, 1, {"id": "c%d" % n, "title": "t%d" % n}) for n in range(300)]
+page1 = [item("seo:changes", "d%d" % n, 1, {"id": "d%d" % n, "title": "u%d" % n}) for n in range(300)]
+fake_api({0: {"items": page0, "cursor": 1, "more": True}, 1: {"items": page1, "cursor": 2, "more": False}},
+         fail_post=team.TeamError("server error", 500))  # p1 stays pending
+writes, real_save, real_many, calls = [], draftstore._save, draftstore.apply_remote_many, []
+draftstore._save = lambda path, d: (writes.append(path.name), real_save(path, d))
+def many(coll, entries, root=None):
+    calls.append(len(entries))
+    if len(calls) == 1:
+        seo_put("c5", {"title": "edited meanwhile"})  # another process, after the page was checked
+    return real_many(coll, entries, root)
+draftstore.apply_remote_many = many
+s = team.sync()
+draftstore._save, draftstore.apply_remote_many = real_save, real_many
+out = {"s": s, "writes": writes, "calls": calls, "p1": seo_get("p1"), "c5": seo_get("c5"), "c6": seo_get("c6"),
+       "d299": seo_get("d299"), "box": sorted(e["id"] for e in draftstore.outbox(ROOT)),
+       "conf": sorted(c["id"] for c in team.conflicts()["conflicts"]), "n": len(draftstore.items("seo:changes", ROOT))}""")
+        self.assertEqual(r["calls"], [300, 300])  # one batch per page
+        self.assertEqual(r["writes"].count("seo_draft.json"), 3)  # page 0, page 1 and the other writer's edit; not 600
+        self.assertEqual(r["s"]["received"], 599)
+        self.assertEqual(r["p1"]["title"], "mine")
+        self.assertEqual(r["c5"]["title"], "edited meanwhile")  # never overwritten
+        self.assertEqual((r["c6"]["title"], r["d299"]["title"]), ("t6", "u299"))
+        self.assertEqual(r["box"], ["c5", "p1"])
+        self.assertEqual(r["conf"], ["c5", "p1"])
+        self.assertEqual(r["n"], 601)
+
     def test_colour_sanitised_and_nested_bookkeeping_conflicts(self):
         h = self.home()
         r = self.run_in(h, """

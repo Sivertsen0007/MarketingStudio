@@ -335,6 +335,8 @@ class Buttons(unittest.TestCase):
         r = social.post_now({"id": p["id"], "pressed": "user"})
         self.assertTrue(r["ok"], r)
         self.assertEqual(r["results"]["facebook"]["via"], "found")
+        self.assertIn("Already live", r["message"])
+        self.assertIs(r["test_mode"], True)  # the found-live result says test mode like every other post result
         self.assertEqual(len([c for c in fb.calls if c[0] == "publish"]), n)  # looked up, not posted again
         self.assertEqual(store.get(p["id"])["results"]["facebook"]["status"], "published")
 

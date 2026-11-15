@@ -171,6 +171,61 @@ class Outbox(Base):
         d = ds.read("email", self.root)
         self.assertEqual((d["version"], list(d["drafts"])), (2, ["1", "2"]))
 
+    def test_apply_remote_many_matches_one_by_one(self):
+        """The batch gives exactly what the same items one apply_remote at a time give: data, order, metas, versions,
+        outbox, and each expect checked against the item as the earlier entries left it."""
+        import shutil
+        for coll, mk in (("social", lambda i, t: {"id": i, "title": t}), ("email", lambda i, t: {"fields": {"subject": t}}),
+                         ("seo:map_site", lambda i, t: {"central_entity": t})):
+            a, b = Path(tempfile.mkdtemp(prefix="ds-a-")), Path(tempfile.mkdtemp(prefix="ds-b-"))
+            ids = ["site"] if coll == "seo:map_site" else ["x", "y", "z"]
+            with ds.tx(coll, a, by="you") as t:
+                for i in ids:
+                    t.put(i, mk(i, "mine " + i))
+            for f in a.iterdir():
+                shutil.copy2(f, b / f.name)
+            h = {i: ds.peek(coll, i, a)[1] for i in ids}
+            r = lambda i, v, t=None, gone=False: ({"id": i, "version": v, "author": "alex", "updated_by": "sam",  # noqa: E731
+                                                  "updated_at": "2026-11-15T10:00:00+00:00",
+                                                  **({"deleted": True} if gone else {"data": mk(i, t)})})
+            last = ids[-1]
+            entries = [(r(ids[0], 3, "theirs"), h[ids[0]]),     # expect holds: written, outbox entry goes
+                       (r(last, 4, "stale"), "0" * 16),         # expect fails: not written, pending edit kept
+                       (r(last, 5, gone=True), h[last]),        # delete
+                       (r(last, 6, "back"), ""),                # gone now, so "" holds: comes back at the end
+                       (r("new", 1, "fresh"), None),            # no expectation: written
+                       (r(ids[0], 7, "again"), h[ids[0]])]      # the earlier entry changed it: fails
+            if coll == "seo:map_site":
+                entries = [e for e in entries if e[0]["id"] == "site"]
+            one = [ds.apply_remote(coll, it, a, expect=e) for it, e in entries]
+            many = ds.apply_remote_many(coll, entries, b)
+            self.assertEqual(many, one, coll)
+            name = ds.layout(coll).file
+            self.assertEqual(json.loads((b / name).read_text()), json.loads((a / name).read_text()), coll)
+            self.assertEqual(one, [True, False, False, False, False] if coll == "seo:map_site" else [True, False, True, True, True, False])
+            if coll != "seo:map_site":  # deleted then put again: back at the end, after the earlier ones
+                self.assertEqual([x["id"] for x in ds.items(coll, b)], ["x", "y", "z", "new"])
+
+    def test_apply_remote_many_one_write(self):
+        with ds.tx("ads:1", self.root) as t:
+            t.put("k", {"id": "k", "budget": 1}, "you")  # a pending local edit
+        _, hk = ds.peek("ads:1", "k", self.root)
+        saves = []
+        real = ds._save
+        ds._save = lambda path, d: (saves.append(path.name), real(path, d))
+        try:
+            got = ds.apply_remote_many("ads:1", [({"id": str(n), "data": {"id": str(n), "budget": n}, "version": 1}, "")
+                                                 for n in range(500)] + [({"id": "k", "data": {"id": "k", "budget": 9}, "version": 2}, "x")],
+                                       self.root)
+        finally:
+            ds._save = real
+        self.assertEqual(saves, ["draft_1.json"])
+        self.assertEqual(got, [True] * 500 + [False])
+        self.assertEqual(ds.peek("ads:1", "k", self.root)[0]["budget"], 1)  # never overwritten
+        self.assertEqual([(e["id"], e["op"]) for e in ds.outbox(self.root)], [("k", "put")])
+        self.assertEqual(ds.read("ads:1", self.root)["version"], 1 + 500)
+        self.assertEqual(ds.peek("ads:1", "k", self.root)[1], hk)
+
 
 class Migration(Base):
     def write_all(self):

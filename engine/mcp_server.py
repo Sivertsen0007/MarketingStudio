@@ -233,7 +233,6 @@ SHARED_TOOLS = [
      "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["headline", "cta", "image", "utm", "email_block"]},
                                                       "q": {"type": "string", "description": "text to look for"}}}},
 ]
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS
 
 
 def call_shared(name, a):
@@ -251,8 +250,43 @@ def call_shared(name, a):
     return team_settings.library_list(a.get("kind"), a.get("q"))
 
 
+# [team live] activity, comments and mentions (team_live.py). Comments Claude adds are marked "Claude: " for the team.
+ITEM_REF = {"coll": {"type": "string", "description": "the item's collection, e.g. ads:<account>, email, seo:posts, seo:new_posts, "
+                                                       "seo:map_nodes, social"},
+            "id": {"type": "string", "description": "the item id inside it (Ads: campaign:<id>, ad_group:<id>, ad:<id> ...)"}}
+TEAM_LIVE_TOOLS = [
+    {"name": "team_activity", "description": "The team's activity feed, newest first: edit sessions (who changed how many drafts "
+                                             "where), pushes, publishes, comments, claims, joins. Optional filters: person (member id), area.",
+     "inputSchema": {"type": "object", "properties": {"person": {"type": "string"}, "area": {"type": "string"},
+                                                      "limit": {"type": "integer"}}}},
+    {"name": "comments_list", "description": "The comment thread on one item (comments, replies, resolved or not, @mentions).",
+     "inputSchema": {"type": "object", "properties": ITEM_REF, "required": ["coll", "id"]}},
+    {"name": "comment_add", "description": "Add a comment (or a reply with parent) to an item for the team, on the user's behalf. "
+                                           "Mention people with @name (their name without spaces) or @ the part of their email before the @. "
+                                           "The comment is marked as written by Claude.",
+     "inputSchema": {"type": "object", "properties": {**ITEM_REF, "body": {"type": "string"}, "parent": {"type": "integer"}},
+                     "required": ["coll", "id", "body"]}},
+    {"name": "mentions_list", "description": "Comments that mention the user (unread first).",
+     "inputSchema": {"type": "object", "properties": {"unread_only": {"type": "boolean"}}}},
+]
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS
+TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
+
+
+def call_team_live(name, a):
+    import team_live  # noqa: PLC0415
+    if name == "team_activity":
+        return team_live.feed(a.get("person"), a.get("area"), min(int(a.get("limit") or 50), 200))
+    if name == "comments_list":
+        return team_live.comments(a["coll"], a["id"])
+    if name == "comment_add":
+        return team_live.comment_add(a["coll"], a["id"], a["body"], a.get("parent"), by_claude=True)
+    return team_live.mentions(bool(a.get("unread_only")))
+
+
 def call_team(name):
     import team  # noqa: PLC0415
+    import team_live  # noqa: F401,PLC0415 - records what teammates changed during this sync (hovers in Studio)
     if name == "team_status":
         st = team.status()
         st.pop("members", None)
@@ -373,6 +407,8 @@ def call(name, a):
         return call_team(name)
     if name in ("reviews_list", "review_request"):
         return call_reviews(name, a)
+    if name in TEAM_LIVE_NAMES:
+        return call_team_live(name, a)
     if name in ("team_settings_get", "calendar_list", "library_list"):
         return call_shared(name, a)
     if name == "setup_status":

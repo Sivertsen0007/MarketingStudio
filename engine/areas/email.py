@@ -1470,7 +1470,7 @@ def _schedule(a, body, when, now_send):
     if not now_send:
         progress.finish(KEY, True, f"Scheduled for {london} (London)" + (" (demo)" if a.demo else ""))
         return {"ok": True, "message": f"Scheduled for {london}, London time." + (" Demo data: nothing will really go out." if a.demo else ""), "campaign": c,
-                "clashes": clash}
+                "demo": bool(a.demo), "clashes": clash}  # [team live] demo: nothing really went out
     deadline, last = time.time() + 20 * 60, None
     while time.time() < deadline:
         p = a.progress(cid)
@@ -1486,10 +1486,10 @@ def _schedule(a, body, when, now_send):
             ok = p["status"] == "sent"
             progress.finish(KEY, ok, f"{sent:,} of {total:,} sent" + ("" if ok else f" ({p['status']})") + (" (demo)" if a.demo else ""))
             return {"ok": ok, "message": f"{sent:,} of {total:,} sent." + (" Demo data: nothing was really sent." if a.demo else ""),
-                    "clashes": clash}
+                    "demo": bool(a.demo), "clashes": clash}
         time.sleep(0.5 if a.demo else 3)
     progress.finish(KEY, True, "Still sending: see the campaigns grid for the latest count")
-    return {"ok": True, "message": "Still sending. The grid shows the latest count."}
+    return {"ok": True, "message": "Still sending. The grid shows the latest count.", "demo": bool(a.demo)}
 
 
 TEAM_CONTENT = EDITABLE + ("from_address", "reply_to", "blocks")

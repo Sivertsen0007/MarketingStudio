@@ -534,6 +534,75 @@ out = None
         out = self.run_in(alex, "out = gated({'why': 'w'})['pushed']")
         self.assertEqual(out, ["v2"])  # v1 is held by Cy's request for changes, v2 is approved
 
+    def test_one_feed_event_per_action(self):
+        """Through Studio's own HTTP routes (so ts-04's after_post runs too): every push / publish / send / schedule in a
+        team lands in the feed exactly once, with the why note (team_reviews reports it, after_post skips it)."""
+        alex, _ = self.member("Alex")
+        acct = self.coll.split(":", 1)[1]
+        out = self.run_in(alex, SP + textwrap.dedent(f"""
+            import threading, time, urllib.request, http.server
+            core.resolve = lambda a: {acct!r}
+            import live
+            live.push = lambda *a, **k: {{"ok": True, "applied": 1, "push_id": "p1", "message": "live"}}
+            core.push = lambda *a, **k: {{"ok": True, "output": "sent to Editor"}}
+            import server
+            server.PRESS = "k"
+            server._after_live = lambda acct, res: res
+            srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), server.H)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            port = srv.server_address[1]
+            def post(path, body):
+                req = urllib.request.Request(f"http://127.0.0.1:{{port}}{{path}}", data=json.dumps(body).encode(), method="POST",
+                    headers={{"Content-Type": "application/json", "X-Studio-Press": "k"}})
+                try:
+                    with urllib.request.urlopen(req, timeout=60) as r:
+                        return json.loads(r.read())
+                except urllib.error.HTTPError as e:
+                    return {{"http": e.code, **json.loads(e.read() or b"{{}}")}}
+            def seq():
+                return team._api("GET", "/api/v1/events?since=0&limit=1000")["seq"]
+            def feed(since):
+                time.sleep(1.2)  # after_post reports in a background thread
+                return [e for e in team._api("GET", f"/api/v1/events?since={{since}}&limit=1000")["events"]
+                        if e["kind"] in ("push", "publish", "undo", "send_to_editor") and e["actor"] == team._state()["member"]["id"]]
+            res = {{}}
+            def act(name, path, body):
+                s0 = seq()
+                r = post(path, body)
+                res[name] = {{"ok": r.get("ok"), "msg": r.get("message") or r.get("error") or r.get("output"),
+                             "events": [[e["kind"], e["summary"]] for e in feed(s0)]}}
+                return r
+            ads_put("a1", "Budget 5"); team.sync()
+            act("ads_push", "/api/live/push", {{"acct": {acct!r}, "why": "why ads"}})
+            ads_put("a2", "Budget 6"); team.sync()
+            act("send_to_editor", "/api/push", {{"acct": {acct!r}, "why": "why editor"}})
+            seo_put("c1", {{"post_id": 5, "post_title": "Post five", "url": "https://example.test/five/", "field": "title",
+                           "old": "Old", "new": "New title"}})
+            from areas import seo
+            seo.chk.check_change = lambda x, link_check=None: []
+            class _W(seo.wp.DryRunWriter):  # a dry run that knows post 5 (never calls WordPress)
+                def current(self, post_id):
+                    return {{"title": "Old"}}
+            seo.writer = lambda s=None: _W("staging", delay=0)
+            pv = post("/api/area/seo/publish_preview", {{"why": "why seo"}})
+            pub_ = act("seo_publish", "/api/area/seo/publish", {{"token": pv.get("token"), "why": "why seo"}})
+            em.add_draft({{"campaign_id": "demo-4", "fields": {{"subject": "Hello team"}}}})
+            W = (dt.datetime.now(em.LONDON) + dt.timedelta(days=2)).strftime("%Y-%m-%dT09:00")
+            act("email_schedule", "/api/area/email/schedule", {{"id": "demo-4", "confirm": em.CONFIRM, "when": W, "tz": "Europe/London", "why": "why email"}})
+            sst.save_settings({{**sst.settings(), "local_scheduler": True}})
+            WS = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=3)).replace(microsecond=0).isoformat()
+            p = sst.save({{"title": "Launch", "channels": ["linkedin"], "when": WS, "caption": "Hello", "format": "text"}}, "you")
+            act("social_schedule", "/api/area/social/schedule", {{"id": p["id"], "pressed": "user", "why": "why social", "channels": ["linkedin"]}})
+            srv.shutdown()
+            out = res
+        """))
+        for name, r in out.items():
+            self.assertTrue(r["ok"], (name, r))
+            pushes = [e for e in r["events"] if e[0] in ("push", "publish", "send_to_editor")]
+            self.assertEqual(len(pushes), 1, (name, r["events"]))  # exactly one feed entry, never a duplicate
+            self.assertIn("why", pushes[0][1], (name, pushes))
+        self.assertEqual(out["send_to_editor"]["events"][0][0], "send_to_editor")
+
     # final review: withdrawing a review with changes requested must not lift the hold
     def test_withdraw_does_not_lift_changes_requested(self):
         alex, _ = self.member("Alex")

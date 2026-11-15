@@ -237,6 +237,8 @@ class Publish(unittest.TestCase):
         self.assertEqual(h[0]["push_id"], r["push_id"])
         u = seo.undo({"push_id": r["push_id"]})
         self.assertTrue(u["ok"])
+        self.assertIs(u["live"], False)  # a dry run: never reported to the team
+        self.assertIs(r["live"], False)
         self.assertEqual({x["state"] for x in progress.get(seo.PKEY)["items"]}, {"reversed"})
         self.assertTrue(seo.history()[0]["undone"])
         with self.assertRaises(ValueError):

@@ -37,6 +37,15 @@ def _now():
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _sites():
+    """The site list: the SEO sites setting (team_settings, key seo_sites) when it names any, else the built-in one."""
+    try:
+        import team_settings  # noqa: PLC0415
+        return team_settings.get("seo_sites")["sites"] or SITES
+    except Exception:  # noqa: BLE001
+        return SITES
+
+
 # ---------- settings + writer ----------
 
 def settings():
@@ -62,7 +71,7 @@ def get_settings(q=None):
     except Exception:  # noqa: BLE001
         pass
     return {**s, "writer": "WordPress REST" if s["mode"] == "live" and s["connected"] else "Dry run (records only)",
-            "secrets_file": str(c.SECRETS), "sites": SITES, "snippet_installed": snippet,
+            "secrets_file": str(c.SECRETS), "sites": _sites(), "snippet_installed": snippet,
             "scopes": {"search_console_read": "https://www.googleapis.com/auth/webmasters.readonly" in sc or "https://www.googleapis.com/auth/webmasters" in sc,
                        "url_inspection": "https://www.googleapis.com/auth/webmasters.readonly" in sc or "https://www.googleapis.com/auth/webmasters" in sc,
                        "sitemap_submit": "https://www.googleapis.com/auth/webmasters" in sc,

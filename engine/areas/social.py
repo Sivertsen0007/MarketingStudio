@@ -225,6 +225,7 @@ def get_state(q):
     from . import _social_linkedin as li  # noqa: PLC0415
     sync_queue()
     return {"test_mode": test_mode(), "settings": {k: s[k] for k in ("vps_job", "local_scheduler", "late_minutes", "slots", "utm", "utm_campaign", "competitors")},
+            "team_fields": _team_fields(),
             "vps_installed": False, "vps_parked": VPS_PARKED, "queue_mode": queue_mode(),
             "scheduler_running": bool(_sched.get("thread") and _sched["thread"].is_alive()), "last_tick": _sched.get("last"),
             "meta": meta, "meta_error": meta_err, "linkedin_connected": li.connected(),
@@ -378,10 +379,29 @@ def media_upload(body):
 USERNAME = __import__("re").compile(r"^[A-Za-z0-9._]{1,30}$")
 
 
+def _team_fields():
+    """SoMe settings the team has set: shown as "Set by your team" and read-only here."""
+    try:
+        import team_settings  # noqa: PLC0415
+        return team_settings.team_fields("social")
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _team_check(body):
+    """Fields the team has set (Calendar > Team settings) can't be changed here."""
+    try:
+        import team_settings  # noqa: PLC0415
+    except ImportError:
+        return
+    team_settings.check_local_edit("social", [k for k in body if k in team_settings.SOCIAL_FIELDS])
+
+
 def save_settings(body):
     """Only the keys given are changed. Slots are checked; the VPS job can only be ticked once it is installed."""
     s = store.settings()
     ch = {}
+    _team_check(body)
     if body.get("vps_job"):
         raise ValueError(VPS_PARKED)
     if "local_scheduler" in body:
@@ -578,6 +598,7 @@ def schedule(body):
         if probs or not c["ok"]:
             return {"ok": False, "message": "Not scheduled.", "problems": probs + c["problems"],
                     "can_fb_only": "facebook" in chs and routes.get("facebook") is not None and len(chs) > 1}
+        clash = _clashes(p, chs)  # warnings only (shared calendar); never stops the schedule
         _start("Scheduling" + (" (test mode)" if test_mode() else ""), chs, "Uploading media, Scheduling, Scheduled")
         res = {}
         rep = _reporter(chs)
@@ -604,8 +625,16 @@ def schedule(body):
             ok = bool(res) and all(not r.get("error") for r in res.values())
             _finish(ok, _message(res, "Scheduled") if res else "Stopped with an error")
         p = _save_results(p["id"], res)
-        return {"ok": ok, "message": _message(res, "Scheduled"), "results": res, "post": _view(p)}
+        return {"ok": ok, "message": _message(res, "Scheduled"), "results": res, "post": _view(p), "clashes": clash}
     return _guard(go)
+
+
+def _clashes(p, chs):
+    try:
+        import shared_calendar  # noqa: PLC0415
+        return shared_calendar.social_clashes(p, chs)
+    except Exception:  # noqa: BLE001 - the calendar must never stop a schedule
+        return []
 
 
 def cancel(body):

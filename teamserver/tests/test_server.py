@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -43,6 +44,22 @@ class Base(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     # helpers
+
+    def extra_server(self, **kw):
+        """A second server with its own data dir and settings, plus a joined owner."""
+        d = tempfile.mkdtemp(prefix="teamserver-test-")
+        srv = TeamServer(d, host="127.0.0.1", port=0, clock=self.clock, **kw).start()
+        self.addCleanup(shutil.rmtree, d, True)
+        self.addCleanup(srv.stop)
+        return srv
+
+    def call_on(self, srv, *args, **kw):
+        port = self.port
+        self.port = srv.port
+        try:
+            return self.call(*args, **kw)
+        finally:
+            self.port = port
 
     def call(self, method, path, body=None, token=None, raw=None, headers=None):
         c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -471,6 +488,163 @@ class TestStream(Base):
     def test_stream_needs_auth(self):
         status, _ = self.call("GET", "/api/v1/stream")
         self.assertEqual(status, 401)
+
+
+class TestReview(Base):
+    """Regression tests for the first review."""
+
+    def api_invite(self, who, email, role="editor"):
+        return self.call("POST", "/api/v1/invites", {"email": email, "role": role}, who["token"])
+
+    def redeem(self, link):
+        return self.call("POST", "/api/v1/join", {"invite": link["web"].split("#", 1)[1], "device_name": "x"})
+
+    # 1
+    def test_admin_cannot_take_over_existing_member(self):
+        admin = self.join_new("admin@example.com", "admin", "Ada")
+        ed = self.join_new("ed@example.com", "editor", "Ed")
+        for email in ("owner@example.com", "ed@example.com", "OWNER@example.com"):
+            status, out = self.api_invite(admin, email, "owner" if "owner" in email.lower() else "editor")
+            self.assertEqual(status, 403, (email, out))
+        status, _ = self.api_invite(admin, "owner@example.com", "editor")
+        self.assertEqual(status, 403)
+        # own extra device: fine, same identity, role untouched
+        status, link = self.api_invite(admin, "admin@example.com", "viewer")
+        self.assertEqual(status, 200)
+        status, out = self.redeem(link)
+        self.assertEqual((out["member"]["id"], out["member"]["role"]), (admin["member"]["id"], "admin"))
+        # an owner may add a device for someone; the invite role is ignored for existing members
+        status, link = self.api_invite(self.owner, "ed@example.com", "viewer")
+        self.assertEqual(status, 200)
+        status, out = self.redeem(link)
+        self.assertEqual((out["member"]["id"], out["member"]["role"]), (ed["member"]["id"], "editor"))
+
+    def test_new_member_invite_cannot_claim_identity_later(self):
+        admin = self.join_new("admin@example.com", "admin", "Ada")
+        status, stale = self.api_invite(admin, "new@example.com", "editor")
+        self.assertEqual(status, 200)
+        self.join_new("new@example.com", "viewer", "New")  # someone joins with that email first
+        status, out = self.redeem(stale)
+        self.assertEqual(status, 403, out)
+
+    # 2
+    def test_admin_cannot_revoke_owner_devices(self):
+        admin = self.join_new("admin@example.com", "admin", "Ada")
+        owner_dev = self.ok("GET", "/api/v1/me", token=self.owner["token"])["device"]["id"]
+        status, _ = self.call("DELETE", "/api/v1/devices/%d" % owner_dev, token=admin["token"])
+        self.assertEqual(status, 403)
+        self.ok("GET", "/api/v1/me", token=self.owner["token"])
+        own = self.ok("GET", "/api/v1/me", token=admin["token"])["device"]["id"]
+        ed = self.join_new("ed@example.com", "editor", "Ed")
+        ed_dev = self.ok("GET", "/api/v1/me", token=ed["token"])["device"]["id"]
+        self.ok("DELETE", "/api/v1/devices/%d" % ed_dev, token=admin["token"])
+        self.ok("DELETE", "/api/v1/devices/%d" % own, token=admin["token"])
+
+    # 3
+    def test_stream_closes_after_revoke_while_events_flow(self):
+        srv = self.extra_server(ping_interval=30, device_check_interval=0.2)
+        port = self.port
+        self.port = srv.port
+        try:
+            tok, _ = srv.store.create_invite("a@example.com", "owner")
+            a = self.ok("POST", "/api/v1/join", {"invite": tok})
+            q = self.open_stream(a["device_token"])
+            with srv.store.lock:
+                srv.store.db.execute("UPDATE devices SET revoked_at=1")
+            # keep traffic flowing through the stream without using the revoked token
+            writer = {"id": 99, "name": "W", "role": "editor"}
+            closed = False
+            for i in range(30):
+                srv.store.write_items(writer, [{"op": "put", "coll": "email", "id": str(i), "base_version": 0,
+                                                "data": {}}])
+                time.sleep(0.05)
+                if self.saw(q, "closed", timeout=0.01)[0]:
+                    closed = True
+                    break
+            self.assertTrue(closed)
+        finally:
+            self.port = port
+
+    # 4
+    def test_connection_cap_and_timeout(self):
+        srv = self.extra_server(max_connections=2, request_timeout=1.0)
+        idle = [socket.create_connection(("127.0.0.1", srv.port)) for _ in range(2)]
+        for s_ in idle:
+            self.addCleanup(s_.close)
+        time.sleep(0.2)
+        status, out = self.call_on(srv, "GET", "/api/v1/health")
+        self.assertEqual(status, 503, out)
+        idle[0].settimeout(3)
+        self.assertEqual(idle[0].recv(10), b"")  # idle socket dropped after the read timeout
+        time.sleep(0.3)
+        status, _ = self.call_on(srv, "GET", "/api/v1/health")
+        self.assertEqual(status, 200)
+
+    def test_streams_per_device_capped(self):
+        for _ in range(5):
+            self.open_stream(self.owner["token"])
+        time.sleep(0.1)
+        status, out = self.call("GET", "/api/v1/stream", token=self.owner["token"])
+        self.assertEqual(status, 429, out)
+
+    # 5
+    def test_join_page_escapes_and_prefers_public_url(self):
+        status, page = self.call("GET", "/join", headers={"Host": "evil</script><script>alert(1)//"})
+        self.assertEqual(status, 200)
+        self.assertNotIn("evil", page)
+        self.assertIn('"https://team.example.test"', page)
+        srv = self.extra_server()
+        status, page = self.call_on(srv, "GET", "/join", headers={"Host": "x</script>&"})
+        self.assertNotIn("</script>&", page)
+        self.assertIn("x\\u003c/script\\u003e\\u0026", page)
+
+    # 6
+    def test_odd_input_is_400(self):
+        t = self.owner["token"]
+        status, out = self.call("POST", "/api/v1/items", raw=b'{"ops":' + b"[" * 100000 + b"]" * 100000 + b"}",
+                                token=t)
+        self.assertEqual((status, out), (400, {"error": "body is nested too deeply"}))
+        for q in ("since=99999999999999999999", "since=-1", "since=1e3"):
+            status, out = self.call("GET", "/api/v1/items?" + q, token=t)
+            self.assertEqual(status, 400, (q, out))
+        status, out = self.call("POST", "/api/v1/comments", {"coll": "email", "id": "x", "body": "hi",
+                                                            "mentions": [10 ** 30]}, t)
+        self.assertEqual(status, 400, out)
+
+    # 7
+    def test_nan_infinity_and_real_ints(self):
+        t = self.owner["token"]
+        for raw in (b'{"ops":[{"op":"put","coll":"e","id":"a","base_version":0,"data":{"x":NaN}}]}',
+                    b'{"ops":[{"op":"put","coll":"e","id":"a","base_version":0,"data":{"x":Infinity}}]}',
+                    b'{"ops":[{"op":"put","coll":"e","id":"a","base_version":0,"data":{"x":1e400}}]}'):
+            status, out = self.call("POST", "/api/v1/items", raw=raw, token=t)
+            self.assertEqual(status, 400, (raw, out))
+        for base in (0.0, 1.5, True, "0"):
+            status, out = self.call("POST", "/api/v1/items", {"ops": [{"op": "put", "coll": "e", "id": "a",
+                                                                       "base_version": base, "data": {}}]}, t)
+            self.assertEqual(status, 400, (base, out))
+
+    def test_reactivation_does_not_restore_tokens(self):
+        ed = self.join_new("ed@example.com", "editor", "Ed")
+        mid = ed["member"]["id"]
+        self.ok("PATCH", "/api/v1/members/%d" % mid, {"active": False}, self.owner["token"])
+        self.ok("PATCH", "/api/v1/members/%d" % mid, {"active": True}, self.owner["token"])
+        status, _ = self.call("GET", "/api/v1/me", token=ed["token"])
+        self.assertEqual(status, 401)
+        status, link = self.api_invite(self.owner, "ed@example.com")
+        status, out = self.redeem(link)
+        self.assertEqual((status, out["member"]["id"]), (200, mid))
+
+    def test_join_rate_limit_ignores_forwarded_for_unless_trusted(self):
+        for i in range(10):
+            self.call("POST", "/api/v1/join", {"invite": "bad"}, headers={"X-Forwarded-For": "10.0.0.%d" % i})
+        status, _ = self.call("POST", "/api/v1/join", {"invite": "bad"}, headers={"X-Forwarded-For": "10.0.1.1"})
+        self.assertEqual(status, 429)
+        srv = self.extra_server(trust_proxy=True)
+        for i in range(15):
+            status, _ = self.call_on(srv, "POST", "/api/v1/join", {"invite": "bad"},
+                                     headers={"X-Forwarded-For": "1.1.1.1, 10.0.0.%d" % i})
+            self.assertEqual(status, 401)
 
 
 if __name__ == "__main__":

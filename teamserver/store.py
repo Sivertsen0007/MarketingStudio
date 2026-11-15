@@ -88,15 +88,16 @@ def need_str(d, key, maxlen, required=True, default=None):
     return v
 
 
+MAX_INT = 2 ** 63 - 1
+
+
 def need_int(v, key, minimum=0):
-    """Parse an integer argument (query or body)."""
-    try:
-        n = int(v)
-    except (TypeError, ValueError):
+    """A real JSON integer (no bools, floats or strings) between `minimum` and 2**63-1."""
+    if not isinstance(v, int) or isinstance(v, bool):
         raise ApiError(400, "%s must be an integer" % key)
-    if isinstance(v, bool) or n < minimum:
-        raise ApiError(400, "%s must be an integer >= %d" % (key, minimum))
-    return n
+    if v < minimum or v > MAX_INT:
+        raise ApiError(400, "%s must be an integer between %d and %d" % (key, minimum, MAX_INT))
+    return v
 
 
 def need_bool(v, key):
@@ -191,7 +192,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS invites (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT UNIQUE NOT NULL, email TEXT NOT NULL,
                 name TEXT, role TEXT NOT NULL, created_by INTEGER, created_at REAL NOT NULL,
-                expires_at REAL NOT NULL, used_at REAL, used_by_device INTEGER);
+                expires_at REAL NOT NULL, used_at REAL, used_by_device INTEGER, member_id INTEGER);
             CREATE TABLE IF NOT EXISTS items (
                 coll TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL,
                 deleted INTEGER NOT NULL DEFAULT 0, author INTEGER, updated_by INTEGER, updated_at REAL NOT NULL,
@@ -215,6 +216,9 @@ class Store:
                 coll TEXT NOT NULL, id TEXT NOT NULL, member INTEGER NOT NULL, note TEXT, at REAL NOT NULL,
                 PRIMARY KEY (coll, id));
             """)
+            cols = [r[1] for r in self.db.execute("PRAGMA table_info(invites)")]
+            if "member_id" not in cols:
+                self.db.execute("ALTER TABLE invites ADD COLUMN member_id INTEGER")
 
     def get_meta(self, key, default=None):
         r = self.q1("SELECT value FROM meta WHERE key=?", (key,))
@@ -268,17 +272,28 @@ class Store:
         role = need_role({"role": role})
         if name is not None:
             name = need_str({"name": name}, "name", MAX_NAME, required=False)
-        if by is not None:
-            if by["role"] not in MANAGERS:
-                raise ApiError(403, "only an admin or owner can invite")
-            if role == "owner" and by["role"] != "owner":
-                raise ApiError(403, "only an owner can invite an owner")
         token = secrets.token_urlsafe(32)
         now = self.now()
         with self.tx() as db:
-            db.execute("INSERT INTO invites(token_hash, email, name, role, created_by, created_at, expires_at)"
-                       " VALUES(?,?,?,?,?,?,?)",
-                       (hash_token(token), email, name, role, by["id"] if by else None, now, now + INVITE_TTL))
+            existing = db.execute("SELECT * FROM members WHERE email=?", (email,)).fetchone()
+            if by is not None:
+                if existing is not None:
+                    # A second device for an existing member: only that member or an owner may ask for one,
+                    # so nobody can take over someone else's identity.
+                    if existing["id"] != by["id"] and by["role"] != "owner":
+                        raise ApiError(403, "that email already belongs to a member; only they or an owner can"
+                                            " invite another device for it")
+                else:
+                    if by["role"] not in MANAGERS:
+                        raise ApiError(403, "only an admin or owner can invite")
+                    if role == "owner" and by["role"] != "owner":
+                        raise ApiError(403, "only an owner can invite an owner")
+            if existing is not None:
+                role = existing["role"]  # a device invite never changes the member's role
+            db.execute("INSERT INTO invites(token_hash, email, name, role, created_by, created_at, expires_at,"
+                       " member_id) VALUES(?,?,?,?,?,?,?,?)",
+                       (hash_token(token), email, name, role, by["id"] if by else None, now, now + INVITE_TTL,
+                        existing["id"] if existing is not None else None))
         return token, now + INVITE_TTL
 
     def has_owner(self):
@@ -301,6 +316,12 @@ class Store:
             m = db.execute("SELECT * FROM members WHERE email=?", (inv["email"],)).fetchone()
             if m and not m["active"]:
                 raise ApiError(403, "member is deactivated")
+            if m is not None and inv["member_id"] != m["id"]:
+                # Made for a new member, but someone with that email joined since: never hand over the identity.
+                raise ApiError(403, "this invite was for a new member and that email is already taken;"
+                                    " ask for a new invite")
+            if m is None and inv["member_id"] is not None:
+                raise ApiError(401, "invite not valid")
             new_member = m is None
             if new_member:
                 name = inv["name"] or inv["email"].split("@")[0]
@@ -387,6 +408,10 @@ class Store:
                     raise ApiError(409, "the team needs at least one active owner")
             sets = ", ".join("%s=?" % k for k in fields)
             db.execute("UPDATE members SET %s WHERE id=?" % sets, list(fields.values()) + [mid])
+            if fields.get("active") == 0:
+                # Reactivating later must not bring old tokens back: the member joins again with a new invite.
+                db.execute("UPDATE devices SET revoked_at=? WHERE member_id=? AND revoked_at IS NULL",
+                           (self.now(), mid))
             r = db.execute("SELECT * FROM members WHERE id=?", (mid,)).fetchone()
         if fields.get("active") == 0:
             self.presence.pop(mid, None)
@@ -400,8 +425,12 @@ class Store:
             d = db.execute("SELECT * FROM devices WHERE id=?", (did,)).fetchone()
             if not d:
                 raise ApiError(404, "device not found")
-            if actor is not None and actor["role"] not in MANAGERS and d["member_id"] != actor["id"]:
-                raise ApiError(403, "only an admin or owner can revoke another member's device")
+            if actor is not None and d["member_id"] != actor["id"]:
+                if actor["role"] not in MANAGERS:
+                    raise ApiError(403, "only an admin or owner can revoke another member's device")
+                target = db.execute("SELECT role FROM members WHERE id=?", (d["member_id"],)).fetchone()
+                if target and target["role"] == "owner" and actor["role"] != "owner":
+                    raise ApiError(403, "only an owner can revoke an owner's device")
             if d["revoked_at"] is None:
                 db.execute("UPDATE devices SET revoked_at=? WHERE id=?", (self.now(), did))
         self.emit("_close_device", {"device": did})

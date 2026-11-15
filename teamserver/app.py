@@ -19,6 +19,10 @@ from .store import ApiError, MANAGERS, Store, iso
 MAX_BODY_BYTES = 4 * 1024 * 1024
 JOIN_LIMIT = (10, 60)        # attempts per IP per window (seconds)
 REQUEST_LIMIT = (1200, 60)   # requests per device per window
+MAX_CONNECTIONS = 200        # concurrent connections (one thread each)
+MAX_STREAMS_PER_DEVICE = 5
+REQUEST_TIMEOUT = 15.0       # seconds a socket may sit idle or trickle a request
+DEVICE_CHECK_INTERVAL = 2.0  # how often an open stream rechecks its token
 
 
 class RateLimiter:
@@ -51,9 +55,11 @@ class Broker:
         self.subs = {}  # sid -> (member_id, device_id, queue)
         self.next_id = 0
 
-    def subscribe(self, member_id, device_id):
+    def subscribe(self, member_id, device_id, max_per_device=MAX_STREAMS_PER_DEVICE):
         q = queue.Queue(maxsize=1000)
         with self.lock:
+            if sum(1 for _, did, _ in self.subs.values() if did == device_id) >= max_per_device:
+                raise ApiError(429, "too many open streams for this device (max %d)" % max_per_device)
             self.next_id += 1
             sid = self.next_id
             self.subs[sid] = (member_id, device_id, q)
@@ -127,6 +133,10 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "MarketingStudioTeam/" + __version__
     sys_version = ""
 
+    def setup(self):
+        self.timeout = self.server.team.request_timeout  # socket timeout: stops slow or idle clients
+        super().setup()
+
     # ---------- helpers ----------
 
     @property
@@ -143,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
             sys.stderr.write("%s %s %s %s\n" % (self.address_string(), self.command, path, code))
 
     def send_json(self, status, obj):
-        body = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        body = json.dumps(obj, separators=(",", ":"), allow_nan=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -171,12 +181,23 @@ class Handler(BaseHTTPRequestHandler):
         if not raw:
             return {}
         try:
-            obj = json.loads(raw.decode("utf-8"))
+            obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float)
         except (ValueError, UnicodeDecodeError):
-            raise ApiError(400, "body must be JSON")
+            raise ApiError(400, "body must be JSON (no NaN or Infinity)")
+        except RecursionError:
+            raise ApiError(400, "body is nested too deeply")
         if not isinstance(obj, dict):
             raise ApiError(400, "body must be a JSON object")
         return obj
+
+    def client_ip(self):
+        """The socket peer, or the last X-Forwarded-For hop when the server runs behind a trusted proxy."""
+        if self.team.trust_proxy:
+            xff = self.headers.get("X-Forwarded-For", "")
+            hops = [h.strip() for h in xff.split(",") if h.strip()]
+            if hops:
+                return hops[-1][:64]
+        return self.client_address[0]
 
     def bearer(self, query):
         h = self.headers.get("Authorization", "")
@@ -245,7 +266,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "protocol": PROTOCOL, "version": __version__, "team": store.team_name()}
 
     def r_join_page(self, query, body):
-        page = JOIN_PAGE % {"team": _html(self.team.store.team_name()), "server": json.dumps(self.team.url_for(self))}
+        page = JOIN_PAGE % {"team": _html(self.team.store.team_name()), "server": _js_string(self.team.url_for(self))}
         data = page.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -255,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def r_join(self, query, body):
-        self.team.join_limit.hit(self.client_address[0])
+        self.team.join_limit.hit(self.client_ip())
         token, member = self.team.store.join(body.get("invite"), body.get("device_name"))
         return {"device_token": token, "member": member, "team": self.team.store.team_name()}
 
@@ -359,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
     def r_stream(self, query, body):
         ctx = self.authed(query, allow_query_token=True)
         broker = self.team.broker
-        sid, q = broker.subscribe(ctx["member"]["id"], ctx["device_id"])
+        sid, q = broker.subscribe(ctx["member"]["id"], ctx["device_id"], self.team.max_streams_per_device)
         self.close_connection = True
         try:
             self.send_response(200)
@@ -370,19 +391,29 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"retry: 5000\n: connected\n\n")
             self.wfile.flush()
+            last_check = time.monotonic()
+            next_ping = last_check + self.team.ping_interval
             while not self.team.stopping.is_set():
-                try:
-                    item = q.get(timeout=self.team.ping_interval)
-                except queue.Empty:
+                now = time.monotonic()
+                if now - last_check >= self.team.device_check_interval:
+                    # Revoked or deactivated elsewhere (for example the CLI): checked whether or not events flow.
                     if not self.team.store.device_ok(ctx["device_id"]):
-                        break  # revoked or deactivated from elsewhere (for example the CLI)
-                    self.wfile.write(b": ping\n\n")
-                    self.wfile.flush()
+                        break
+                    last_check = now
+                wait = min(next_ping, last_check + self.team.device_check_interval) - now
+                try:
+                    item = q.get(timeout=max(wait, 0.01))
+                except queue.Empty:
+                    if time.monotonic() >= next_ping:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                        next_ping = time.monotonic() + self.team.ping_interval
                     continue
                 if item is None:
                     break
                 kind, payload = item
-                self.wfile.write(("event: %s\ndata: %s\n\n" % (kind, json.dumps(payload, separators=(",", ":"))))
+                self.wfile.write(("event: %s\ndata: %s\n\n" % (kind, json.dumps(payload, separators=(",", ":"),
+                                                                                  allow_nan=False)))
                                  .encode("utf-8"))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
@@ -390,6 +421,23 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             broker.unsubscribe(sid)
         return None
+
+
+def _reject_constant(name):
+    raise ValueError("%s is not allowed" % name)
+
+
+def _finite_float(text):
+    f = float(text)
+    if f != f or f in (float("inf"), float("-inf")):
+        raise ValueError("number out of range")
+    return f
+
+
+def _js_string(s):
+    """A JSON string literal that is safe inside a <script> element."""
+    return (json.dumps(s).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
 
 
 def _html(s):
@@ -405,12 +453,11 @@ def _qint(query, key, default):
     v = _qstr(query, key)
     if v is None or v == "":
         return default
-    try:
-        n = int(v)
-    except ValueError:
-        raise ApiError(400, "%s must be an integer" % key)
-    if n < 0:
-        raise ApiError(400, "%s must be >= 0" % key)
+    if len(v) > 19 or not v.isdigit():
+        raise ApiError(400, "%s must be a whole number" % key)
+    n = int(v)
+    if n > 2 ** 63 - 1:
+        raise ApiError(400, "%s is too large" % key)
     return n
 
 
@@ -446,16 +493,49 @@ ROUTES = [
 ]
 
 
+_BUSY = (b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 34\r\n"
+         b"Connection: close\r\n\r\n{\"error\":\"server busy, try again\"}")
+
+
 class _HTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with a cap on concurrent connections (each one holds a thread)."""
+
     daemon_threads = True
     allow_reuse_address = True
+
+    def __init__(self, addr, handler, max_connections):
+        self.slots = threading.BoundedSemaphore(max_connections)
+        super().__init__(addr, handler)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            try:
+                request.settimeout(1)
+                request.sendall(_BUSY)
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
 
 
 class TeamServer:
     """The running server: store + HTTP + live updates. `clock` and `ping_interval` are for tests."""
 
     def __init__(self, data_dir, host="127.0.0.1", port=8790, public_url=None, clock=None,
-                 ping_interval=20.0, verbose=False):
+                 ping_interval=20.0, verbose=False, trust_proxy=False, max_connections=MAX_CONNECTIONS,
+                 max_streams_per_device=MAX_STREAMS_PER_DEVICE, request_timeout=REQUEST_TIMEOUT,
+                 device_check_interval=DEVICE_CHECK_INTERVAL):
         os.makedirs(data_dir, exist_ok=True)
         self.clock = clock or time.time
         self.store = Store(os.path.join(data_dir, "team.db"), clock=self.clock)
@@ -464,10 +544,14 @@ class TeamServer:
         self.public_url = public_url
         self.ping_interval = ping_interval
         self.verbose = verbose
+        self.trust_proxy = trust_proxy
+        self.max_streams_per_device = max_streams_per_device
+        self.request_timeout = request_timeout
+        self.device_check_interval = device_check_interval
         self.stopping = threading.Event()
         self.join_limit = RateLimiter(JOIN_LIMIT[0], JOIN_LIMIT[1], time.time)
         self.req_limit = RateLimiter(REQUEST_LIMIT[0], REQUEST_LIMIT[1], time.time)
-        self.httpd = _HTTPServer((host, port), Handler)
+        self.httpd = _HTTPServer((host, port), Handler, max_connections)
         self.httpd.team = self
         self.port = self.httpd.server_address[1]
         self._threads = []

@@ -44,6 +44,7 @@ can also invite, change roles and revoke devices from the app.
 | `--data` | `TEAMSERVER_DATA` | `./teamdata` |
 | `--port` | `TEAMSERVER_PORT` | `8790` |
 | `--host` | `TEAMSERVER_HOST` | `127.0.0.1` |
+| `--trust-proxy` | `TEAMSERVER_TRUST_PROXY=1` | off: use X-Forwarded-For for rate limits only behind your own proxy |
 | `--public-url` | `TEAMSERVER_URL` | saved from the last time it was given, else the request's Host |
 
 ## Back up

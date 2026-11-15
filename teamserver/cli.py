@@ -40,7 +40,8 @@ def print_invite(store, args, token, expires, email, role):
 
 
 def cmd_serve(args):
-    srv = TeamServer(data_dir(args), host=args.host, port=args.port, verbose=args.verbose)
+    srv = TeamServer(data_dir(args), host=args.host, port=args.port, verbose=args.verbose,
+                     trust_proxy=args.trust_proxy)
     url = args.public_url or os.environ.get("TEAMSERVER_URL")
     if url:
         srv.store.set_meta("public_url", url.rstrip("/"))
@@ -115,6 +116,9 @@ def main(argv=None):
                     help="bind address (default 127.0.0.1; use 0.0.0.0 in a container)")
     sp.add_argument("--public-url", help="public base URL for links (or $TEAMSERVER_URL)")
     sp.add_argument("--verbose", action="store_true", help="log requests to stderr")
+    sp.add_argument("--trust-proxy", action="store_true",
+                    default=os.environ.get("TEAMSERVER_TRUST_PROXY", "") in ("1", "true", "yes"),
+                    help="use X-Forwarded-For for the client IP (only behind your own reverse proxy)")
 
     sp = add("init", cmd_init, "create the team and the first owner invite")
     sp.add_argument("--email", required=True)

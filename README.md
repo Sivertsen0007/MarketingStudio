@@ -235,6 +235,7 @@ The Email area works with **your email platform**, through the [Email API](#emai
 - **Check** runs every check: subject length, links (each one is fetched), merge tags, images, the sender, and your own copy rules.
 - Then your own buttons: **Save to platform**, **Send test** (to your test address), **Schedule**, **Send now**, **Cancel schedule**.
 - **Save HTML to folder** writes the HTML to the folder set in Setup > Advanced.
+- **Right-click** a campaign to open it or delete a draft (with a confirm step). Sent and scheduled campaigns can't be deleted.
 
 ![Email editor](docs/screenshots/email-editor.png)
 
@@ -394,6 +395,7 @@ which Studio only sets when you pressed the button.
 | `POST /campaigns/{id}/schedule` | `{"scheduled_for": ISO 8601}` | `{"campaign": Campaign}` (now or later) |
 | `POST /campaigns/{id}/cancel` | | `{"campaign": Campaign}` |
 | `GET /campaigns/{id}/progress` | | `{"status", "sent", "total"}` while sending |
+| `DELETE /campaigns/{id}` | | `{"ok": true, "id"}`. Drafts only; anything else answers 409 |
 
 `Campaign` = `{id, name, subject, preview_text, status (draft, scheduled, sending, sent, cancelled, failed), list_id, list_name,
 segment_id, segment_name, scheduled_for, sent_at, from_name, from_address, reply_to, updated_at, stats: {sent, delivered, opens,

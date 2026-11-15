@@ -10,7 +10,7 @@ One server = one team. JSON over HTTPS. Python stdlib only on both sides.
   Invite tokens are single-use and expire after 7 days. The first owner invite: `python3 -m teamserver init --email ... --name ...`.
 - `POST /api/v1/join {invite, device_name}` -> `{device_token, member, team}`. No auth header.
 - Every other call: `Authorization: Bearer <device_token>`. Tokens are stored hashed (sha256) and can be revoked.
-- Roles: `owner`, `admin`, `editor`, `viewer` (+ `approver: bool` flag, used in a later phase). Viewers cannot write items.
+- Roles: `owner`, `admin`, `editor`, `viewer` (+ `approver: bool` flag: may decide reviews). Viewers cannot write items.
 
 ## Objects
 
@@ -22,7 +22,7 @@ item    `{coll, id, version, data, deleted, author, updated_by, updated_at, chan
         data: the item's JSON (a dict). version: server integer, per item, starts at 1.
         changeset: optional `{id, name}` the author grouped it under.
 event   `{seq, at, actor, kind, area, coll, id, summary, data}`  kinds: `edit_session`, `push`, `publish`, `undo`, `comment`,
-        `mention`, `claim`, `join`, `custom`, `settings`
+        `mention`, `claim`, `join`, `custom`, `settings`, `send_to_editor`, `review_requested`, `review_decided`
 comment `{id, coll, item_id, parent, author, body, mentions:[member_id], resolved, at, edited_at}`
 presence `{member, area, coll, id, editing, at}`  (expires 120 s after the last heartbeat)
 claim   `{coll, id, member, note, at}`
@@ -47,7 +47,8 @@ claim   `{coll, id, member, note, at}`
 ## Events (activity feed)
 
 - `GET /api/v1/events?since=<seq>&limit=200` -> `{events, seq, reset}` (newest last; `reset` as for items).
-- `POST /api/v1/events {kind, area, coll?, id?, summary, data?}` -> event. Clients report push / publish / undo here.
+- `POST /api/v1/events {kind, area, coll?, id?, summary, data?}` -> event. Clients report push / publish / undo /
+  send_to_editor here.
 
 ## Comments and mentions
 
@@ -61,6 +62,62 @@ claim   `{coll, id, member, note, at}`
 
 - `POST /api/v1/presence {area, coll?, id?, editing}` heartbeat (clients send every 30 s while active). `GET /api/v1/presence` -> live list.
 - `POST /api/v1/claims {coll, id, note?}`, `DELETE /api/v1/claims {coll, id}`, `GET /api/v1/claims`.
+
+## Reviews (approvals), policy and owners
+
+review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, hash, content_hash, current_version, stale}],
+        requested_by, reviewers:[member id], status, note, decision_note, decided_by, decided_at, at, updated_at, comments,
+        stale, decider_ok}`
+        status: `open`, `approved`, `changes_requested`, `withdrawn`. `comments` = how many comments the review's own
+        thread has (comments with coll `review`, id = the review id; per-item comments use the item's own coll/id).
+
+- `POST /api/v1/reviews {items:[{coll, id, version, content_hash?}], reviewers:[member id], note?, title?, area?, changeset?}`
+  (editor+). Each version must be the item's current server version (0 = no such item, e.g. an email campaign with no
+  draft); else 409 with `{coll, id, current_version}`: sync and ask again. An item that does not exist (or is deleted) and
+  has no `content_hash` is refused (400, nothing to review).
+  `content_hash` (64 lower-case hex, only for coll `email`, else 400): the client's hash of what would really go out,
+  for items whose live content is not only the draft item (an email: the platform campaign with any Studio draft on top). The server cannot
+  see that content, so such items are never `stale` on the server; the client checks the hash again at send time against
+  the platform copy (so edits on the platform, or a draft saved there outside Send, end the approval). Instead of items, `{changeset:{id,name}, from_changeset:true}`
+  takes every live item whose last write was the requester's, tagged with that changeset. Reviewers must be active
+  members who may approve (`approver: true`, or admin / owner), not the requester, and who never wrote any item in the
+  review (author, last writer, or any edit session that touched it, at any time; 400 otherwise).
+- `GET /api/v1/reviews?mine=1&to_me=1&status=open,approved&current=1&before=<id>` (filters combine; newest first, 200
+  per page; `{reviews, more, next_before}`: pass `before=next_before` for the next page).
+  `current=1` leaves out reviews whose every item is stale, and approvals whose decider may no longer approve. `GET /api/v1/reviews/<id>` -> review.
+- `POST /api/v1/reviews/<id>/decide {decision: approve|request_changes, note?, confirm?:[{coll, id, content_hash}]}`: only
+  a listed reviewer who may approve, never the requester (403), only while open (409). Approving needs that the approver
+  never wrote any item in it (author, last writer, or any of their edit sessions touching it, before or after the
+  request, so an edit put back later still counts; 403), that no item is stale, and for EVERY item an entry in `confirm`: the
+  approver's own hash of exactly what their review screen showed, equal to the item's `content_hash` (or `hash` when
+  it has none). Otherwise 409: the review has to be asked for again.
+- An approval counts only while the member who gave it may still approve: `decider_ok` is false once they are
+  deactivated, or are neither approver nor admin / owner any more, and `current=1` then leaves the review out.
+- `POST /api/v1/reviews/<id>/withdraw`: the requester or an admin / owner (409 if already withdrawn). A review with
+  changes requested holds that content: only an admin / owner may withdraw it (403 for the requester).
+- An approval covers an item only while its content is what was asked about. The server keeps a content hash per item:
+  sha256 of the item's data as compact JSON with sorted keys (`separators=(",", ":")`, `ensure_ascii=False`), leaving out
+  the top-level bookkeeping keys `at, ts, by, updated, updated_at, edited_at, edited_by, problems, warnings, approval,
+  approved_by, approved_at`; "" for a missing or deleted item. `stale: true` = the server's copy now hashes differently.
+  Clients compute the same hash on their local copy, so a local edit not yet synced also counts as not covered.
+- Events: `review_requested` (coll `review`, id = review id, data `{review, reviewers, count}`) and `review_decided`
+  (data `{review, status, note}`). SSE `event: review` `{id, status}` goes to the reviewers and the requester on request,
+  decision and withdrawal.
+- `GET /api/v1/policy` -> `{require_approval: {ads, email, seo, social}}` (all false by default).
+  `PUT /api/v1/policy {require_approval: {area: bool}}` (admin/owner; areas not named stay). SSE `event: policy`.
+- `GET /api/v1/owners` -> `{owners: {scope: member id}}`. `PUT /api/v1/owners {owners: {scope: member id | null}}`
+  (admin/owner; merged, null removes). A scope is a collection or anything inside it, 1-200 characters starting with
+  a-z or _, no control characters, e.g. `ads:4387091070/campaign/Brand`, `email/123`, `seo/post/42`,
+  `seo:map_nodes/n_ab12cd34`, `social`. Ownership is advisory: clients show "Owned by Alex", nothing is blocked.
+  SSE `event: owners` `{}`.
+- When `require_approval` is on for an area, Studio's Push live / Publish / Send / Schedule only includes items covered
+  by a current approval, and every push in a team carries a one-line why note, reported as a `push` event
+  `{kind: "push", area, summary, data: {why, counts, items, scope}}` (`send_to_editor` for Ads Send to Editor, gated the
+  same way). If the rules were never fetched and the server can't be reached, live actions wait (fail closed). An item
+  whose current content has a `changes_requested` decision in any review stays out of pushes, even if another review
+  approved it, until it changes (or an admin / owner withdraws that review). Clients read every page of reviews. The review screen shows every field an item sends live, in
+  full, and the approver's `confirm` hash is computed from exactly what it showed. That gate is the client's: the server stores the
+  policy and the approvals, it never pushes anything itself.
 
 ## Team settings
 
@@ -103,6 +160,7 @@ Two ordinary item collections, synced like drafts (`/api/v1/items`, versions, me
 
 - `GET /api/v1/stream` (text/event-stream, auth header or `?token=`): `event: items` `{cursor}`, `event: event` `{seq}`,
   `event: presence`, `event: comment` `{coll, id}`, `event: mention` `{comment_id}` (only to the mentioned member),
+  `event: review` `{id, status}` (reviewers and requester), `event: policy`, `event: owners`,
   `event: settings` `{key, version}`.
   A `: ping` comment every 20 s.
 

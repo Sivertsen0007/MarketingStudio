@@ -1456,6 +1456,12 @@ def _schedule(a, body, when, now_send):
         progress.finish(KEY, False, f"It is {c['status']}, not a draft.")
         return {"ok": False, "message": f"Only a draft can be scheduled (this one is {c['status']})."}
     clash = _calendar("email_clashes", c, when) or []  # warnings only (shared calendar); never stops the schedule
+    if body.get("_team_expect"):  # [team reviews] last check, as the platform has it now, just before scheduling
+        import team_reviews  # noqa: PLC0415
+        why = team_reviews.recheck(body, "email", str(cid))
+        if why:
+            progress.finish(KEY, False, why)
+            return {"ok": False, "needs_team_approval": True, "message": why}
     progress.phase(KEY, "scheduling", "Scheduling")
     merged, c = c, a.schedule(cid, _iso(when))
     progress.sent(KEY, "schedule")
@@ -1486,17 +1492,34 @@ def _schedule(a, body, when, now_send):
     return {"ok": True, "message": "Still sending. The grid shows the latest count.", "demo": bool(a.demo)}
 
 
+TEAM_CONTENT = EDITABLE + ("from_address", "reply_to", "blocks")
+
+
+def team_content(cid, campaign=None):
+    """[team reviews] What a Send would send: the platform campaign (fetched fresh) with any Studio draft on top.
+    An approval covers exactly this, so edits on the platform or a draft saved there outside Send are caught."""
+    if campaign is None:
+        campaign, _, _ = _merged(adapter(), cid, fresh=True)
+    return {"campaign_id": str(cid), **{k: campaign.get(k) for k in TEAM_CONTENT}}
+
+
+def _team(body, what, fn):
+    """[team reviews] In a team: an approval when the team requires one for Email, a why note, a feed event."""
+    import team_reviews  # noqa: PLC0415
+    return team_reviews.single_action("email", "email", str(body["id"]), body, what, fn)
+
+
 @_guard
 def p_schedule(body):
     when = to_utc(body.get("when"), body.get("tz") or "Europe/London")
     if when < _now() + dt.timedelta(minutes=2):
         raise ValueError("pick a time at least a few minutes from now (or use Send now)")
-    return _schedule(adapter(), body, when, False)
+    return _team(body, "Scheduled an email", lambda: _schedule(adapter(), body, when, False))
 
 
 @_guard
 def p_send_now(body):
-    return _schedule(adapter(), body, _now(), True)
+    return _team(body, "Sent an email", lambda: _schedule(adapter(), body, _now(), True))
 
 
 def p_delete(body):

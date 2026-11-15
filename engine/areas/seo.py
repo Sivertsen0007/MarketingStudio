@@ -483,6 +483,13 @@ def _new_fields(np_):
     return {f: np_.get(f) for f in NEW_FIELDS if np_.get(f) not in (None, "", []) or f in ("title", "content", "slug")}
 
 
+def _team_gate(edits, news, body):
+    """[team reviews] In a team: only approved edits (when the team requires it) or only mine. -> (edits, news, plan)."""
+    import team_reviews  # noqa: PLC0415
+    (edits, news), plan = team_reviews.filter_lists("seo", [("seo:changes", edits), ("seo:new_posts", news)], body or {})
+    return edits, news, plan
+
+
 def publish_preview(body=None, link_check=None):
     """The change set per post, with checks and a token the Publish call must send back."""
     s = settings()
@@ -490,6 +497,7 @@ def publish_preview(body=None, link_check=None):
     d = _draft()
     edits = [x for x in d["changes"] if x.get("kind") != "todo"]
     news = d.get("new_posts", [])
+    edits, news, team_plan = _team_gate(edits, news, body)
     by_post = {}
     for x in edits:
         by_post.setdefault(x["post_id"], {"post_id": x["post_id"], "title": x["post_title"], "url": x["url"], "fields": [], "issues": []})
@@ -503,9 +511,13 @@ def publish_preview(body=None, link_check=None):
                        "fields": [{"id": x["id"], "field": f, "label": wp.LABELS.get(f, f), "old": "", "new": v} for f, v in _new_fields(x).items()],
                        "issues": _new_checks(x)})
     errs = sum(chk.summarise(p["issues"])["errors"] for p in posts_)
-    return {"target": s["target"], "writer": w.name, "live": w.live, "posts": posts_, "errors": errs, "new_pages": len(news),
-            "warnings": sum(chk.summarise(p["issues"])["warnings"] for p in posts_), "blocked": errs > 0 or not posts_,
-            "todos": sum(1 for x in d["changes"] if x.get("kind") == "todo"), "token": _token(edits, s, w, news)}
+    out = {"target": s["target"], "writer": w.name, "live": w.live, "posts": posts_, "errors": errs, "new_pages": len(news),
+           "warnings": sum(chk.summarise(p["issues"])["warnings"] for p in posts_), "blocked": errs > 0 or not posts_,
+           "todos": sum(1 for x in d["changes"] if x.get("kind") == "todo"), "token": _token(edits, s, w, news)}
+    if team_plan.get("joined"):
+        import team_reviews  # noqa: PLC0415
+        out["team"] = team_reviews.public(team_plan)
+    return out
 
 
 def _same(f, a, b):
@@ -538,6 +550,12 @@ def publish(body, link_check=None, w=None):
     news = d.get("new_posts", [])
     if not edits and not news:
         raise ValueError("Nothing to publish: the draft has no edits.")
+    edits, news, team_plan = _team_gate(edits, news, body)
+    import team_reviews  # noqa: PLC0415
+    why = team_reviews.require_why(body)
+    if not edits and not news:
+        raise ValueError("Nothing to publish: " + ("no edit has a current approval from your team."
+                                                   if team_plan.get("required") else "none of the edits is yours."))
     if body.get("token") != _token(edits, s, w, news):
         raise ValueError("The draft or target changed since the preview. Open Publish again.")
     by_post = {}
@@ -604,7 +622,16 @@ def publish(body, link_check=None, w=None):
     msg = f"{ok_n} of {len(results)} posts {'recorded (dry run, nothing sent)' if not w.live else 'published'} on {s['target']}" \
           + (f", {n_new} of them new" if new_done else "") + "."
     progress.finish(PKEY, ok, msg)
-    return {"ok": ok, "message": msg, "push_id": push_id, "results": results, "live": w.live, "target": s["target"]}
+    team_event = False
+    if ok_n and w.live and team_plan.get("joined"):  # [team reviews] the why note goes to the team feed (not a dry run)
+        team_event = team_reviews.report_push("seo", f"Published {ok_n} post{'s' if ok_n != 1 else ''} on {s['target']}", why,
+                                 {"posts": ok_n, "failed": len(results) - ok_n, "new_pages": n_new},
+                                 [("seo:changes", i) for i in done_ids] + [("seo:new_posts", x["id"]) for x, r in zip(news, new_done) if r["ok"]],
+                                 team_plan["scope"])
+    out = {"ok": ok, "message": msg, "push_id": push_id, "results": results, "live": w.live, "target": s["target"]}
+    if team_event:
+        out["team_event"] = True
+    return out
 
 
 def _publish_new(news, s, w, push_id):

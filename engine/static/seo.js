@@ -218,6 +218,7 @@ async function openPost(id, startPane){
   let d; try { d = await A("post", {id, ...rq()}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
   if (!T.cats){ try { T.cats = await A("categories") } catch(e) { T.cats = [] } }
   const p = d.post, dr = {}; d.draft.forEach(x => { if (x.kind !== "todo") dr[x.field] = x.new });
+  if (window.TeamReviews) TeamReviews.ownerNote([`seo/post/${id}`, "seo"]); // [team reviews] "Owned by ..."
   const val = k => dr[k] !== undefined ? dr[k] : (p[k] ?? "");
   const init = {}; ["title", "slug", "seo_title", "meta_desc", "focus_kw", "excerpt", "content"].forEach(k => init[k] = val(k)); init.categories = [...(dr.categories || p.categories || [])].map(Number).sort((a, b) => a - b);
   const catBoxes = (T.cats || []).map(c => `<label><input type="checkbox" value="${c.id}" ${init.categories.includes(c.id) ? "checked" : ""}>${esc(c.name)}</label>`).join("");
@@ -454,7 +455,8 @@ async function finalProgress(){ try { return progHTML(await api("/api/progress?k
 async function publishFlow(){
   wide(true);
   showDialog("Publish the SEO draft", `<p class="hint">Building the change set and checking links ...</p>`, []);
-  let pv; try { pv = await P("publish_preview") } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
+  const TR = window.TeamReviews; // [team reviews] approvals, only mine / all approved, why note
+  let pv; try { pv = await P("publish_preview", TR ? TR.extra() : {}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
   const prod = pv.target === "prod" && pv.live;
   const where = pv.live ? `<span class="seo-target ${prod ? "prod" : ""}">${prod ? "PROD: live WordPress" : "Staging WordPress"}</span>`
     : `<span class="seo-target dry">Dry run</span> Nothing is sent to WordPress: Studio records what it would send (${esc(pv.target)}). Connect WordPress in Settings to publish for real.`;
@@ -463,13 +465,15 @@ async function publishFlow(){
     ${issHTML(p.issues)}`).join("");
   showDialog("Publish the SEO draft", `<p>${where}</p>
     <p class="hint">${pv.posts.length} post${pv.posts.length === 1 ? "" : "s"}${pv.new_pages ? ` (${pv.new_pages} new)` : ""} · ${pv.errors} error${pv.errors === 1 ? "" : "s"} · ${pv.warnings} to check${pv.todos ? ` · ${pv.todos} suggestion${pv.todos === 1 ? "" : "s"} stay in the draft` : ""}. Per post: ${STEPS.join(", ")}.</p>
-    ${body || `<p class="hint">No edits to publish. Suggestions need text first.</p>`}${pv.errors ? `<p class="prob">Fix the errors before publishing.</p>` : ""}`,
+    ${body || `<p class="hint">No edits to publish. Suggestions need text first.</p>`}${pv.errors ? `<p class="prob">Fix the errors before publishing.</p>` : ""}${TR ? TR.section(pv.team) : ""}`,
     [["Cancel", () => dlg.close()], [pv.live ? (prod ? "Publish to prod" : "Publish to staging") : "Publish (dry run)", () => runPublish(pv), prod ? "live" : "primary"]]);
-  const btn = [...document.querySelectorAll("#dlgF button")].pop(); btn.disabled = pv.blocked;
+  const btn = [...document.querySelectorAll("#dlgF button")].pop();
+  const upd = () => { btn.disabled = pv.blocked || (TR && !TR.ready(pv.team)) }; upd();
+  if (TR) TR.wire($("#dlgB"), publishFlow, upd);
 }
 async function runPublish(pv){
   try {
-    const r = await seoProgress(pv.live ? "Publishing to WordPress " + pv.target : "Publishing (dry run)", "publish", {token: pv.token});
+    const r = await seoProgress(pv.live ? "Publishing to WordPress " + pv.target : "Publishing (dry run)", "publish", {token: pv.token, ...(window.TeamReviews ? TeamReviews.extra() : {})});
     const list = await finalProgress();
     const res = r.results.map(x => `<div class="seo-ch" style="grid-template-columns:1fr auto"><div>${esc(x.title)}${x.error ? `<span class="seo-iss error">${esc(x.error)}</span>` : `<span class="seo-steps"><br>${esc(x.steps.join(" · "))} · ${esc(x.inspection || "")}</span>`}</div>
       <div>${x.ok ? `${x.new && x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">Open the new page</a> · ` : ""}${x.request_indexing ? `<a href="${esc(x.request_indexing)}" target="_blank" rel="noopener">Request indexing in Search Console</a>` : ""}` : ""}</div></div>`).join("");

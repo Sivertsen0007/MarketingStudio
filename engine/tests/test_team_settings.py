@@ -393,7 +393,8 @@ when = cal.parse([x for x in em.adapter().list_campaigns() if x["id"] == "demo-3
 em.FROM_ADDRESS = ""
 em._fetch_status = lambda url, timeout=8: (200, "")
 em.add_draft({"campaign_id": "demo-4", "fields": {"list_id": "l1", "segment_id": None}})
-res = em.p_schedule({"id": "demo-4", "confirm": em.CONFIRM, "when": when.astimezone(em.LONDON).strftime("%Y-%m-%dT%H:%M")})
+res = em.p_schedule({"id": "demo-4", "confirm": em.CONFIRM, "when": when.astimezone(em.LONDON).strftime("%Y-%m-%dT%H:%M"),
+                     "why": "test"})  # in a team every send / schedule carries a why note (team reviews)
 marks = [r["id"] for r in draftstore.items("calendar", ROOT)]
 em.p_cancel({"id": "demo-4", "confirm": em.CONFIRM})
 out = {"ok": res.get("ok"), "msg": res.get("message"), "rules": sorted({x["rule"] for x in res.get("clashes") or []}), "marks": marks,

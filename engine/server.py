@@ -34,6 +34,7 @@ import progress
 import areas
 import setup_routes  # keys (Keychain), Sign in with Google, .env import
 import team  # team sync: join a team server, sync drafts (team.py)
+import team_reviews  # team approvals, push gating, why note, owners (team_reviews.py)
 import team_live  # team presence, claims, comments, mentions, activity (team_live.py)
 import updater  # [mac-app updater] in-app updates (GitHub Releases), see updater.py
 
@@ -311,6 +312,8 @@ class H(BaseHTTPRequestHandler):
             return self._run(team.conflicts)
         if u.path == "/api/team/changeset":
             return self._run(team.changeset_get)
+        if u.path.startswith("/api/team/reviews/"):  # [team reviews]
+            return self._run(lambda: team_reviews.get_route(u.path, q))
         if u.path == "/api/areas":
             return self._run(lambda: [{"name": n, "label": getattr(m, "LABEL", n)} for n, m in areas.AREAS.items()])
         if u.path == "/api/progress":
@@ -396,8 +399,9 @@ class H(BaseHTTPRequestHandler):
         def push():
             if not PUSH_LOCK.acquire(blocking=False):
                 raise ValueError("a push is already running")
-            try:
-                return core.push(acct, body.get("title"), body.get("why"))
+            try:  # [team reviews] gated like Push live when the team requires approval for Ads
+                return team_reviews.gated_push("ads", f"ads:{acct}", body, lambda only: core.push(
+                    acct, body.get("title"), body.get("why"), only), "Sent to Google Ads Editor", kind="send_to_editor")
             finally:
                 PUSH_LOCK.release()
 
@@ -405,12 +409,16 @@ class H(BaseHTTPRequestHandler):
             if not PUSH_LOCK.acquire(blocking=False):
                 raise ValueError("a push is already running")
             try:
-                return _after_live(acct, live.push(acct, bool(body.get("enable_new")), bool(body.get("accept_spend")), bool(body.get("accept_permanent"))))
+                # [team reviews] only approved items (when the team requires it) / only mine; why note; feed event
+                return _after_live(acct, team_reviews.gated_push("ads", f"ads:{acct}", body, lambda only: live.push(
+                    acct, bool(body.get("enable_new")), bool(body.get("accept_spend")), bool(body.get("accept_permanent")), only),
+                    "Pushed live to Google Ads"))
             finally:
                 PUSH_LOCK.release()
 
         routes = {
-            "/api/live/preview": lambda: live.preview(acct, bool(body.get("enable_new"))),
+            "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{acct}", body, lambda only: live.preview(
+                acct, bool(body.get("enable_new")), only=only)),
             "/api/live/push": live_push,
             "/api/live/undo": lambda: _after_live(acct, live.undo(acct, body["push_id"])),
             "/api/google/refresh": lambda: gapi.refresh(acct, body.get("days"), body.get("start"), body.get("end")),
@@ -425,6 +433,8 @@ class H(BaseHTTPRequestHandler):
         self._send(404, {"error": "not found"})
 
     def _team_post(self, body):
+        if self.path.startswith("/api/team/reviews/"):  # [team reviews]
+            return self._run(lambda: team_reviews.post_route(self.path, body))
         if self.path.startswith("/api/team/live/"):  # [team live]
             return self._run(lambda: team_live.post(self.path, body))
         def changeset():
@@ -490,7 +500,8 @@ class H(BaseHTTPRequestHandler):
             if not PUSH_LOCK.acquire(blocking=False):
                 raise ValueError("a push is already running")
             try:
-                return meta.push(False, bool(body.get("accept_spend")), bool(body.get("accept_permanent")))
+                return team_reviews.gated_push("ads", f"ads:{meta.acct()}", body, lambda only: meta.push(  # [team reviews]
+                    False, bool(body.get("accept_spend")), bool(body.get("accept_permanent")), only), "Pushed live to Meta")
             finally:
                 PUSH_LOCK.release()
 
@@ -498,7 +509,8 @@ class H(BaseHTTPRequestHandler):
             raise ValueError("Meta has no Editor: use Push live")
 
         routes = {
-            "/api/live/preview": lambda: meta.preview(),
+            "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{meta.acct()}", body,
+                                                                   lambda only: meta.preview(only=only)),
             "/api/live/push": live_push,
             "/api/live/undo": lambda: meta.undo(body["push_id"]),
             "/api/draft/add": lambda: meta.add(body["changes"], body.get("by", "you"), body.get("note")),

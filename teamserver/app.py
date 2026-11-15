@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import PROTOCOL, __version__
+from . import reviews
 from .store import ApiError, MANAGERS, Store, iso
 from . import teamsettings
 
@@ -621,6 +622,7 @@ ROUTES = [
     _r("DELETE", r"/api/v1/claims", Handler.r_claims_delete),
     _r("GET", r"/api/v1/stream", Handler.r_stream),
 ]
+ROUTES += [_r(m, p, fn) for m, p, fn in reviews.ROUTES]  # reviews, approval policy, owners (reviews.py)
 ROUTES += teamsettings.routes(_r)  # team settings (teamsettings.py)
 
 
@@ -692,6 +694,7 @@ class TeamServer:
         teamsettings.install(self.store)
         self.broker = Broker()
         self.store.on_emit = self.broker.publish
+        reviews.install(self.store)
         self.public_url = public_url
         self.ping_interval = ping_interval
         self.verbose = verbose

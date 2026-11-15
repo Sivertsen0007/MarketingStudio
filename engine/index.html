@@ -543,6 +543,8 @@ $("#tree").onclick = e => {
   if (tw){ const id = tw.dataset.tw; S.open.has(id) ? S.open.delete(id) : S.open.add(id); return renderTree() }
   const n = e.target.closest(".node"); if (!n) return;
   S.camp = n.dataset.c || null; S.ag = n.dataset.g || null;
+  if (S.camp && window.TeamReviews){ const aid = ((S.accts || []).find(a => a.key === S.acct) || {}).id || S.acct; // [team reviews] "Owned by ..."
+    TeamReviews.ownerNote([`ads:${aid}/campaign/${S.camp}`, `ads:${aid}`]) }
   if (S.camp && !S.ag) S.open.add(S.camp);
   if (isMeta()){
     if (S.ag && ["campaigns", "adsets"].includes(S.kind)) S.kind = "ads";
@@ -820,9 +822,11 @@ async function sendToEditor(){
   const msg = (st.editor_running ? "Google Ads Editor will close and reopen (about 15 seconds). Any half-typed edit in Editor is lost.\n\n" : "") +
     `Send ${st.draft.items.length} change(s) into Editor as pending changes? Nothing goes live until you Post in Editor.`;
   if (!confirm(msg)) return;
+  const TR = window.TeamReviews; // [team reviews] in a team: the why note, and only approved changes when required
+  if (TR && TR.joined && !(TR.extra().why || "").trim()){ const w = prompt("Why are you sending this? (one line, your team sees it)"); if (!w || !w.trim()) return; TR.setWhy(w) }
   showDialog("Sending to Google Ads Editor", `<div class="prog-h"><span class="spin"></span>Sending ...</div>`, []);
   try {
-    const r = await api("/api/push", {});
+    const r = await api("/api/push", TR ? TR.extra() : {});
     showDialog(r.ok ? "Sent to Google Ads Editor" : "Not sent", `<pre class="out">${esc(r.output)}</pre>${r.ok ? `<p class="hint">Review the changes in Editor (they carry the comment shown above), then Post.</p>` : ""}`, []);
   } catch(err) { toast(err.message) }
   poll(true);
@@ -861,7 +865,8 @@ async function livePreview(){
   }
   showDialog("Push to " + where, `<div class="empty">Asking ${who} to check the ${S.draftItems.length} change${S.draftItems.length > 1 ? "s" : ""} in the draft ...</div>`, [histLink()]);
   let p;
-  try { p = await api("/api/live/preview", {enable_new:LIVE.enable_new}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
+  const TR = window.TeamReviews; // [team reviews] approvals, only mine / all approved, why note
+  try { p = await api("/api/live/preview", {enable_new:LIVE.enable_new, ...(TR ? TR.extra() : {})}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
   const byId = Object.fromEntries((S.draftItems || []).map(i => [i.id, i]));
   const counts = pushCounts(p.items.map(i => byId[i.id] || {}));
   const bad = p.items.filter(i => i.problems.length), nSpend = p.items.filter(i => i.spend.length).length, nPerm = p.items.filter(i => i.permanent.length).length;
@@ -875,11 +880,12 @@ async function livePreview(){
     ${isMeta() ? "" : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
     ${p.spend ? `<label class="tick"><input type="checkbox" id="lv_spend"> <span>${nSpend} change${nSpend > 1 ? "s" : ""} can raise spend. I know.</span></label>` : ""}
     ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (removals). I know.</span></label>` : ""}
-    <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary>${details}</details>`;
+    <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary>${details}</details>${TR ? TR.section(p.team) : ""}`;
   showDialog("Push to " + where, body, [histLink(), ...(isMeta() ? [] : [["Send to Editor instead", sendToEditor]]), ["Push live", livePush, "live"]]);
   const btn = $("#dlgF .live");
-  const upd = () => { btn.disabled = !p.ok || (p.spend && !$("#lv_spend").checked) || (p.permanent && !$("#lv_perm").checked) };
+  const upd = () => { btn.disabled = !p.ok || (p.spend && !$("#lv_spend").checked) || (p.permanent && !$("#lv_perm").checked) || (TR && !TR.ready(p.team)) };
   ["#lv_spend", "#lv_perm"].forEach(id => $(id) && ($(id).onchange = upd)); upd();
+  if (TR) TR.wire($("#dlgB"), livePreview, upd);
   if ($("#lv_new")) $("#lv_new").onchange = e => { LIVE.enable_new = e.target.checked; livePreview() };
 }
 // ---- progress list while a push or undo runs (like Editor's Post window) ----
@@ -909,7 +915,8 @@ async function withProgress(title, path, body, progUrl){
 async function lastProgress(progUrl){ try { return progressHTML(await api(progUrl || "/api/live/progress?" + qs({acct:S.acct})), "") } catch(e) { return "" } }
 async function livePush(){
   const btn = $("#dlgF .live"); btn.disabled = true; btn.textContent = "Pushing ...";
-  const body = {enable_new:LIVE.enable_new, accept_spend:!!($("#lv_spend") && $("#lv_spend").checked), accept_permanent:!!($("#lv_perm") && $("#lv_perm").checked)};
+  const body = {enable_new:LIVE.enable_new, accept_spend:!!($("#lv_spend") && $("#lv_spend").checked), accept_permanent:!!($("#lv_perm") && $("#lv_perm").checked),
+                ...(window.TeamReviews ? TeamReviews.extra() : {})};
   try {
     const r = await withProgress("Pushing live to " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/push", body);
     const list = await lastProgress();
@@ -1952,6 +1959,7 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
 <script>window.addEventListener("unhandledrejection", e => { const m = e.reason && e.reason.message; if (m && typeof toast === "function"){ toast(m); e.preventDefault() } });</script>
 <script src="/static/setup.js"></script>
 <script src="/static/team.js"></script>
+<script src="/static/team_reviews.js"></script>
 <script src="/static/team_marks.js"></script><!-- [team live] tints, locks, claims, comments, presence, mentions -->
 <script src="/static/team_tab.js"></script><!-- [team live] the Team tab -->
 </body>

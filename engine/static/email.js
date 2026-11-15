@@ -217,6 +217,7 @@ async function openEditor(id){
     const [c, aud] = await Promise.all([api(A("campaign", {id})), E.aud ? Promise.resolve(E.aud) : api(A("audiences"))]);
     E.cur = c; E.aud = aud;
   } catch(e) { toast(e.message); return renderList() }
+  if (window.TeamReviews) TeamReviews.ownerNote([`email/${id}`, "email"]); // [team reviews] "Owned by ..."
   drawEditor();
 }
 function drawEditor(){
@@ -456,7 +457,7 @@ async function beforeAction(){ if (E.autoT) await autoSave(); if (isDirty()) ret
 async function runAction(title, key, extra){
   const id = E.cur.original.id;
   try {
-    const r = await withProgress(title, A(key), {id, confirm:USER, ...(extra || {})}, PROG);
+    const r = await withProgress(title, A(key), {id, confirm:USER, ...(extra || {}), ...(key !== "test_send" && window.TeamReviews ? TeamReviews.extra() : {})}, PROG);
     const list = await lastProgress(PROG);
     showDialog(r.ok ? title + ": done" : title + ": stopped", `${list}<p>${esc(r.message || "")}</p>${r.problems && r.problems.length ? probsHTML(r.problems) : ""}`, [["Close", () => dlg.close(), "primary"]]);
     if (r.problems && $("#emChecks")) $("#emChecks").innerHTML = probsHTML(r.problems);
@@ -479,12 +480,21 @@ function defaultWhen(){
   const p = londonParts(new Date(Date.now() + 86400000));
   return `${p.Y}-${pad(p.M)}-${pad(p.D)}T09:00`;
 }
+// [team reviews] in a team: what needs approval, and the one-line why, in the Schedule / Send now dialogs
+const teamGate = async () => window.TeamReviews ? TeamReviews.gate("email", "email", String(E.cur.original.id)) : null;
+function teamWire(t, extraOk){
+  if (!window.TeamReviews) return;
+  const b = $("#dlgF .live") || [...document.querySelectorAll("#dlgF button")].pop();
+  const upd = () => { b.disabled = !TeamReviews.ready(t) || (t && t.required && !t.count) || (extraOk && !extraOk()) };
+  TeamReviews.wire($("#dlgB"), null, upd); upd(); return upd;
+}
 async function scheduleDialog(){
   if (!(await beforeAction())) return;
+  const t = await teamGate();
   showDialog("Schedule", `<p>Sends to <b>${esc(audLabel())}</b> at the time you pick.</p>
     <div class="row"><label>Date and time (London)</label><input id="emWhen" type="datetime-local" value="${defaultWhen()}"></div>
     <div class="em-when" id="emWhenLocal"></div>
-    <p class="hint">Checks run first. You can cancel the schedule until it starts sending.${E.state.demo ? " Demo data: nothing will really go out." : ""}</p>`,
+    <p class="hint">Checks run first. You can cancel the schedule until it starts sending.${E.state.demo ? " Demo data: nothing will really go out." : ""}</p>${window.TeamReviews ? TeamReviews.section(t) : ""}`,
     [["Schedule", () => {
       const v = $("#emWhen").value, d = londonToDate(v);
       if (!d || d.getTime() < Date.now() + 120000) return toast("Pick a time at least a few minutes from now");
@@ -492,14 +502,18 @@ async function scheduleDialog(){
     }, "primary"]]);
   const upd = () => { const d = londonToDate($("#emWhen").value); $("#emWhenLocal").textContent = d ? `London: ${fmtDate(d.toISOString(), true)} · Your time: ${fmtLocal(d)}` : "" };
   $("#emWhen").oninput = upd; upd();
+  teamWire(t);
 }
 async function sendNowDialog(){
   if (!(await beforeAction())) return;
+  const t = await teamGate();
   showDialog("Send now", `<p>This sends the email to <b>${esc(audLabel())}</b> now.</p>
     <p><b>A sent email can't be unsent.</b> Checks run first; if any fail, nothing goes out.${E.state.demo ? " Demo data: nothing is really sent." : ""}</p>
-    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="emSure"> I understand it can't be unsent</label>`,
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="emSure"> I understand it can't be unsent</label>${window.TeamReviews ? TeamReviews.section(t) : ""}`,
     [["Send now", () => runAction("Send now", "send_now"), "live"]]);
-  const btn = $("#dlgF .live"); btn.disabled = true; $("#emSure").onchange = e => { btn.disabled = !e.target.checked };
+  const btn = $("#dlgF .live"); btn.disabled = true;
+  const upd = teamWire(t, () => $("#emSure").checked);
+  $("#emSure").onchange = e => { if (upd) upd(); else btn.disabled = !e.target.checked };
 }
 function cancelDialog(){
   showDialog("Cancel the schedule", `<p>The campaign goes back to draft and will not go out at ${esc(fmtDate(E.cur.original.scheduled_for, true))} (London).</p>`,

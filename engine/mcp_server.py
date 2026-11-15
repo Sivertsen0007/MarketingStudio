@@ -59,8 +59,11 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {"account": ACCT}}},
     {"name": "send_draft_to_editor",
      "description": "Write the whole draft into Google Ads Editor as pending changes (closes and reopens Editor, ~15s). Only call "
-                    "this when the user has explicitly said to send it in this conversation. Nothing goes live until they Post in Editor.",
+                    "this when the user has explicitly said to send it in this conversation. Nothing goes live until they Post in Editor. "
+                    "In a team: needs the user's one-line why, and when the team requires approval for Ads only approved "
+                    "changes are sent.",
      "inputSchema": {"type": "object", "properties": {"account": ACCT, "title": {"type": "string"},
+                                                      "why": {"type": "string", "description": "the user's one-line why (team)"},
                                                       "user_confirmed": {"type": "boolean", "description": "must be true"}},
                      "required": ["user_confirmed"]}},
     {"name": "preview_live_push",
@@ -204,6 +207,17 @@ TEAM_TOOLS = [
                                          "(field-level merge; clashing edits become conflicts the user resolves in Studio). Draft level only: "
                                          "nothing goes live anywhere.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "reviews_list", "description": "Team reviews (approvals): ones waiting for the user (to_me), the user's own requests "
+                                            "(mine) or all, with status (open, approved, changes requested, withdrawn) and which "
+                                            "items went stale (changed after approval). Read-only.",
+     "inputSchema": {"type": "object", "properties": {"filter": {"type": "string", "enum": ["to_me", "mine", "all"]}}}},
+    {"name": "review_request", "description": "Send the user's own changeset (the active one, or changeset_id) for approval to "
+                                              "named reviewers (member ids or names; approvers, admins or owners). Syncs first. "
+                                              "Only when the user asks. You can't approve or decide reviews: reviewers do that "
+                                              "in Studio.",
+     "inputSchema": {"type": "object", "properties": {
+         "reviewers": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "member ids or names"},
+         "note": {"type": "string"}, "changeset_id": {"type": "string"}}, "required": ["reviewers"]}},
 ]
 SHARED_TOOLS = [
     {"name": "team_settings_get", "description": "The settings that apply in Studio now: copy rules (per area, block or warn), SEO "
@@ -280,6 +294,21 @@ def call_team(name):
     r = team.sync()
     r.get("status", {}).pop("members", None)
     return r
+
+
+def call_reviews(name, a):
+    """Reviews for Claude: list, and ask for a review of the user's own changeset. No tool decides a review."""
+    import team_reviews  # noqa: PLC0415
+    if name == "reviews_list":
+        return team_reviews.list_reviews({"filter": a.get("filter") or "to_me"})
+    people = team_reviews.reviewers()["reviewers"]
+    ids = []
+    for r in a.get("reviewers") or []:
+        hit = [p for p in people if p["id"] == r or (isinstance(r, str) and str(p["name"]).lower() == r.strip().lower())]
+        if not hit:
+            raise ValueError(f"{r} is not someone who can approve. Can approve: " + ", ".join(p["name"] for p in people))
+        ids.append(hit[0]["id"])
+    return team_reviews.request({"changeset": a.get("changeset_id") or True, "reviewers": ids, "note": a.get("note") or ""})
 
 
 def _scope(acct, campaign, ad_group, tree=None):
@@ -376,6 +405,8 @@ def call(name, a):
         return call_area(name, a)
     if name in ("team_status", "team_sync"):
         return call_team(name)
+    if name in ("reviews_list", "review_request"):
+        return call_reviews(name, a)
     if name in TEAM_LIVE_NAMES:
         return call_team_live(name, a)
     if name in ("team_settings_get", "calendar_list", "library_list"):
@@ -414,7 +445,9 @@ def call(name, a):
     if name == "send_draft_to_editor":
         if a.get("user_confirmed") is not True:
             raise ValueError("Ask the user first; call again with user_confirmed=true once they have said to send it.")
-        return core.push(acct, a.get("title"))
+        import team_reviews  # noqa: PLC0415 - gated like the Send to Editor button when the team requires approval
+        return team_reviews.gated_push("ads", f"ads:{acct}", {"why": a.get("why")}, lambda only: core.push(
+            acct, a.get("title"), a.get("why"), only), "Sent to Google Ads Editor", kind="send_to_editor")
     if name == "preview_live_push":
         import live
         return live.preview(acct, bool(a.get("enable_new")))

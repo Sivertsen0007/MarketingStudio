@@ -814,18 +814,26 @@ def plan(acct, enable_new=False, items=None, source=None):
             "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item)}
 
 
-def push(acct, enable_new=False, accept_spend=False, accept_permanent=False):
-    progress.start(acct, "push", [(i["id"], i["summary"], 1) for i in core.draft(acct)["items"]], "checking", "Google is checking the changes")
+def _only(acct, only):
+    """The draft items in this push: all of them, or (team approvals / push by person) only the ids in `only`."""
+    items = core.draft(acct)["items"]
+    if only is None:
+        return items
+    return [i for i in items if (only.admits(i) if hasattr(only, "admits") else i["id"] in only)]
+
+
+def push(acct, enable_new=False, accept_spend=False, accept_permanent=False, only=None):
+    progress.start(acct, "push", [(i["id"], i["summary"], 1) for i in _only(acct, only)], "checking", "Google is checking the changes")
     res = None
     try:
-        res = _push(acct, enable_new, accept_spend, accept_permanent)
+        res = _push(acct, enable_new, accept_spend, accept_permanent, only)
         return res
     finally:
         progress.finish(acct, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
 
 
-def _push(acct, enable_new=False, accept_spend=False, accept_permanent=False):
-    p = plan(acct, enable_new)
+def _push(acct, enable_new=False, accept_spend=False, accept_permanent=False, only=None):
+    p = plan(acct, enable_new, None if only is None else _only(acct, only))
     progress.totals(acct, {e["id"]: len(e["lines"]) for e in p["items"]})
     for e in p["items"]:
         progress.checked(acct, e["id"], len(e["lines"])) if not e["problems"] else progress.mark(acct, e["id"], "failed")
@@ -862,7 +870,9 @@ def _public(p):
     return {k: v for k, v in p.items() if k != "ops"}
 
 
-def preview(acct, enable_new=False, items=None, source=None):
+def preview(acct, enable_new=False, items=None, source=None, only=None):
+    if only is not None and items is None:
+        items = _only(acct, only)
     return _public(plan(acct, enable_new, items, source))
 
 

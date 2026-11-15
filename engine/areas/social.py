@@ -525,6 +525,21 @@ def retry_lookup(p, chs):
     return found, unsure
 
 
+def _team(body, what, fn):
+    """[team reviews] In a team: an approval when the team requires one for SoMe, a why note, a feed event."""
+    import team_reviews  # noqa: PLC0415
+    return team_reviews.single_action("social", "social", str(body["id"]), body, what, fn)
+
+
+def _team_recheck(body, p):
+    """[team reviews] Still the approved post, now that it is read under the lock?"""
+    if not body.get("_team_expect"):
+        return None
+    import team_reviews  # noqa: PLC0415
+    why = team_reviews.recheck(body, "social", str(p["id"]), p)
+    return {"ok": False, "needs_team_approval": True, "message": why, "post": _view(p)} if why else None
+
+
 def post_now(body):
     """Publish now on the post's ticked channels (minus ones already published). User's button only."""
     _pressed(body)
@@ -532,6 +547,9 @@ def post_now(body):
     def go():
         p = store.get(body["id"])
         _block_checking(p, body.get("channels") or p["channels"])
+        stale = _team_recheck(body, p)
+        if stale:
+            return stale
         chs = [c for c in (body.get("channels") or p["channels"]) if c in p["channels"]
                and ((p.get("results") or {}).get(c) or {}).get("status") not in ("published", "scheduled", "publishing")]
         if not chs:
@@ -569,7 +587,7 @@ def post_now(body):
         p = _save_results(p["id"], res, lambda x: x.__setitem__("when", x.get("when") or stamp))  # shows on the calendar when it went out
         res = {**found, **res}
         return {"ok": ok, "message": _message(res, "Published"), "results": res, "post": _view(p), "test_mode": bool(test_mode())}
-    return _guard(go)
+    return _team(body, "Posted", lambda: _guard(go))
 
 
 def schedule(body):
@@ -580,6 +598,9 @@ def schedule(body):
     def go():
         p = store.get(body["id"])
         _block_checking(p, body.get("channels") or p["channels"])
+        stale = _team_recheck(body, p)
+        if stale:
+            return stale
         when = store.parse_when(p.get("when"))
         s = store.settings()
         chs = [c for c in (body.get("channels") or p["channels"]) if c in p["channels"]
@@ -626,7 +647,7 @@ def schedule(body):
             _finish(ok, _message(res, "Scheduled") if res else "Stopped with an error")
         p = _save_results(p["id"], res)
         return {"ok": ok, "message": _message(res, "Scheduled"), "results": res, "post": _view(p), "test_mode": bool(test_mode()), "clashes": clash}
-    return _guard(go)
+    return _team(body, "Scheduled a post", lambda: _guard(go))
 
 
 def _clashes(p, chs):
@@ -744,8 +765,14 @@ def fmt_when(v):
 def _move_queued(p, ch, r, when):
     """Move one channel queued for Studio's scheduler on this Mac, as a transaction: build the new item first, then swap
     it in for the old one under the queue lock. If any step fails, the old schedule stays as it was. -> the new result.
-    (Posts queued on the VPS are never moved: cancel and schedule again.)"""
-    payload = pub.build_job(p, ch, media_lookup, tracker(p))  # fails -> nothing has changed
+    (Posts queued on the VPS are never moved: cancel and schedule again.)
+    Only the time changes: the queued payload is what was checked (and, in a team, approved) when it was scheduled, so
+    it is kept as it is and never rebuilt from the post, which may have taken in other changes since."""
+    old = next((x for x in store.queue() if x.get("id") == r.get("queue_id")), None)
+    if not old or old.get("status") != "scheduled" or not old.get("payload"):
+        raise RuntimeError("too late to move: it is being posted now" if (old or {}).get("status") == "publishing"
+                           else "nothing left to move: it has already gone out or finished")
+    payload = old["payload"]
     new = store.queue_new({"post_id": p["id"], "channel": ch, "due": store.iso(when), "payload": payload, "runner": "local",
                            "max_late": grace()})
     it, st = store.queue_replace(r.get("queue_id", ""), new)

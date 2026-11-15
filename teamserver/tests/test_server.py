@@ -85,8 +85,7 @@ class Base(unittest.TestCase):
         return out
 
     def invite(self, email, role, name=None):
-        token, _ = self.srv.store.create_invite(email, role, name)
-        return token
+        return self.srv.store.create_invite(email, role, name)["token"]
 
     def join_new(self, email, role, name=None):
         out = self.ok("POST", "/api/v1/join", {"invite": self.invite(email, role, name), "device_name": "Mac"})
@@ -513,9 +512,13 @@ class TestReview(Base):
         self.assertEqual(status, 200)
         status, out = self.redeem(link)
         self.assertEqual((out["member"]["id"], out["member"]["role"]), (admin["member"]["id"], "admin"))
-        # an owner may add a device for someone; the invite role is ignored for existing members
-        status, link = self.api_invite(self.owner, "ed@example.com", "viewer")
-        self.assertEqual(status, 200)
+        self.assertEqual((link["role"], link["device"]), ("admin", True))  # echoes the member's real role
+        # nobody else, owners included, may mint a device invite for a member
+        status, _ = self.api_invite(self.owner, "ed@example.com", "viewer")
+        self.assertEqual(status, 403)
+        # an editor may add their own device; the role stays theirs
+        status, link = self.api_invite(ed, "ed@example.com", "viewer")
+        self.assertEqual((status, link["role"]), (200, "editor"))
         status, out = self.redeem(link)
         self.assertEqual((out["member"]["id"], out["member"]["role"]), (ed["member"]["id"], "editor"))
 
@@ -546,7 +549,7 @@ class TestReview(Base):
         port = self.port
         self.port = srv.port
         try:
-            tok, _ = srv.store.create_invite("a@example.com", "owner")
+            tok = srv.store.create_invite("a@example.com", "owner")["token"]
             a = self.ok("POST", "/api/v1/join", {"invite": tok})
             q = self.open_stream(a["device_token"])
             with srv.store.lock:
@@ -624,6 +627,13 @@ class TestReview(Base):
                                                                        "base_version": base, "data": {}}]}, t)
             self.assertEqual(status, 400, (base, out))
 
+    def test_owner_cannot_impersonate_co_owner(self):
+        co = self.join_new("co@example.com", "owner", "Co")
+        status, _ = self.api_invite(self.owner, "co@example.com", "owner")
+        self.assertEqual(status, 403)
+        status, _ = self.api_invite(co, "owner@example.com", "owner")
+        self.assertEqual(status, 403)
+
     def test_reactivation_does_not_restore_tokens(self):
         ed = self.join_new("ed@example.com", "editor", "Ed")
         mid = ed["member"]["id"]
@@ -631,9 +641,10 @@ class TestReview(Base):
         self.ok("PATCH", "/api/v1/members/%d" % mid, {"active": True}, self.owner["token"])
         status, _ = self.call("GET", "/api/v1/me", token=ed["token"])
         self.assertEqual(status, 401)
-        status, link = self.api_invite(self.owner, "ed@example.com")
-        status, out = self.redeem(link)
-        self.assertEqual((status, out["member"]["id"]), (200, mid))
+        status, _ = self.api_invite(self.owner, "ed@example.com")
+        self.assertEqual(status, 403)  # only Ed (or the host CLI) can add Ed's device
+        status, out = self.call("POST", "/api/v1/join", {"invite": self.invite("ed@example.com", "viewer")})
+        self.assertEqual((status, out["member"]["id"], out["member"]["role"]), (200, mid, "editor"))
 
     def test_join_rate_limit_ignores_forwarded_for_unless_trusted(self):
         for i in range(10):
@@ -645,6 +656,173 @@ class TestReview(Base):
             status, _ = self.call_on(srv, "POST", "/api/v1/join", {"invite": "bad"},
                                      headers={"X-Forwarded-For": "1.1.1.1, 10.0.0.%d" % i})
             self.assertEqual(status, 401)
+
+
+class TestReview2(Base):
+    """Regression tests for the second review."""
+
+    def api_invite(self, who, email, role="editor"):
+        return self.call("POST", "/api/v1/invites", {"email": email, "role": role}, who["token"])
+
+    def code(self, link):
+        return link["web"].split("#", 1)[1]
+
+    def raw(self, srv_port, data, shut_write=False, timeout=5):
+        """Send raw bytes, return everything the server sends back until it closes."""
+        sk = socket.create_connection(("127.0.0.1", srv_port))
+        self.addCleanup(sk.close)
+        sk.settimeout(timeout)
+        sk.sendall(data)
+        if shut_write:
+            sk.shutdown(socket.SHUT_WR)
+        out = b""
+        while True:
+            try:
+                chunk = sk.recv(65536)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            out += chunk
+        return out
+
+    # M2
+    def test_invite_dies_when_inviter_demoted_or_deactivated(self):
+        admin = self.join_new("admin@example.com", "admin", "Ada")
+        _, a = self.api_invite(admin, "a@example.com")
+        _, b = self.api_invite(admin, "b@example.com")
+        # join-time recheck (even if the invite row survived)
+        with self.srv.store.lock:
+            self.srv.store.db.execute("UPDATE members SET role='editor' WHERE id=?", (admin["member"]["id"],))
+        status, out = self.call("POST", "/api/v1/join", {"invite": self.code(a)})
+        self.assertEqual(status, 403, out)
+        with self.srv.store.lock:
+            self.srv.store.db.execute("UPDATE members SET role='admin' WHERE id=?", (admin["member"]["id"],))
+        # demotion through the API voids pending invites
+        self.ok("PATCH", "/api/v1/members/%d" % admin["member"]["id"], {"role": "editor"}, self.owner["token"])
+        status, out = self.call("POST", "/api/v1/join", {"invite": self.code(b)})
+        self.assertEqual(status, 401, out)
+        # deactivation too
+        admin2 = self.join_new("admin2@example.com", "admin", "Ad2")
+        _, c = self.api_invite(admin2, "c@example.com")
+        self.ok("PATCH", "/api/v1/members/%d" % admin2["member"]["id"], {"active": False}, self.owner["token"])
+        status, _ = self.call("POST", "/api/v1/join", {"invite": self.code(c)})
+        self.assertEqual(status, 401)
+
+    def test_owner_invite_dies_when_owner_demoted(self):
+        co = self.join_new("co@example.com", "owner", "Co")
+        _, o = self.api_invite(co, "next@example.com", "owner")
+        _, e = self.api_invite(co, "ed@example.com", "editor")
+        self.ok("PATCH", "/api/v1/members/%d" % co["member"]["id"], {"role": "admin"}, self.owner["token"])
+        status, _ = self.call("POST", "/api/v1/join", {"invite": self.code(o)})
+        self.assertEqual(status, 401)
+        self.assertEqual(self.call("POST", "/api/v1/join", {"invite": self.code(e)})[0], 200)  # admin may grant
+
+    def test_delete_invite(self):
+        admin = self.join_new("admin@example.com", "admin", "Ada")
+        ed = self.join_new("ed@example.com", "editor", "Ed")
+        _, mine = self.api_invite(admin, "x@example.com")
+        _, owners = self.api_invite(self.owner, "boss@example.com", "owner")
+        _, other = self.api_invite(self.owner, "y@example.com")
+        listed = {i["id"] for i in self.ok("GET", "/api/v1/members", token=admin["token"])["invites"]}
+        self.assertTrue({mine["id"], owners["id"], other["id"]} <= listed)
+        self.assertEqual(self.call("DELETE", "/api/v1/invites/%d" % mine["id"], token=ed["token"])[0], 403)
+        self.assertEqual(self.call("DELETE", "/api/v1/invites/%d" % owners["id"], token=admin["token"])[0], 403)
+        self.ok("DELETE", "/api/v1/invites/%d" % mine["id"], token=admin["token"])
+        self.ok("DELETE", "/api/v1/invites/%d" % other["id"], token=admin["token"])
+        self.assertEqual(self.call("POST", "/api/v1/join", {"invite": self.code(mine)})[0], 401)
+        self.assertEqual(self.call("DELETE", "/api/v1/invites/%d" % mine["id"], token=admin["token"])[0], 404)
+        _, own_dev = self.api_invite(ed, "ed@example.com")  # an editor withdraws their own device invite
+        self.ok("DELETE", "/api/v1/invites/%d" % own_dev["id"], token=ed["token"])
+        _, used = self.api_invite(self.owner, "z@example.com")
+        self.call("POST", "/api/v1/join", {"invite": self.code(used)})
+        self.assertEqual(self.call("DELETE", "/api/v1/invites/%d" % used["id"], token=self.owner["token"])[0], 409)
+        self.ok("DELETE", "/api/v1/invites/%d" % owners["id"], token=self.owner["token"])
+
+    def test_update_member_uses_current_role(self):
+        ed = self.join_new("ed@example.com", "editor", "Ed")
+        v = self.join_new("v@example.com", "viewer", "Vee")
+        stale = dict(ed["member"], role="admin")  # what a request might have seen a moment earlier
+        with self.assertRaises(store_mod.ApiError) as cm:
+            self.srv.store.update_member(stale, v["member"]["id"], {"role": "editor"})
+        self.assertEqual(cm.exception.status, 403)
+
+    # M3
+    def test_total_request_deadline(self):
+        srv = self.extra_server(request_deadline=1.0, request_timeout=5.0)
+        sk = socket.create_connection(("127.0.0.1", srv.port))
+        self.addCleanup(sk.close)
+        sk.sendall(b"GET /api/v1/health HTTP/1.1\r\n")
+        start = time.time()
+        closed = False
+        while time.time() - start < 4:
+            try:
+                sk.sendall(b"X-Slow: 1\r\n")  # one header every 0.2 s: never idle long enough for the timeout
+            except OSError:
+                closed = True
+                break
+            time.sleep(0.2)
+            sk.settimeout(0.01)
+            try:
+                if sk.recv(1) == b"":
+                    closed = True
+                    break
+            except socket.timeout:
+                pass
+            except OSError:
+                closed = True
+                break
+        self.assertTrue(closed)
+        self.assertLess(time.time() - start, 3)
+
+    def test_per_ip_connection_cap(self):
+        srv = self.extra_server(max_connections_per_ip=2)
+        idle = [socket.create_connection(("127.0.0.1", srv.port)) for _ in range(2)]
+        for sk in idle:
+            self.addCleanup(sk.close)
+        time.sleep(0.2)
+        self.assertEqual(self.call_on(srv, "GET", "/api/v1/health")[0], 429)
+        for sk in idle:
+            sk.close()
+        time.sleep(0.3)
+        self.assertEqual(self.call_on(srv, "GET", "/api/v1/health")[0], 200)
+
+    def test_per_forwarded_ip_cap_behind_proxy(self):
+        srv = self.extra_server(trust_proxy=True, max_connections_per_ip=1, ping_interval=0.3)
+        tok = srv.store.create_invite("a@example.com", "owner")["token"]
+        a = self.call_on(srv, "POST", "/api/v1/join", {"invite": tok})[1]
+        sk = socket.create_connection(("127.0.0.1", srv.port))
+        self.addCleanup(sk.close)
+        sk.sendall(("GET /api/v1/stream?token=%s HTTP/1.1\r\nHost: x\r\nX-Forwarded-For: 9.9.9.9\r\n\r\n"
+                    % a["device_token"]).encode())
+        sk.settimeout(3)
+        self.assertIn(b"200", sk.recv(100))
+        status, _ = self.call_on(srv, "GET", "/api/v1/health", headers={"X-Forwarded-For": "9.9.9.9"})
+        self.assertEqual(status, 429)
+        status, _ = self.call_on(srv, "GET", "/api/v1/health", headers={"X-Forwarded-For": "8.8.8.8"})
+        self.assertEqual(status, 200)
+
+    # LOWs
+    def test_lone_surrogates_are_400(self):
+        t = self.owner["token"]
+        for raw in (b'{"ops":[{"op":"put","coll":"\\ud800","id":"a","base_version":0,"data":{}}]}',
+                    b'{"ops":[{"op":"put","coll":"e","id":"a","base_version":0,"data":{"k":"\\udfff"}}]}'):
+            status, out = self.call("POST", "/api/v1/items", raw=raw, token=t)
+            self.assertEqual(status, 400, (raw, out))
+        status, out = self.call("POST", "/api/v1/comments", raw=b'{"coll":"e","id":"\\ud83d","body":"x"}', token=t)
+        self.assertEqual(status, 400, out)
+
+    def test_short_body_is_408(self):
+        req = ("POST /api/v1/items HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n"
+               "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"ops\":" % self.owner["token"])
+        out = self.raw(self.port, req.encode(), shut_write=True)
+        self.assertTrue(out.startswith(b"HTTP/1.1 408"), out[:80])
+
+    def test_get_with_body_closes_connection(self):
+        req = (b"GET /api/v1/health HTTP/1.1\r\nHost: x\r\nContent-Length: 40\r\n\r\n"
+               b"GET /api/v1/health HTTP/1.1\r\nHost: x\r\n\r\n")  # a smuggled second request
+        out = self.raw(self.port, req)
+        self.assertEqual(out.count(b"HTTP/1.1 200"), 1, out)
 
 
 if __name__ == "__main__":

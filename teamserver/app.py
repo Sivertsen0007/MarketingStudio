@@ -6,6 +6,7 @@ import json
 import os
 import queue
 import re
+import socket
 import sys
 import threading
 import time
@@ -23,6 +24,8 @@ MAX_CONNECTIONS = 200        # concurrent connections (one thread each)
 MAX_STREAMS_PER_DEVICE = 5
 REQUEST_TIMEOUT = 15.0       # seconds a socket may sit idle or trickle a request
 DEVICE_CHECK_INTERVAL = 2.0  # how often an open stream rechecks its token
+REQUEST_DEADLINE = 20.0      # total seconds for request line + headers + body
+MAX_CONNECTIONS_PER_IP = 20
 
 
 class RateLimiter:
@@ -45,6 +48,63 @@ class RateLimiter:
                 self.hits = {k: v for k, v in self.hits.items() if now - v[0] < self.window}
         if n > self.limit:
             raise ApiError(429, "too many requests, slow down")
+
+
+class IpSlots:
+    """Counts open connections (or requests) per client IP and refuses more than `limit`."""
+
+    def __init__(self, limit):
+        self.limit = limit
+        self.lock = threading.Lock()
+        self.open = {}
+
+    def acquire(self, ip):
+        with self.lock:
+            n = self.open.get(ip, 0)
+            if n >= self.limit:
+                return False
+            self.open[ip] = n + 1
+            return True
+
+    def release(self, ip):
+        with self.lock:
+            n = self.open.get(ip, 0) - 1
+            if n > 0:
+                self.open[ip] = n
+            else:
+                self.open.pop(ip, None)
+
+
+class Deadlines:
+    """Watchdog for slow clients: a socket still sending its request after its deadline is shut down.
+
+    The per-read socket timeout alone lets a client trickle one byte every few seconds forever; this caps the
+    whole request (line, headers and body). Streams disarm it once their headers are read.
+    """
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.armed = {}  # id(handler) -> (deadline, socket)
+
+    def arm(self, handler, seconds):
+        with self.lock:
+            self.armed[id(handler)] = (time.monotonic() + seconds, handler.connection)
+
+    def disarm(self, handler):
+        with self.lock:
+            self.armed.pop(id(handler), None)
+
+    def sweep(self):
+        now = time.monotonic()
+        with self.lock:
+            late = [k for k, (d, _) in self.armed.items() if d <= now]
+            socks = [self.armed.pop(k)[1] for k in late]
+        for sock in socks:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        return len(socks)
 
 
 class Broker:
@@ -137,6 +197,20 @@ class Handler(BaseHTTPRequestHandler):
         self.timeout = self.server.team.request_timeout  # socket timeout: stops slow or idle clients
         super().setup()
 
+    def handle_one_request(self):
+        """Each request (also the next one on a kept-alive connection) must arrive whole within the deadline."""
+        self.team.deadlines.arm(self, self.team.request_deadline)
+        self._ip_slot = None
+        try:
+            super().handle_one_request()
+        except (socket.timeout, OSError):
+            self.close_connection = True
+        finally:
+            self.team.deadlines.disarm(self)
+            if self._ip_slot is not None:
+                self.team.request_ips.release(self._ip_slot)
+                self._ip_slot = None
+
     # ---------- helpers ----------
 
     @property
@@ -177,7 +251,14 @@ class Handler(BaseHTTPRequestHandler):
         if n < 0 or n > MAX_BODY_BYTES:
             self.close_connection = True
             raise ApiError(413, "request body too large (max %d bytes)" % MAX_BODY_BYTES)
-        raw = self.rfile.read(n) if n else b""
+        try:
+            raw = self.rfile.read(n) if n else b""
+        except (socket.timeout, OSError):
+            raw = None
+        if raw is None or len(raw) < n:
+            self.close_connection = True
+            raise ApiError(408, "request body incomplete or too slow")
+        self.team.deadlines.disarm(self)  # the whole request is in; processing is not timed
         if not raw:
             return {}
         try:
@@ -188,6 +269,10 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "body is nested too deeply")
         if not isinstance(obj, dict):
             raise ApiError(400, "body must be a JSON object")
+        try:  # lone surrogates ("\ud800") parse fine but cannot be stored or sent back
+            json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        except UnicodeEncodeError:
+            raise ApiError(400, "body contains invalid unicode")
         return obj
 
     def client_ip(self):
@@ -229,13 +314,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def dispatch(self, method):
         try:
+            if self.team.trust_proxy:  # behind a proxy every socket is the proxy; cap by forwarded IP instead
+                ip = self.client_ip()
+                if not self.team.request_ips.acquire(ip):
+                    self.close_connection = True
+                    raise ApiError(429, "too many open connections from your address")
+                self._ip_slot = ip
+            if method not in ("POST", "PATCH", "DELETE") and (
+                    self.headers.get("Content-Length", "0") not in ("", "0") or self.headers.get("Transfer-Encoding")):
+                self.close_connection = True  # a body we will not read: never reuse the connection
             u = urlparse(self.path)
             query = parse_qs(u.query)
             path = u.path.rstrip("/") or "/"
             for m, pattern, fn in ROUTES:
                 match = pattern.fullmatch(path)
                 if match and m == method:
-                    body = self.read_json() if method in ("POST", "PATCH", "DELETE") else {}
+                    if method in ("POST", "PATCH", "DELETE"):
+                        body = self.read_json()
+                    else:
+                        body = {}
+                        self.team.deadlines.disarm(self)
                     result = fn(self, query, body, *match.groups())
                     if result is not None:
                         self.send_json(200, result)
@@ -299,12 +397,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def r_invite(self, query, body):
         ctx = self.authed(query)
-        token, expires = self.team.store.create_invite(body.get("email"), body.get("role"), body.get("name"),
-                                                       by=ctx["member"])
-        out = invite_links(self.team.url_for(self), token)
-        out.update(email=body.get("email", "").strip().lower(), role=body.get("role", "").strip().lower(),
-                   expires_at=iso(expires))
+        inv = self.team.store.create_invite(body.get("email"), body.get("role"), body.get("name"), by=ctx["member"])
+        out = invite_links(self.team.url_for(self), inv["token"])
+        out.update(id=inv["id"], email=inv["email"], role=inv["role"], device=inv["member_id"] is not None,
+                   expires_at=iso(inv["expires_at"]))
         return out
+
+    def r_invite_delete(self, query, body, iid):
+        ctx = self.authed(query)
+        return self.team.store.delete_invite(ctx["member"], int(iid))
 
     def r_device_delete(self, query, body, did):
         ctx = self.authed(query)
@@ -473,6 +574,7 @@ ROUTES = [
     _r("GET", r"/api/v1/members", Handler.r_members),
     _r("PATCH", r"/api/v1/members/(\d{1,12})", Handler.r_member_patch),
     _r("POST", r"/api/v1/invites", Handler.r_invite),
+    _r("DELETE", r"/api/v1/invites/(\d{1,12})", Handler.r_invite_delete),
     _r("DELETE", r"/api/v1/devices/(\d{1,12})", Handler.r_device_delete),
     _r("GET", r"/api/v1/items", Handler.r_items_get),
     _r("POST", r"/api/v1/items", Handler.r_items_post),
@@ -497,36 +599,54 @@ _BUSY = (b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\
          b"Connection: close\r\n\r\n{\"error\":\"server busy, try again\"}")
 
 
+_TOO_MANY = (b"HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: 55\r\n"
+             b"Connection: close\r\n\r\n{\"error\":\"too many open connections from your address\"}")
+
+
 class _HTTPServer(ThreadingHTTPServer):
     """ThreadingHTTPServer with a cap on concurrent connections (each one holds a thread)."""
 
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, addr, handler, max_connections):
+    def __init__(self, addr, handler, max_connections, ip_slots):
         self.slots = threading.BoundedSemaphore(max_connections)
+        self.ip_slots = ip_slots  # None when behind a trusted proxy (then capped per request by forwarded IP)
         super().__init__(addr, handler)
 
+    def _refuse(self, request, response):
+        try:
+            request.settimeout(1)
+            request.sendall(response)
+        except OSError:
+            pass
+        self.shutdown_request(request)
+
     def process_request(self, request, client_address):
+        if self.ip_slots is not None and not self.ip_slots.acquire(client_address[0]):
+            self._refuse(request, _TOO_MANY)
+            return
         if not self.slots.acquire(blocking=False):
-            try:
-                request.settimeout(1)
-                request.sendall(_BUSY)
-            except OSError:
-                pass
-            self.shutdown_request(request)
+            if self.ip_slots is not None:
+                self.ip_slots.release(client_address[0])
+            self._refuse(request, _BUSY)
             return
         try:
             super().process_request(request, client_address)
         except BaseException:
-            self.slots.release()
+            self._release(client_address)
             raise
+
+    def _release(self, client_address):
+        self.slots.release()
+        if self.ip_slots is not None:
+            self.ip_slots.release(client_address[0])
 
     def process_request_thread(self, request, client_address):
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self.slots.release()
+            self._release(client_address)
 
 
 class TeamServer:
@@ -535,7 +655,8 @@ class TeamServer:
     def __init__(self, data_dir, host="127.0.0.1", port=8790, public_url=None, clock=None,
                  ping_interval=20.0, verbose=False, trust_proxy=False, max_connections=MAX_CONNECTIONS,
                  max_streams_per_device=MAX_STREAMS_PER_DEVICE, request_timeout=REQUEST_TIMEOUT,
-                 device_check_interval=DEVICE_CHECK_INTERVAL):
+                 device_check_interval=DEVICE_CHECK_INTERVAL, request_deadline=REQUEST_DEADLINE,
+                 max_connections_per_ip=MAX_CONNECTIONS_PER_IP):
         os.makedirs(data_dir, exist_ok=True)
         self.clock = clock or time.time
         self.store = Store(os.path.join(data_dir, "team.db"), clock=self.clock)
@@ -548,10 +669,14 @@ class TeamServer:
         self.max_streams_per_device = max_streams_per_device
         self.request_timeout = request_timeout
         self.device_check_interval = device_check_interval
+        self.request_deadline = request_deadline
+        self.deadlines = Deadlines()
+        self.request_ips = IpSlots(max_connections_per_ip)
         self.stopping = threading.Event()
         self.join_limit = RateLimiter(JOIN_LIMIT[0], JOIN_LIMIT[1], time.time)
         self.req_limit = RateLimiter(REQUEST_LIMIT[0], REQUEST_LIMIT[1], time.time)
-        self.httpd = _HTTPServer((host, port), Handler, max_connections)
+        self.httpd = _HTTPServer((host, port), Handler, max_connections,
+                                 None if trust_proxy else IpSlots(max_connections_per_ip))
         self.httpd.team = self
         self.port = self.httpd.server_address[1]
         self._threads = []
@@ -565,9 +690,14 @@ class TeamServer:
         return "http://localhost:%d" % self.port
 
     def _expiry_loop(self):
-        while not self.stopping.wait(5):
+        """Background housekeeping: shut slow requests every 0.25 s, expire presence every 5 s."""
+        last = time.monotonic()
+        while not self.stopping.wait(0.25):
             try:
-                self.store.expire_presence()
+                self.deadlines.sweep()
+                if time.monotonic() - last >= 5:
+                    last = time.monotonic()
+                    self.store.expire_presence()
             except Exception:
                 traceback.print_exc(file=sys.stderr)
 

@@ -32,9 +32,10 @@ def public_url(args, store, port=8790):
     return store.get_meta("public_url") or "http://localhost:%d" % port
 
 
-def print_invite(store, args, token, expires, email, role):
-    links = invite_links(public_url(args, store), token)
-    print("Invite for %s (%s), single use, expires %s" % (email, role, iso(expires)))
+def print_invite(store, args, inv):
+    links = invite_links(public_url(args, store), inv["token"])
+    role = ("new device for existing %s; role unchanged" % inv["role"]) if inv["member_id"] else inv["role"]
+    print("Invite %d for %s (%s), single use, expires %s" % (inv["id"], inv["email"], role, iso(inv["expires_at"])))
     print("  Web:  %s" % links["web"])
     print("  App:  %s" % links["app"])
 
@@ -62,18 +63,15 @@ def cmd_init(args):
         return 1
     if args.team:
         store.set_meta("team_name", args.team.strip()[:100])
-    token, expires = store.create_invite(args.email, "owner", args.name)
+    inv = store.create_invite(args.email, "owner", args.name)
     print("Team '%s' ready." % store.team_name())
-    print_invite(store, args, token, expires, args.email.lower(), "owner")
+    print_invite(store, args, inv)
     return 0
 
 
 def cmd_invite(args):
     store = open_store(args)
-    token, expires = store.create_invite(args.email, args.role, args.name)
-    existing = store.q1("SELECT role FROM members WHERE email=?", (args.email.strip().lower(),))
-    role = "new device for existing %s; role unchanged" % existing["role"] if existing else args.role
-    print_invite(store, args, token, expires, args.email.lower(), role)
+    print_invite(store, args, store.create_invite(args.email, args.role, args.name))
     return 0
 
 
@@ -90,7 +88,7 @@ def cmd_members(args):
     if pending:
         print("Pending invites:")
         for i in pending:
-            print("        %-28s %-7s expires %s" % (i["email"], i["role"], i["expires_at"]))
+            print("  %4d  %-28s %-7s expires %s" % (i["id"], i["email"], i["role"], i["expires_at"]))
     return 0
 
 

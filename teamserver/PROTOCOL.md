@@ -17,11 +17,12 @@ One server = one team. JSON over HTTPS. Python stdlib only on both sides.
 member  `{id, email, name, role, approver, colour, active}`  (colour: a stable hex from a fixed palette, for tints)
 item    `{coll, id, version, data, deleted, author, updated_by, updated_at, changeset}`
         coll: a draftstore collection name, e.g. `ads:4387091070`, `ads:meta_644981006414114`, `email`, `seo:changes`,
-        `seo:new_posts`, `seo:map_nodes`, `seo:map_site`, `seo:map_proposals`, `social`. id: the item id inside it.
+        `seo:new_posts`, `seo:map_nodes`, `seo:map_site`, `seo:map_proposals`, `social`, `library`, `calendar`. id: the item
+        id inside it.
         data: the item's JSON (a dict). version: server integer, per item, starts at 1.
         changeset: optional `{id, name}` the author grouped it under.
 event   `{seq, at, actor, kind, area, coll, id, summary, data}`  kinds: `edit_session`, `push`, `publish`, `undo`, `comment`,
-        `mention`, `claim`, `join`, `custom`, `send_to_editor`, `review_requested`, `review_decided`
+        `mention`, `claim`, `join`, `custom`, `settings`, `send_to_editor`, `review_requested`, `review_decided`
 comment `{id, coll, item_id, parent, author, body, mentions:[member_id], resolved, at, edited_at}`
 presence `{member, area, coll, id, editing, at}`  (expires 120 s after the last heartbeat)
 claim   `{coll, id, member, note, at}`
@@ -114,6 +115,29 @@ review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, h
   same way). If the rules were never fetched and the server can't be reached, live actions wait (fail closed). That gate is the client's: the server stores the
   policy and the approvals, it never pushes anything itself.
 
+## Team settings
+
+- `GET /api/v1/settings` -> `{settings: {key: setting}}` (every key, also the unset ones); `GET /api/v1/settings/<key>` -> setting.
+  setting `{key, value, version, updated_by, updated_at}`; an unset key has `value: null, version: 0`. Everyone reads.
+- `PUT /api/v1/settings/<key> {value, base_version?}` (owner/admin, else 403) -> setting. value: a JSON object of at most
+  64 KB, or null to clear it (everyone falls back to their own). base_version, when given, must be the current version,
+  else 409 `{error, setting}`. Each write: version + 1, an event `{kind: "settings", area: "team", data: {key, version}}`
+  and the SSE event `settings` `{key, version}` to everyone. `DELETE /api/v1/settings/<key>` = PUT with value null.
+- Keys: `copy_rules`, `seo_sites`, `email_test_addresses`, `social`, `calendar_limits` (unknown key: 404). The server
+  checks only the key, the object and its size; the app checks what is inside (engine/team_settings.py describes each
+  value) and ignores a value it can't use.
+
+## Library and calendar marks
+
+Two ordinary item collections, synced like drafts (`/api/v1/items`, versions, merge, conflicts):
+
+- `library`: the shared library. id `lib_` + 10 hex; data `{id, kind, text, label, note, by, created}`, kind one of
+  `headline`, `cta`, `image` (an https URL), `utm` (`utm_source=..&utm_medium=..&utm_campaign=..`), `email_block` (HTML).
+  Every non-viewer may add or remove items (the server's item rules: viewers can't write).
+- `calendar`: who scheduled what, for the shared calendar. id `email_<campaign id>`; data
+  `{id, kind: "email", campaign_id, when, audience, audience_name, subject, by}`. Written when a campaign is scheduled
+  from Studio, removed when its schedule is cancelled. SoMe posts need no mark: their results sync with the post.
+
 ## Members (admin)
 
 - `GET /api/v1/me`, `GET /api/v1/members` (admin/owner also get each member's `devices` and pending `invites`
@@ -132,7 +156,8 @@ review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, h
 
 - `GET /api/v1/stream` (text/event-stream, auth header or `?token=`): `event: items` `{cursor}`, `event: event` `{seq}`,
   `event: presence`, `event: comment` `{coll, id}`, `event: mention` `{comment_id}` (only to the mentioned member),
-  `event: review` `{id, status}` (reviewers and requester), `event: policy`, `event: owners`.
+  `event: review` `{id, status}` (reviewers and requester), `event: policy`, `event: owners`,
+  `event: settings` `{key, version}`.
   A `: ping` comment every 20 s.
 
 ## Health

@@ -219,7 +219,36 @@ TEAM_TOOLS = [
          "reviewers": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "member ids or names"},
          "note": {"type": "string"}, "changeset_id": {"type": "string"}}, "required": ["reviewers"]}},
 ]
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS
+SHARED_TOOLS = [
+    {"name": "team_settings_get", "description": "The settings that apply in Studio now: copy rules (per area, block or warn), SEO "
+                                                 "sites, test email addresses, SoMe slots / UTM / late posting and the calendar "
+                                                 "limits, each with whether it is set by the team or by this Mac. Read only.",
+     "inputSchema": {"type": "object", "properties": {"key": {"type": "string", "description": "one key (copy_rules, seo_sites, "
+                                                              "email_test_addresses, social, calendar_limits); none = all"}}}},
+    {"name": "calendar_list", "description": "The shared calendar: SoMe posts, email campaigns and SEO publishes with a time between "
+                                             "start and end, each with channel, status and who owns it. Read only.",
+     "inputSchema": {"type": "object", "properties": {"start": {"type": "string", "description": "ISO date, default this Monday"},
+                                                      "end": {"type": "string", "description": "ISO date, default start + 28 days"}}}},
+    {"name": "library_list", "description": "The team library: approved headlines, CTAs, image URLs, UTM presets and email blocks.",
+     "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["headline", "cta", "image", "utm", "email_block"]},
+                                                      "q": {"type": "string", "description": "text to look for"}}}},
+]
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS
+
+
+def call_shared(name, a):
+    import shared_calendar  # noqa: PLC0415
+    import team_settings  # noqa: PLC0415
+    if name == "team_settings_get":
+        info = team_settings.info()
+        keys = {k: {x: v[x] for x in ("label", "value", "source")} for k, v in info["keys"].items()
+                if not a.get("key") or k == a["key"]}
+        if a.get("key") and not keys:
+            raise ValueError(f"unknown key {a['key']}")
+        return {"joined": info["joined"], "keys": keys}
+    if name == "calendar_list":
+        return shared_calendar.calendar_list(a.get("start"), a.get("end"))
+    return team_settings.library_list(a.get("kind"), a.get("q"))
 
 
 def call_team(name):
@@ -344,6 +373,8 @@ def call(name, a):
         return call_team(name)
     if name in ("reviews_list", "review_request"):
         return call_reviews(name, a)
+    if name in ("team_settings_get", "calendar_list", "library_list"):
+        return call_shared(name, a)
     if name == "setup_status":
         st = appconfig.status()
         return {"keys": {k["name"]: k["set"] for k in st["keys"]}, "google_signed_in": st["google_signed_in"],
@@ -448,6 +479,11 @@ def handle(msg):
 
 
 def main():
+    try:  # once per install (see team_settings.first_run)
+        import team_settings  # noqa: PLC0415
+        team_settings.first_run()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc(file=sys.stderr)
     for line in sys.stdin:
         if not line.strip():
             continue

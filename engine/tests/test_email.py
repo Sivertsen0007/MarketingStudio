@@ -21,6 +21,9 @@ from pathlib import Path
 os.environ["STUDIO_DATA_DIR"] = tempfile.mkdtemp(prefix="email-test-dp-")  # datapolicy's status file, never the real one
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from areas import email as em  # noqa: E402
+import _legacy_copy_rules  # noqa: E402
+import team_settings  # noqa: E402
+team_settings.local_set("copy_rules", {"rules": _legacy_copy_rules.RULES})  # the rules these tests check (a new install has none)
 import progress  # noqa: E402
 
 GOOD_HTML = ('<html><body><img src="https://media.example.net/a.jpg" alt="Reef"><p>Hi {{first_name}}, spaces from GBP 900.</p>'

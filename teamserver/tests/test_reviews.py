@@ -257,6 +257,15 @@ class TestApproverRules(ReviewBase):
                            self.bo["token"])
         self.assertEqual(s, 403, out)
 
+    def test_changes_requested_withdrawn_only_by_admin(self):
+        self.put(self.alex, "social", "p1", 0, {"id": "p1", "text": "x"})
+        s, rv = self.ask(self.alex, [{"coll": "social", "id": "p1", "version": 1}], [self.bo])
+        self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "request_changes"}, self.bo["token"])
+        s, out = self.call("POST", "/api/v1/reviews/%d/withdraw" % rv["id"], None, self.alex["token"])
+        self.assertEqual(s, 403, out)
+        self.assertEqual(self.ok("POST", "/api/v1/reviews/%d/withdraw" % rv["id"], None, self.owner["token"])["status"],
+                         "withdrawn")
+
     def test_send_to_editor_event_kind(self):
         ev = self.ok("POST", "/api/v1/events", {"kind": "send_to_editor", "area": "ads", "summary": "Sent: why"},
                      self.alex["token"])

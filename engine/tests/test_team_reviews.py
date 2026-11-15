@@ -132,7 +132,7 @@ class Reviews(unittest.TestCase):
         # a clean slate on the shared server: rules off, earlier tests' approvals withdrawn
         self.as_owner("""
 tr.set_policy({"require_approval": {"ads": False, "email": False, "seo": False, "social": False}})
-for r in team._api("GET", "/api/v1/reviews?status=open,approved")["reviews"]:
+for r in team._api("GET", "/api/v1/reviews?status=open,approved,changes_requested")["reviews"]:
     team._api("POST", f"/api/v1/reviews/{r['id']}/withdraw", {})
 team.sync()
 for d in em.list_drafts():  # no shared email drafts left over from earlier tests
@@ -533,6 +533,52 @@ out = None
         self.run_in(bo, f"team.sync(); out = tr.decide({{'id': {rv1['id']}, 'decision': 'approve'}})")
         out = self.run_in(alex, "out = gated({'why': 'w'})['pushed']")
         self.assertEqual(out, ["v2"])  # v1 is held by Cy's request for changes, v2 is approved
+
+    # final review: withdrawing a review with changes requested must not lift the hold
+    def test_withdraw_does_not_lift_changes_requested(self):
+        alex, _ = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        cy, me_c = self.member("Cy", approver=True)
+        self.policy(ads=True)
+        rv1 = self.run_in(alex, f"""
+            ads_put("w1", "B1"); team.sync()
+            out = tr.request({{"items": [{{"coll": COLL, "id": "w1"}}], "reviewers": [{me_b['id']}]}})
+        """)
+        rv2 = self.run_in(alex, f"out = tr.request({{'items': [{{'coll': COLL, 'id': 'w1'}}], 'reviewers': [{me_c['id']}]}})")
+        self.run_in(bo, f"team.sync(); out = tr.decide({{'id': {rv1['id']}, 'decision': 'approve'}})['status']")
+        self.run_in(cy, f"team.sync(); out = tr.decide({{'id': {rv2['id']}, 'decision': 'request_changes', 'note': 'no'}})['status']")
+        before = self.run_in(alex, "out = gated({'why': 'w'})['pushed']")
+        w = self.run_in(alex, f"out = err(tr.withdraw, {{'id': {rv2['id']}}})")
+        after = self.run_in(alex, "out = gated({'why': 'w'})['pushed']")
+        self.assertEqual(before, "not called")
+        self.assertIn("only an admin or owner", w)
+        self.assertEqual(after, "not called", "requester withdrew the changes-requested review and pushed unchanged content")
+        # the hold lifts when the content changes (and then it needs a fresh approval)
+        out = self.run_in(alex, """
+            ads_put("w1", "B2"); team.sync()
+            p = tr.plan("ads", tr.entries_of([COLL]))
+            out = [n["reason"] for n in p["needs"]]
+        """)
+        self.assertEqual(out, ["needs approval"])  # no longer held, but the old approval is stale too
+
+    def test_holds_and_approvals_read_every_page(self):
+        out = self.run_in(self.home_solo(), """
+            pages = {None: {"reviews": [{"id": 3}], "more": True, "next_before": 3},
+                     3: {"reviews": [{"id": 2}], "more": True, "next_before": 2},
+                     2: {"reviews": [{"id": 1}], "more": False, "next_before": None}}
+            asked = []
+            def api(method, path, body=None):
+                asked.append(path)
+                b = int(path.split("before=")[1]) if "before=" in path else None
+                return pages[b]
+            tr._api = api
+            out = {"ids": [r["id"] for r in tr._all_reviews("status=changes_requested&current=1")], "asked": asked}
+        """)
+        self.assertEqual(out["ids"], [3, 2, 1])
+        self.assertEqual(len(out["asked"]), 3)
+
+    def home_solo(self):
+        return tempfile.mkdtemp(dir=self.tmp.name, prefix="home-")
 
     # regression tests from the second independent review (M1, M2)
     def test_stale_review_cannot_be_approved_then_reverted(self):

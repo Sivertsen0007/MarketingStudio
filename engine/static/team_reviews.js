@@ -130,7 +130,8 @@
       <textarea id="trThreadIn" placeholder="Add a comment"></textarea><button id="trThreadSend">Comment</button></div>
       ${v.can_decide ? `<h4 style="margin:12px 0 4px">Your decision</h4><textarea class="tr-note" id="trDecNote" placeholder="A note for ${esc(v.requested_by_name)} (optional)"></textarea>` : ""}`;
     const btns = [["Back", () => showList()]];
-    if (v.mine && v.status !== "withdrawn") btns.push(["Withdraw", async () => { try { await post("withdraw", {id:v.id}); say("Withdrawn"); showList() } catch(e) { say(e.message) } }, "danger"]);
+    const admin = ST.me && ["owner", "admin"].includes(ST.me.role); // a request for changes holds the content until it changes
+    if ((v.mine || admin) && v.status !== "withdrawn" && (v.status !== "changes_requested" || admin)) btns.push(["Withdraw", async () => { try { await post("withdraw", {id:v.id}); say("Withdrawn"); showList() } catch(e) { say(e.message) } }, "danger"]);
     if (v.can_decide){
       const shown = v.items.map(it => ({coll:it.coll, id:it.id, hash:it.shown_hash})); // Approve covers exactly what this screen shows
       const decide = d => async () => { try { const r = await post("decide", {id:v.id, decision:d, shown, note:(document.getElementById("trDecNote") || {}).value || ""});

@@ -384,6 +384,10 @@ def withdraw(store, actor, rid):
             raise ApiError(403, "only the requester or an admin or owner can withdraw a review")
         if r["status"] == "withdrawn":
             raise ApiError(409, "already withdrawn")
+        if r["status"] == "changes_requested" and actor["role"] not in MANAGERS:
+            # Withdrawing would lift the hold on that content: only a change to the content (or an admin) lifts it.
+            raise ApiError(403, "changes were asked for: change the items and ask again (only an admin or owner can"
+                                " withdraw this review)")
         db.execute("UPDATE reviews SET status='withdrawn', updated_at=? WHERE id=?", (now, rid))
         out = _review_out(db, db.execute("SELECT * FROM reviews WHERE id=?", (rid,)).fetchone())
     _notify(store, rid, "withdrawn", json.loads(r["reviewers"]) + [r["requested_by"]])

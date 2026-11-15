@@ -100,7 +100,7 @@ def set_policy(body):
 def approvals():
     """{"coll\\tid": [{review, hash, title}]} from approved reviews whose items are not stale on the server."""
     out = {}
-    for rv in _api("GET", "/api/v1/reviews?status=approved&current=1").get("reviews") or []:
+    for rv in _all_reviews("status=approved&current=1"):
         if rv.get("decider_ok") is False:
             continue  # the approver has lost the right to approve since
         for it in rv.get("items") or []:
@@ -111,11 +111,24 @@ def approvals():
     return out
 
 
+def _all_reviews(query):
+    """Every review matching the query, following the server's pages (200 each), so nothing past the first page is
+    missed: a hold or an approval on page two counts the same."""
+    out, before = [], None
+    for _ in range(10000):
+        r = _api("GET", "/api/v1/reviews?" + query + (f"&before={int(before)}" if before else ""))
+        out += r.get("reviews") or []
+        if not r.get("more") or not r.get("next_before"):
+            return out
+        before = r["next_before"]
+    raise team.TeamError("too many reviews to read")
+
+
 def changes_requested():
     """{"coll\tid": [{review, hash}]}: content someone asked changes for. While an item is still exactly that content it
     stays out of every push, even when another review approved it; a change to it (or withdrawing that review) lifts it."""
     out = {}
-    for rv in _api("GET", "/api/v1/reviews?status=changes_requested&current=1").get("reviews") or []:
+    for rv in _all_reviews("status=changes_requested&current=1"):
         for it in rv.get("items") or []:
             if not it.get("stale"):
                 h = it.get("content_hash") if it["coll"] in CONTENT else it.get("hash")

@@ -93,7 +93,8 @@ review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, h
   it has none). Otherwise 409: the review has to be asked for again.
 - An approval counts only while the member who gave it may still approve: `decider_ok` is false once they are
   deactivated, or are neither approver nor admin / owner any more, and `current=1` then leaves the review out.
-- `POST /api/v1/reviews/<id>/withdraw`: the requester or an admin / owner (409 if already withdrawn).
+- `POST /api/v1/reviews/<id>/withdraw`: the requester or an admin / owner (409 if already withdrawn). A review with
+  changes requested holds that content: only an admin / owner may withdraw it (403 for the requester).
 - An approval covers an item only while its content is what was asked about. The server keeps a content hash per item:
   sha256 of the item's data as compact JSON with sorted keys (`separators=(",", ":")`, `ensure_ascii=False`), leaving out
   the top-level bookkeeping keys `at, ts, by, updated, updated_at, edited_at, edited_by, problems, warnings, approval,
@@ -114,7 +115,7 @@ review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, h
   `{kind: "push", area, summary, data: {why, counts, items, scope}}` (`send_to_editor` for Ads Send to Editor, gated the
   same way). If the rules were never fetched and the server can't be reached, live actions wait (fail closed). An item
   whose current content has a `changes_requested` decision in any review stays out of pushes, even if another review
-  approved it, until it changes or that review is withdrawn. The review screen shows every field an item sends live, in
+  approved it, until it changes (or an admin / owner withdraws that review). Clients read every page of reviews. The review screen shows every field an item sends live, in
   full, and the approver's `confirm` hash is computed from exactly what it showed. That gate is the client's: the server stores the
   policy and the approvals, it never pushes anything itself.
 

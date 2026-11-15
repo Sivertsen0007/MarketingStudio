@@ -22,6 +22,17 @@
 	<string>13.0</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.business</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Marketing Studio team invite</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>marketingstudio</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>

@@ -196,7 +196,27 @@ SETUP_TOOLS = [
                     "Only run this when the user asks to set Studio up from a file.",
      "inputSchema": {"type": "object", "properties": {"path": {"type": "string", "description": "absolute path to the .env file"}}, "required": ["path"]}},
 ]
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS
+TEAM_TOOLS = [
+    {"name": "team_status", "description": "Team sync status: whether this Studio is in a team, the team and your role, last sync, local "
+                                           "changes waiting to be sent, remote changes waiting, open conflicts, the active changeset.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "team_sync", "description": "Sync the drafts with the team server: send local draft changes, receive teammates' draft changes "
+                                         "(field-level merge; clashing edits become conflicts the user resolves in Studio). Draft level only: "
+                                         "nothing goes live anywhere.",
+     "inputSchema": {"type": "object", "properties": {}}},
+]
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS
+
+
+def call_team(name):
+    import team  # noqa: PLC0415
+    if name == "team_status":
+        st = team.status()
+        st.pop("members", None)
+        return st
+    r = team.sync()
+    r.get("status", {}).pop("members", None)
+    return r
 
 
 def _scope(acct, campaign, ad_group, tree=None):
@@ -291,6 +311,8 @@ AREA_NAMES = {t["name"] for t in AREA_TOOLS}
 def call(name, a):
     if name in AREA_NAMES:
         return call_area(name, a)
+    if name in ("team_status", "team_sync"):
+        return call_team(name)
     if name == "setup_status":
         st = appconfig.status()
         return {"keys": {k["name"]: k["set"] for k in st["keys"]}, "google_signed_in": st["google_signed_in"],

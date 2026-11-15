@@ -70,7 +70,7 @@ KEYS = [
     ("STUDIO_IMAGE_LIBRARY", "R2 image library folder", "Advanced", False, "Optional: a folder with r2_client.py, for uploading local SoMe media."),
 ]
 # set by Sign in with Google / Import, not typed in the form
-HIDDEN_SECRETS = ("GOOGLE_REFRESH_TOKEN", "GOOGLE_SA_JSON")
+HIDDEN_SECRETS = ("GOOGLE_REFRESH_TOKEN", "GOOGLE_SA_JSON", "TEAM_DEVICE_TOKEN")  # TEAM_: team.py (join a team)
 SECRET_NAMES = {k[0] for k in KEYS if k[3]} | set(HIDDEN_SECRETS)
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/adwords", "https://www.googleapis.com/auth/webmasters.readonly",
                  "https://www.googleapis.com/auth/analytics.readonly", "openid", "email"]
@@ -174,6 +174,15 @@ def set_many(values):
             _cache.pop(k, None)
         _write_json(CONFIG, cfg)
     _notify()
+
+
+def set_secret(name, value):
+    """Save (or with None remove) one hidden secret, e.g. the team device token. Never logged or returned."""
+    if name not in HIDDEN_SECRETS:
+        raise ValueError(f"{name} is not a hidden secret")
+    with _lock:
+        _secret_set(name, value)
+        _cache.pop(name, None)
 
 
 def on_change(fn):

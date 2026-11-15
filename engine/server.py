@@ -33,6 +33,7 @@ import gapi
 import progress
 import areas
 import setup_routes  # keys (Keychain), Sign in with Google, .env import
+import team  # team sync: join a team server, sync drafts (team.py)
 import updater  # [mac-app updater] in-app updates (GitHub Releases), see updater.py
 
 HERE = Path(__file__).resolve().parent
@@ -295,6 +296,12 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/app/update/check":
             return self._run(lambda: updater.status(force=q.get("force") == "1"))
         # [mac-app updater] end
+        if u.path == "/api/team/status":
+            return self._run(team.status)
+        if u.path == "/api/team/conflicts":
+            return self._run(team.conflicts)
+        if u.path == "/api/team/changeset":
+            return self._run(team.changeset_get)
         if u.path == "/api/areas":
             return self._run(lambda: [{"name": n, "label": getattr(m, "LABEL", n)} for n, m in areas.AREAS.items()])
         if u.path == "/api/progress":
@@ -365,6 +372,8 @@ class H(BaseHTTPRequestHandler):
             return self._run(lambda: setup_routes.google_sign_out(body))
         if self.path == "/api/app/update/apply":  # [mac-app updater] download, verify, swap the .app
             return self._run(updater.apply_update)
+        if self.path.startswith("/api/team/"):
+            return self._team_post(body)
         if self.path == "/api/data/refresh":
             return self._run(lambda: data_refresh(body))
         if self.path.startswith("/api/settings/"):
@@ -401,6 +410,27 @@ class H(BaseHTTPRequestHandler):
             "/api/draft/clear": lambda: {"removed": core.clear(acct)},
             "/api/validate": lambda: core.validate(acct),
             "/api/push": push,
+        }
+        if self.path in routes:
+            return self._run(routes[self.path])
+        self._send(404, {"error": "not found"})
+
+    def _team_post(self, body):
+        def changeset():
+            act = body.get("action") or "set"
+            if act == "rename":
+                return team.changeset_rename(body.get("id"), body.get("name"))
+            if act == "set":
+                return team.changeset_set(body.get("id"), body.get("name"))
+            raise ValueError("action must be set or rename")
+
+        routes = {
+            "/api/team/join": lambda: team.join(body.get("link"), body.get("server"), body.get("invite")),
+            "/api/team/leave": team.leave,
+            "/api/team/sync": team.sync,
+            "/api/team/resolve": lambda: team.resolve(body["coll"], body["id"], body["field"], body["choice"], body.get("value")),
+            "/api/team/changeset": changeset,
+            "/api/team/settings": lambda: team.settings(body.get("auto_sync")),
         }
         if self.path in routes:
             return self._run(routes[self.path])
@@ -491,6 +521,10 @@ def main():
             so.start_scheduler()
         except Exception:  # noqa: BLE001 - the studio must start even if SoMe can't
             traceback.print_exc()
+    try:
+        team.start_listener()  # live updates from the team server (no-op when not in a team)
+    except Exception:  # noqa: BLE001 - the studio must start even if the team server can't be reached
+        traceback.print_exc()
     updater.start_background_check()  # [mac-app updater] daily check; no-op when not inside the .app
     url = f"http://localhost:{a.port}"
     print(f"Marketing Studio on {url}  (Ctrl+C to stop)")

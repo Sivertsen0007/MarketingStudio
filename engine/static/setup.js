@@ -36,6 +36,7 @@
         <div class="su-acts"><input type="file" id="suEnvFile" accept=".env,text/plain,*" style="max-width:320px"><span id="suEnvMsg" class="su-help"></span></div></div>
       <div class="su-card"><h3>Use with Claude Code</h3><p class="su-help" style="margin:0 0 8px">Run this once in Terminal. Claude then sees the same accounts and drafts as this app, can add changes to the draft (you still press Push), and can load keys from a .env file with the tool setup_import_env_file.</p>
         <div class="su-acts"><code id="suMcp" style="font-size:12px;background:var(--hover,#f1f3f4);padding:6px 8px;border-radius:4px;word-break:break-all;flex:1">${esc(S.mcp_command)}</code><button id="suMcpCopy">Copy</button></div></div>
+      <div class="su-card" id="suTeam"></div>
       <div class="su-card"><h3><span class="su-dot ${gOk ? "ok" : ""}"></span>Google (Ads, Search Console, GA4)</h3>
         <p class="su-help" style="margin:0 0 8px">${S.google_signed_in ? `Signed in${S.google_account ? " as <b>" + esc(S.google_account) + "</b>" : ""}.` : S.google_service_account ? "Using the service-account key copied from AI-Hub." : "Fill in the OAuth client below, save, then sign in. Your Google user needs access to the Ads accounts."}</p>
         <div class="su-acts"><button id="suGoogle" class="primary">${S.google_signed_in ? "Sign in again" : "Sign in with Google"}</button>${S.google_signed_in ? `<button id="suGoogleOut" class="danger">Sign out</button>` : ""}<span id="suGMsg" class="su-help"></span></div></div>
@@ -45,6 +46,7 @@
           <div class="su-help">${esc(k.help)}${k.secret && k.set ? ` <a href="#" data-rm="${k.name}">Remove</a>` : ""}</div></div></div>`).join("")}</div>`).join("")}
       <div class="su-acts"><button id="suSave" class="primary">Save</button><span id="suMsg" class="su-help"></span></div></div>`;
     const $ = id => document.getElementById(id);
+    if (window.teamCard) window.teamCard($("suTeam")); else $("suTeam").remove();
     $("suClose").onclick = close;
     $("suSave").onclick = async () => {
       const values = {}; page.querySelectorAll("input[data-k]").forEach(i => { if (!i.disabled) values[i.dataset.k] = i.value });

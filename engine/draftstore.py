@@ -147,8 +147,9 @@ def _data_by(data):
     return (data.get("edited_by") or data.get("by")) if isinstance(data, dict) else None
 
 
-def _reconcile(d, meta, lay, by=None, by_item=None, at=None, record=True):
-    """Bring meta in line with the doc: new / changed items get a put, missing ones a tombstone. -> outbox entries."""
+def _reconcile(d, meta, lay, by=None, by_item=None, at=None, record=True, cs=None):
+    """Bring meta in line with the doc: new / changed items get a put, missing ones a tombstone. -> outbox entries.
+    cs: the active changeset id (team sync), kept on each outbox entry so the op can name it."""
     at, by_item, out = at or now(), by_item or {}, []
     colls = meta.setdefault("colls", {})
     for coll, (key, kind) in lay.colls.items():
@@ -168,12 +169,16 @@ def _reconcile(d, meta, lay, by=None, by_item=None, at=None, record=True):
                 continue
             changed = True
             out.append({"coll": coll, "id": iid, "op": "put", "at": at})
+            if cs:
+                out[-1]["cs"] = cs
         for iid, m in list(items.items()):
             if iid not in seen and not m.get("deleted"):
                 m.update(version=m.get("version", 0) + 1, updated_by=by_item.get(iid) or by or "you", updated_at=at, deleted=True)
                 m.pop("h", None)
                 changed = True
                 out.append({"coll": coll, "id": iid, "op": "delete", "at": at})
+                if cs:
+                    out[-1]["cs"] = cs
         dead = [k for k, m in items.items() if m.get("deleted")]
         for k in dead[:max(0, len(dead) - MAX_TOMBSTONES)]:
             del items[k]
@@ -189,6 +194,25 @@ def _outbox_add(meta, entries):
     for e in entries:
         box[:] = [x for x in box if (x["coll"], x["id"]) != (e["coll"], e["id"])]
         box.append(e)
+
+
+TEAM_DIR = "team"  # inside the data folder; engine/team.py keeps its sync state there
+_listeners = []
+
+
+def on_local_write(fn):
+    """fn(root) runs after a commit that added local changes to the outbox (team auto-sync)."""
+    _listeners.append(fn)
+
+
+def _active_cs(root):
+    """The active changeset id that team.py keeps in <root>/team/changeset.json, or None (not in a team)."""
+    try:
+        with open(Path(root) / TEAM_DIR / "changeset.json") as f:
+            a = (json.load(f) or {}).get("active") or {}
+        return str(a["id"]) if a.get("id") else None
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
 
 
 def _strip(d):
@@ -216,12 +240,18 @@ def _open(lay, root, default=None):
 
 
 def _commit(path, d, meta, lay, bump, by=None, by_item=None):
-    _reconcile(d, meta, lay, by=by, by_item=by_item)
+    out = _reconcile(d, meta, lay, by=by, by_item=by_item, cs=_active_cs(path.parent))
     if bump and lay.version_key:
         d[lay.version_key] = d.get(lay.version_key, 0) + 1
     d[META] = meta
     _save(path, d)
     del d[META]
+    if out:
+        for fn in list(_listeners):
+            try:
+                fn(path.parent)
+            except Exception:  # noqa: BLE001 - a listener must never break a save
+                pass
 
 
 # ---------- the public API ----------
@@ -232,7 +262,7 @@ def doc(coll, root=None, by=None, bump=False, default=None):
     bump: add 1 to the file's version (callers that bump it themselves leave this off)."""
     lay = layout(coll)
     with _open(lay, root, default) as (path, d, meta):
-        _reconcile(d, meta, lay)  # an older writer's changes are recorded before this edit
+        _reconcile(d, meta, lay, cs=_active_cs(path.parent))  # an older writer's changes are recorded before this edit
         yield d
         _commit(path, d, meta, lay, bump, by=by)
 
@@ -313,7 +343,7 @@ def tx(coll, root=None, by=None, bump=True, default=None):
     exit (nothing is saved when the block raises). bump: the file's version + 1 on every commit, as before."""
     lay = layout(coll)
     with _open(lay, root, default) as (path, d, meta):
-        _reconcile(d, meta, lay)
+        _reconcile(d, meta, lay, cs=_active_cs(path.parent))
         t = Tx(coll, lay, d, meta, by)
         yield t
         _commit(path, d, meta, lay, bump, by=by, by_item=t._by_item)
@@ -337,15 +367,26 @@ def items(coll, root=None):
     return Tx(coll, lay, d, meta, None).items()
 
 
-def apply_remote(coll, item, root=None):
+def apply_remote(coll, item, root=None, expect=None):
     """Write one item from the team server ({id, data, version, author, updated_by, updated_at, deleted}).
     Its version and authors are taken as given and nothing is added to the outbox. The file's version bumps so the UI
-    reloads. Local edits made by an older writer since the last commit are recorded first, as usual."""
+    reloads. Local edits made by an older writer since the last commit are recorded first, as usual.
+    expect: None writes whatever is there. Otherwise the local item must still be what the caller saw (its hash from
+    peek(), or "" for no live item); when it changed meanwhile nothing is written and the result is False, so a
+    pending local edit is never overwritten. When written, the item's outbox entry goes (local now equals the server)."""
     lay = layout(coll)
     iid = str(item["id"])
     with _open(lay, root) as (path, d, meta):
-        _reconcile(d, meta, lay)
+        _reconcile(d, meta, lay, cs=_active_cs(path.parent))
         t = Tx(coll, lay, d, meta, None)
+        if expect is not None:
+            cur = t.get(iid)
+            if (_hash(cur["data"]) if cur else "") != expect:
+                d[META] = meta
+                _save(path, d)  # keep what reconcile recorded
+                return False
+            box = meta.setdefault("outbox", [])
+            box[:] = [x for x in box if (x["coll"], x["id"]) != (coll, iid)]
         if item.get("deleted"):
             t.delete(iid)
         else:
@@ -361,6 +402,54 @@ def apply_remote(coll, item, root=None):
         cm["version"] = cm.get("version", 0) + 1
         if lay.version_key:
             d[lay.version_key] = d.get(lay.version_key, 0) + 1
+        d[META] = meta
+        _save(path, d)
+    return True
+
+
+def peek(coll, iid, root=None):
+    """One item as it is on disk now: (data or None when there is no live item, its hash or "")."""
+    for r in items(coll, root):
+        if r["id"] == str(iid):
+            return r["data"], _hash(r["data"])
+    return None, ""
+
+
+def item_hash(data):
+    return _hash(data) if data is not None else ""
+
+
+def outbox_ack(coll, acks, root=None):
+    """Drop outbox entries the team server has acknowledged. acks: [(id, hash)] with the hash of what was sent
+    ("" for a delete). An entry whose item changed again since then stays. -> how many went."""
+    lay = layout(coll)
+    want = {str(i): h for i, h in acks}
+    with _open(lay, root) as (path, d, meta):
+        _reconcile(d, meta, lay, cs=_active_cs(path.parent))
+        t = Tx(coll, lay, d, meta, None)
+        live = {r["id"]: _hash(r["data"]) for r in t.items()}
+        box = meta.setdefault("outbox", [])
+        keep = [x for x in box if not (x["coll"] == coll and x["id"] in want and live.get(x["id"], "") == want[x["id"]])]
+        gone = len(box) - len(keep)
+        box[:] = keep
+        d[META] = meta
+        _save(path, d)
+    return gone
+
+
+def mark_pending(coll, iid, root=None):
+    """Make sure the item has an outbox entry (put when it is live, else delete), e.g. after a conflict was resolved
+    in favour of the local copy, which then has to be sent."""
+    lay = layout(coll)
+    iid = str(iid)
+    with _open(lay, root) as (path, d, meta):
+        cs = _active_cs(path.parent)
+        _reconcile(d, meta, lay, cs=cs)
+        live = Tx(coll, lay, d, meta, None).get(iid) is not None
+        e = {"coll": coll, "id": iid, "op": "put" if live else "delete", "at": now()}
+        if cs:
+            e["cs"] = cs
+        _outbox_add(meta, [e])
         d[META] = meta
         _save(path, d)
 

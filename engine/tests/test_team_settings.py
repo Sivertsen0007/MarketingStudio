@@ -175,7 +175,7 @@ out = {
   "social": social_probs("Off to the Bahamas \U0001F420 with expeditions"),
   "email": em.copy_problems("Spring " + EM + " dates \U0001F420", "subject"),
 }""")
-        ban = "mentions Bahamas (ML ban)"
+        ban = "mentions Bahamas (not allowed)"
         # M1: Google Ads blocks "bahamas" anywhere, Meta only as a word
         self.assertEqual(r["g_glued"], [f"row 1 Headline 1: {ban}"])
         self.assertEqual(r["g_digits"], [f"row 1 Description 1: {ban}"])
@@ -193,13 +193,13 @@ out = {
         flagged = {c: bool(v) for c, v in r["seo_emoji"].items()}
         self.assertEqual(flagged, {"\u2934": True, "\u2935": True, "\u3030": True, "\u303d": True, "\u2b06": False,
                                    "\u200d": False, "\u2b50": True})
-        self.assertEqual(r["seo_emoji"]["\u2934"], ["Has an emoji. ML copy uses none."])
-        self.assertEqual(r["seo_bahamas"], ['Never use "Bahamas" in ML copy. Found: "Bahamas".'])
+        self.assertEqual(r["seo_emoji"]["\u2934"], ["Has an emoji. Use none."])
+        self.assertEqual(r["seo_bahamas"], ['Never use "Bahamas". Found: "Bahamas".'])
         # LOW: the ownership warning stays Meta (and SoMe) only
         self.assertEqual(r["g_own"], [])
         self.assertEqual(r["m_own"], ["primary_text: no ownership claims about vessels"])
-        self.assertEqual(r["social"], [["caption: never mention the Bahamas", "caption: no emojis in ML posts"],
-                                       ['caption: no "Expeditions" in ML copy']])
+        self.assertEqual(r["social"], [["caption: never mention the Bahamas", "caption: no emojis in posts"],
+                                       ['caption: no "Expeditions" in copy']])
         self.assertEqual([p["message"] for p in r["email"]], ["No emojis (subject).", "No em dash; use a dash (-) or rewrite (subject)."])
 
     def test_settings_are_checked(self):

@@ -2,7 +2,7 @@
 
 They are not the default: a new install starts with no copy rules. They are copied once into the local settings of an
 install that has a config.json (it was set up before this version), on its first start (team_settings.first_run), so
-the checks on that Mac stay exactly as they were: the same matches, the same messages, in the same order. After that
+the checks on that Mac stay as they were: the same matches, severities and order (messages are worded neutrally). After that
 they live in <data>/studio_settings.json, where Calendar > Team settings edits them (or the team's copy replaces them).
 Nothing else reads this module.
 
@@ -19,12 +19,12 @@ PRICE = r"(?:£|\$|€|usd|gbp|eur|price|prices|priced|from|per|rate|rates|cost|
 RULES = [
     # Google Ads (gae.lint: every column, including names and URLs)
     {"id": "g_em_dash", "level": "block", "pattern": EM_DASH, "message": "contains an em dash", "areas": ["google_ads"], "early": True},
-    {"id": "g_place_ban", "level": "block", "pattern": "bahamas", "message": "mentions Bahamas (ML ban)", "areas": ["google_ads"]},
+    {"id": "g_place_ban", "level": "block", "pattern": "bahamas", "message": "mentions Bahamas (not allowed)", "areas": ["google_ads"]},
     # Meta ads, SoMe: blocks
     {"id": "m_em_dash", "level": "block", "pattern": EM_DASH, "message": "em dash - use a normal dash", "areas": ["meta_ads"]},
     {"id": "s_em_dash", "level": "block", "pattern": EM_DASH, "message": "em dash: use a normal dash (-) or rewrite", "areas": ["social"]},
     {"id": "place_ban", "level": "block", "pattern": r"\bbahamas\b", "message": "never mention the Bahamas", "areas": ["meta_ads", "social"]},
-    {"id": "s_emoji", "level": "block", "pattern": EMOJI, "message": "no emojis in ML posts", "areas": ["social"]},
+    {"id": "s_emoji", "level": "block", "pattern": EMOJI, "message": "no emojis in posts", "areas": ["social"]},
     {"id": "s_promise", "level": "block",
      "pattern": r"\bguarantee(d|s)?\b|\byou will see\b|\byou'll see\b|\bwill definitely see\b|\b100% (chance|sure)\b",
      "message": "never promise sightings, weather or conditions", "areas": ["social"]},
@@ -39,7 +39,7 @@ RULES = [
      "areas": ["ads"]},
     {"id": "ownership", "level": "warn", "pattern": r"\bour own (vessels?|boats?|fleet)\b|\bwe own\b",
      "message": "no ownership claims about vessels", "areas": ["meta_ads", "social"]},
-    {"id": "s_expeditions", "level": "warn", "pattern": r"\bexpeditions?\b", "message": 'no "Expeditions" in ML copy',
+    {"id": "s_expeditions", "level": "warn", "pattern": r"\bexpeditions?\b", "message": 'no "Expeditions" in copy',
      "areas": ["social"]},
     {"id": "s_cabin_price", "level": "warn",
      "pattern": r"(?:[$£€]\s?\d[\d,.]*|\d[\d,.]*\s?(?:USD|GBP|EUR)).{0,60}\bcabins?\b|\bcabins?\b.{0,60}(?:[$£€]\s?\d|\d\s?(?:USD|GBP|EUR))",
@@ -47,9 +47,9 @@ RULES = [
     # SEO
     {"id": "seo_em_dash", "level": "block", "pattern": EM_DASH, "message": "Has an em dash. Use a regular dash or rewrite.",
      "areas": ["seo"], "raw": True, "quote": False},
-    {"id": "seo_emoji", "level": "block", "pattern": SEO_EMOJI, "message": "Has an emoji. ML copy uses none.", "areas": ["seo"],
+    {"id": "seo_emoji", "level": "block", "pattern": SEO_EMOJI, "message": "Has an emoji. Use none.", "areas": ["seo"],
      "quote": False},
-    {"id": "seo_place_ban", "level": "block", "pattern": r"\bbahamas\b", "message": 'Never use "Bahamas" in ML copy.', "areas": ["seo"]},
+    {"id": "seo_place_ban", "level": "block", "pattern": r"\bbahamas\b", "message": 'Never use "Bahamas".', "areas": ["seo"]},
     {"id": "seo_yacht", "level": "warn", "pattern": r"\byachts?\b", "message": 'Say "vessel", not "yacht".', "areas": ["seo"]},
     {"id": "seo_promise", "level": "warn",
      "pattern": r"\b(guarantee[sd]?|guaranteed sightings?|you will (?:see|spot|meet)|you'll (?:see|spot|meet)|always see|certain to see|sure to see)\b",

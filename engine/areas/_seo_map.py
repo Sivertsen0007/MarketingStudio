@@ -43,7 +43,7 @@ def _now():
 
 
 def _empty():
-    return {"site": {k: "" for k in SITE_FIELDS}, "nodes": {}, "proposals": [], "version": 0}
+    return {"site": {**{k: "" for k in SITE_FIELDS}, "exclude": []}, "nodes": {}, "proposals": [], "version": 0}
 
 
 def load():
@@ -124,6 +124,14 @@ def _apply(m, ops, by):
             for k in SITE_FIELDS:
                 if k in (op.get("site") or {}):
                     m["site"][k] = str(op["site"][k] or "").strip()[:2000]
+            if "exclude" in (op.get("site") or {}):  # pages that deliberately have no node: [{"path": "/de/", "why": "..."}]
+                ex = []
+                for x in op["site"]["exclude"] or []:
+                    x = x if isinstance(x, dict) else {"path": str(x)}
+                    path = str(x.get("path") or "").strip().lower()
+                    if path:
+                        ex.append({"path": path, "why": str(x.get("why") or "")[:200]})
+                m["site"]["exclude"] = ex
             done.append({"op": "site"})
             continue
         if kind == "add":
@@ -400,13 +408,17 @@ def report(cur_pages, prev_pages, qp, ga=None, posts=None, inspect=None, min_imp
                   "update": sum(1 for r in ns if r["state"] == "update"),
                   "pct": round(100 * sum(1 for r in ns if r["live"]) / len(ns)) if ns else 0}
     covered_q = {q for n in nodes.values() for q in n.get("queries", [])}
+    excl = [(x["path"].rstrip("/") or "/", x["path"].endswith("/") and x["path"] != "/") for x in m["site"].get("exclude", [])]
+
+    def excluded(k):  # "/de/" = everything under /de, "/inseanq" = that page only
+        return any(k == p or (prefix and k.startswith(p + "/")) for p, prefix in excl)
     unmapped = {}
     for q, rows in by_query.items():
         imps = sum(r[2] for r in rows)
         if imps < min_imps or q in covered_q:
             continue
         top = max(rows, key=lambda r: r[2])
-        if top[0] in key_to_node:
+        if top[0] in key_to_node or excluded(top[0]):
             continue
         g = unmapped.setdefault(top[0], {"page": top[0], "impressions": 0, "clicks": 0, "queries": []})
         g["impressions"] += imps

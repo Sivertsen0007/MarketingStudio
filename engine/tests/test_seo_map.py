@@ -95,6 +95,10 @@ class Map(unittest.TestCase):
         pages = [g["page"] for g in r["unmapped"]]
         self.assertIn("/egypt-guide", pages)  # demand with no node
         self.assertNotIn("/blue-horizon", pages)
+        tm.edit([{"op": "site", "site": {"exclude": [{"path": "/egypt-guide", "why": "old page"}, "/de/"]}}])
+        r3 = tm.report(cur, prev, qp + [["x", "/de/egypt", 1, 900, 0.1, 3.0]], posts=posts, min_imps=50)
+        self.assertNotIn("/egypt-guide", [g["page"] for g in r3["unmapped"]])
+        self.assertNotIn("/de/egypt", [g["page"] for g in r3["unmapped"]])
 
 
 if __name__ == "__main__":

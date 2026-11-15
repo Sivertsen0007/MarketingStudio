@@ -73,7 +73,7 @@ function draw(){
   $("#tmPills").innerHTML = [["all", "All"], ["gap", "Gaps"], ["update", "Needs update"], ["ok", "OK"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l} <span class="n">${cnt(k)}</span></button>`).join("")
     + `<button data-f="unmapped" class="${S.filter === "unmapped" ? "on" : ""}" title="Search Console demand with no node in the map">Unmapped demand <span class="n">${(d.unmapped || []).length}</span></button>`;
   const site = d.site || {};
-  $("#tmSiteLine").innerHTML = site.central_entity || site.source_context ? `<b>Central entity:</b> ${esc(site.central_entity || "-")} · <b>Source context:</b> ${esc(site.source_context || "-")} · <b>Central search intent:</b> ${esc(site.central_search_intent || "-")}`
+  $("#tmSiteLine").innerHTML = site.central_entity || site.source_context ? `<b>Central entity:</b> ${esc(site.central_entity || "-")} · <b>Source context:</b> ${esc(site.source_context || "-")} · <b>Central search intent:</b> ${esc(site.central_search_intent || "-")}${(site.exclude || []).length ? ` · <span title="${esc(site.exclude.map(x => x.path + (x.why ? " - " + x.why : "")).join("\n"))}">${site.exclude.length} left out on purpose</span>` : ""}`
     : `No central entity yet. Press <b>Site</b>, or ask Claude to build the map (MCP: seo_map_propose).`;
   drawProps(); drawMain();
   if (S.sel) openNode(S.sel); else $("#tmWrap").classList.add("nopanel");
@@ -181,8 +181,10 @@ function siteDialog(){
   showDialog("Site: the map's anchor", `<p class="hint">The Koray method starts here. The <b>central entity</b> is what the whole site is about; the <b>source context</b> is who you are and why you publish (it decides which topics belong); the <b>central search intent</b> is the user's underlying purpose.</p>
     <div class="tm-f"><label>Central entity</label><input id="tmCe" value="${esc(s.central_entity || "")}"></div>
     <div class="tm-f"><label>Source context</label><textarea id="tmSc" rows="3">${esc(s.source_context || "")}</textarea></div>
-    <div class="tm-f"><label>Central search intent</label><textarea id="tmCi" rows="2">${esc(s.central_search_intent || "")}</textarea></div>`,
-    [["Save", async () => { try { await S.ctx.P("map_edit", {ops: [{op: "site", site: {central_entity: $("#tmCe").value, source_context: $("#tmSc").value, central_search_intent: $("#tmCi").value}}]}); dlg.close(); toast("Saved"); load() } catch(e) { toast(e.message) } }, "primary"]]);
+    <div class="tm-f"><label>Central search intent</label><textarea id="tmCi" rows="2">${esc(s.central_search_intent || "")}</textarea></div>
+    <div class="tm-f"><label>Left out of the map on purpose (one per line: path - why). A path ending in / covers everything under it.</label><textarea id="tmEx" rows="4" placeholder="/de/ - German translations">${esc((s.exclude || []).map(x => x.path + (x.why ? " - " + x.why : "")).join("\n"))}</textarea></div>`,
+    [["Save", async () => { try { await S.ctx.P("map_edit", {ops: [{op: "site", site: {central_entity: $("#tmCe").value, source_context: $("#tmSc").value, central_search_intent: $("#tmCi").value,
+      exclude: $("#tmEx").value.split("\n").map(l => l.trim()).filter(Boolean).map(l => { const i = l.indexOf(" - "); return i > 0 ? {path: l.slice(0, i).trim(), why: l.slice(i + 3).trim()} : {path: l} })}}]}); dlg.close(); toast("Saved"); load() } catch(e) { toast(e.message) } }, "primary"]]);
 }
 window.SEO_MAP = {render, reload: force => load(force)};
 })();

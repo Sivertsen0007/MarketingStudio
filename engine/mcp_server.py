@@ -126,7 +126,8 @@ AREA_TOOLS = [
      "inputSchema": {"type": "object", "properties": {"days": {"type": "integer", "enum": [7, 28, 90]}, "limit": {"type": "integer"}}}},
     {"name": "seo_map_propose",
      "description": "Propose changes to the topical map. Nothing changes until the user accepts the proposal in Studio (SEO > "
-                    "Topical map). ops is a list of: {op:'site', site:{central_entity, source_context, central_search_intent}} | "
+                    "Topical map). ops is a list of: {op:'site', site:{central_entity, source_context, central_search_intent, "
+                    "exclude:[{path, why}] (pages left out on purpose, e.g. translations; '/de/' covers everything under it)}} | "
                     "{op:'add', ref:'<temp name, optional>', node:{title, parent (node id or a ref from this batch), section "
                     "core|outer, type root|hub|attribute|commercial, entity, attribute, macro_context, queries [..], intent, "
                     "priority 1-4, url, links [{to, anchor}], note}} | {op:'update', id, node:{fields to change}} | "

@@ -623,7 +623,7 @@ def publish(body, link_check=None, w=None):
           + (f", {n_new} of them new" if new_done else "") + "."
     progress.finish(PKEY, ok, msg)
     team_event = False
-    if ok_n and team_plan.get("joined"):  # [team reviews] the why note goes to the team feed
+    if ok_n and w.live and team_plan.get("joined"):  # [team reviews] the why note goes to the team feed (not a dry run)
         team_event = team_reviews.report_push("seo", f"Published {ok_n} post{'s' if ok_n != 1 else ''} on {s['target']}", why,
                                  {"posts": ok_n, "failed": len(results) - ok_n, "new_pages": n_new},
                                  [("seo:changes", i) for i in done_ids] + [("seo:new_posts", x["id"]) for x, r in zip(news, new_done) if r["ok"]],

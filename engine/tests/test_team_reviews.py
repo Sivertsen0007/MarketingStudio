@@ -318,7 +318,7 @@ out = None
         self.assertEqual(out["outside"]["calls"], 0)
         self.assertIn("changed after it was approved", out["late"])
         self.assertTrue(out["final"]["ok"], out["final"])
-        self.assertTrue(out["final"]["reported"])
+        self.assertFalse(out["final"].get("reported"))  # demo data: nothing really went out, so nothing in the feed
         self.assertEqual(out["status"], "scheduled")
         # owners: advice only, never for my own scopes; admins set them
         self.as_owner(f"out = tr.set_owners({{'owners': {{'email/77': {me_b['id']}, 'email/78': {me_a['id']}}}}})")
@@ -495,7 +495,8 @@ out = None
         self.assertEqual(seen["s"], "approved")
         self.assertTrue(out2["ok"], out2)
         self.assertEqual(out2["new_pages"], 1)
-        self.assertTrue(out2["team_event"])
+        self.assertFalse(out2["live"])
+        self.assertIsNone(out2["team_event"])  # a dry run: nothing reached WordPress, so nothing in the feed
         content = [l for l in seen["lines"] if l["label"] == "content"]
         self.assertEqual(content[0]["kind"], "html")
         self.assertIn("HIDDEN_SEO_TAIL", content[0]["new"])
@@ -580,22 +581,47 @@ out = None
                            "old": "Old", "new": "New title"}})
             from areas import seo
             seo.chk.check_change = lambda x, link_check=None: []
-            class _W(seo.wp.DryRunWriter):  # a dry run that knows post 5 (never calls WordPress)
+            class _W(seo.wp.DryRunWriter):  # behaves as live WordPress for post 5 (never calls WordPress)
+                live = True
                 def current(self, post_id):
                     return {{"title": "Old"}}
             seo.writer = lambda s=None: _W("staging", delay=0)
+            seo.g.inspect = lambda url, force=False: {{"coverage": "stub"}}
             pv = post("/api/area/seo/publish_preview", {{"why": "why seo"}})
             pub_ = act("seo_publish", "/api/area/seo/publish", {{"token": pv.get("token"), "why": "why seo"}})
+            em.FakeAdapter.demo = False  # treat the fake platform as a real one for the counted case
             em.add_draft({{"campaign_id": "demo-4", "fields": {{"subject": "Hello team"}}}})
             W = (dt.datetime.now(em.LONDON) + dt.timedelta(days=2)).strftime("%Y-%m-%dT09:00")
             act("email_schedule", "/api/area/email/schedule", {{"id": "demo-4", "confirm": em.CONFIRM, "when": W, "tz": "Europe/London", "why": "why email"}})
             sst.save_settings({{**sst.settings(), "local_scheduler": True}})
             WS = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=3)).replace(microsecond=0).isoformat()
             p = sst.save({{"title": "Launch", "channels": ["linkedin"], "when": WS, "caption": "Hello", "format": "text"}}, "you")
+            so.test_mode = lambda: False  # Studio's own queue on this Mac: no network involved
             act("social_schedule", "/api/area/social/schedule", {{"id": p["id"], "pressed": "user", "why": "why social", "channels": ["linkedin"]}})
+            # the same actions when nothing real happens: a dry run, demo data, test mode -> no feed entry at all
+            dry = {{}}
+            def quiet(name, path, body):
+                s0 = seq()
+                r = post(path, body)
+                dry[name] = {{"ok": r.get("ok"), "msg": r.get("message") or r.get("error"), "events": [[e["kind"], e["summary"]] for e in feed(s0)]}}
+            _W.live = False
+            seo_put("c2", {{"post_id": 5, "post_title": "Post five", "url": "https://example.test/five/", "field": "title",
+                           "old": "Old", "new": "Dry title"}})
+            pv = post("/api/area/seo/publish_preview", {{"why": "dry"}})
+            quiet("seo_dry_run", "/api/area/seo/publish", {{"token": pv.get("token"), "why": "dry"}})
+            em.FakeAdapter.demo = True
+            em.add_draft({{"campaign_id": "demo-5", "fields": {{"subject": "Demo", "html": "<p>Fine <a href=\\"{{{{unsubscribe_url}}}}\\">Unsubscribe</a></p>", "preview_text": "x"}}}})
+            quiet("email_demo", "/api/area/email/schedule", {{"id": "demo-5", "confirm": em.CONFIRM, "when": W, "tz": "Europe/London", "why": "demo"}})
+            so.test_mode = lambda: True
+            p2 = sst.save({{"title": "Test", "channels": ["linkedin"], "when": WS, "caption": "Hi", "format": "text"}}, "you")
+            quiet("social_test_mode", "/api/area/social/schedule", {{"id": p2["id"], "pressed": "user", "why": "test", "channels": ["linkedin"]}})
             srv.shutdown()
-            out = res
+            out = {{"real": res, "dry": dry}}
         """))
+        dry, out = out["dry"], out["real"]
+        for name, r in dry.items():
+            self.assertTrue(r["ok"], (name, r))
+            self.assertEqual(r["events"], [], (name, r))  # nothing real happened: nothing in the team feed
         for name, r in out.items():
             self.assertTrue(r["ok"], (name, r))
             pushes = [e for e in r["events"] if e[0] in ("push", "publish", "send_to_editor")]

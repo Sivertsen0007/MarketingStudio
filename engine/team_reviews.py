@@ -448,6 +448,14 @@ def report_push(area, what, why, counts=None, items=None, scope="all", kind="pus
         return False
 
 
+def went_out(res):
+    """Did this result really change something? The same rules as team_live.after_post: a failure, a dry run
+    (live false), demo data or test mode never reaches the team feed."""
+    return (isinstance(res, dict) and res.get("ok") is not False and not res.get("error") and not res.get("problems")
+            and res.get("live") is not False and not res.get("demo") and not res.get("test_mode")
+            and not res.get("needs_approval"))
+
+
 def gated_preview(area, coll, body, fn):
     """Push / Publish preview for a list area. fn(only) -> the area's preview dict; the plan goes in res["team"]."""
     if not joined():
@@ -473,7 +481,7 @@ def gated_push(area, coll, body, fn, what, kind="push"):
     res = fn(only)
     if isinstance(res, dict) and p["joined"]:
         res["team"] = public(p)
-        if res.get("ok"):
+        if res.get("ok") and went_out(res):
             n = res.get("applied") if isinstance(res.get("applied"), int) else len(p["allowed"])
             pushed = [k.split("\t", 1) for k in p["allowed"] if only is None or k.split("\t", 1)[1] in only]
             res["reported"] = report_push(area, f"{what} ({len(pushed)} change{'s' if len(pushed) != 1 else ''})", why,
@@ -521,7 +529,7 @@ def single_action(area, coll, iid, body, what, fn):
         body["_team_expect"] = entry["hash"]  # the area checks it again right before it sends (recheck())
     label = entry["label"]  # before fn: Send removes the email draft
     res = fn()
-    if isinstance(res, dict) and res.get("ok"):
+    if isinstance(res, dict) and res.get("ok") and went_out(res):
         res["reported"] = report_push(area, f"{what}: {label}", why, {"items": 1}, [(coll, str(iid))])
         res["team_event"] = res["reported"]
     if isinstance(res, dict):

@@ -817,7 +817,9 @@ def plan(acct, enable_new=False, items=None, source=None):
 def _only(acct, only):
     """The draft items in this push: all of them, or (team approvals / push by person) only the ids in `only`."""
     items = core.draft(acct)["items"]
-    return items if only is None else [i for i in items if i["id"] in only]
+    if only is None:
+        return items
+    return [i for i in items if (only.admits(i) if hasattr(only, "admits") else i["id"] in only)]
 
 
 def push(acct, enable_new=False, accept_spend=False, accept_permanent=False, only=None):

@@ -511,6 +511,15 @@ def _team(body, what, fn):
     return team_reviews.single_action("social", "social", str(body["id"]), body, what, fn)
 
 
+def _team_recheck(body, p):
+    """[team reviews] Still the approved post, now that it is read under the lock?"""
+    if not body.get("_team_expect"):
+        return None
+    import team_reviews  # noqa: PLC0415
+    why = team_reviews.recheck(body, "social", str(p["id"]), p)
+    return {"ok": False, "needs_team_approval": True, "message": why, "post": _view(p)} if why else None
+
+
 def post_now(body):
     """Publish now on the post's ticked channels (minus ones already published). User's button only."""
     _pressed(body)
@@ -518,6 +527,9 @@ def post_now(body):
     def go():
         p = store.get(body["id"])
         _block_checking(p, body.get("channels") or p["channels"])
+        stale = _team_recheck(body, p)
+        if stale:
+            return stale
         chs = [c for c in (body.get("channels") or p["channels"]) if c in p["channels"]
                and ((p.get("results") or {}).get(c) or {}).get("status") not in ("published", "scheduled", "publishing")]
         if not chs:
@@ -566,6 +578,9 @@ def schedule(body):
     def go():
         p = store.get(body["id"])
         _block_checking(p, body.get("channels") or p["channels"])
+        stale = _team_recheck(body, p)
+        if stale:
+            return stale
         when = store.parse_when(p.get("when"))
         s = store.settings()
         chs = [c for c in (body.get("channels") or p["channels"]) if c in p["channels"]

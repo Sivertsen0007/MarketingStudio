@@ -237,28 +237,71 @@ class Reviews(unittest.TestCase):
         alex, me_a = self.member("Alex")
         bo, me_b = self.member("Bo", approver=True)
         self.policy(email=True)
-        out = self.run_in(alex, """
-            em.add_draft({"campaign_id": "77", "fields": {"subject": "Hello"}})
-            team.sync()
-            calls = []
-            act = lambda: calls.append(1) or {"ok": True, "message": "sent"}
-            blocked = tr.single_action("email", "email", "77", {"why": "launch"}, "Sent an email", act)
-            out = {"blocked": blocked, "calls": len(calls), "gate": tr.gate("email", "email", "77")}
-        """)
-        self.assertTrue(out["blocked"]["needs_team_approval"])
-        self.assertEqual(out["calls"], 0)
-        self.assertEqual(out["gate"]["needs"][0]["id"], "77")
-        rv = self.run_in(alex, f"out = tr.request({{'group': {{'area': 'email', 'key': '77'}}, 'reviewers': [{me_b['id']}]}})")
-        self.run_in(bo, f"out = tr.decide({{'id': {rv['id']}, 'decision': 'approve'}})")
-        out = self.run_in(alex, """
-            calls = []
-            act = lambda: calls.append(1) or {"ok": True, "message": "sent"}
-            res = tr.single_action("email", "email", "77", {"why": "launch"}, "Sent an email", act)
-            out = {"res": res, "calls": len(calls)}
-        """)
-        self.assertTrue(out["res"]["ok"])
-        self.assertEqual(out["calls"], 1)
-        self.assertTrue(out["res"]["reported"])
+        prelude = """
+            import datetime as dt
+            from zoneinfo import ZoneInfo
+            W = (dt.datetime.now(ZoneInfo("Europe/London")) + dt.timedelta(days=2)).strftime("%Y-%m-%dT09:00")
+            def sched():
+                return em.p_schedule({"id": "demo-4", "confirm": em.CONFIRM, "when": W, "tz": "Europe/London", "why": "launch"})
+            def status():
+                return em.adapter().get_campaign("demo-4", fresh=True)["status"]
+            def single():
+                calls = []
+                r = tr.single_action("email", "email", "demo-4", {"why": "launch"}, "Sent an email",
+                                     lambda: calls.append(1) or {"ok": True, "message": "sent"})
+                return {"ok": bool(r.get("ok")), "calls": len(calls), "message": r.get("message"), "reported": r.get("reported")}
+        """
+        # no approval: the real Schedule is refused and nothing changes on the platform
+        prelude = textwrap.dedent(prelude)
+        out = self.run_in(alex, prelude + "out = {'sched': sched(), 'status': status(), 'gate': tr.gate('email', 'email', 'demo-4'),"
+                                          " 'nothing': err(tr.request, {'group': {'area': 'email', 'key': 'nope'}, 'reviewers': [1]})}")
+        self.assertTrue(out["sched"]["needs_team_approval"], out["sched"])
+        self.assertEqual(out["status"], "draft")
+        self.assertEqual(out["gate"]["needs"][0]["id"], "demo-4")
+        self.assertIn("Can't read", out["nothing"])  # a review of nothing is refused
+        # approval of the campaign as the platform has it (no Studio draft): the content that goes out is hashed
+        rv = self.run_in(alex, f"out = tr.request({{'group': {{'area': 'email', 'key': 'demo-4'}}, 'reviewers': [{me_b['id']}]}})")
+        self.assertEqual(rv["items"][0]["version"], 0)
+        self.assertEqual(len(rv["items"][0]["content_hash"]), 64)
+        seen = self.run_in(bo, f"v = tr.view({{'id': {rv['id']}}}); out = {{'match': v['items'][0]['local_matches'],"
+                               f" 'lines': v['items'][0]['lines'], 'dec': tr.decide({{'id': {rv['id']}, 'decision': 'approve'}})['status']}}")
+        self.assertTrue(seen["match"])
+        self.assertIn("The new season opens", json.dumps(seen["lines"]))
+        self.assertEqual(seen["dec"], "approved")
+        out = self.run_in(alex, prelude + textwrap.dedent("""
+            ok = single()
+            # the review's hole: add a Studio draft, Save to platform (draft gone again), then Send: refused
+            em.add_draft({"campaign_id": "demo-4", "fields": {"subject": "Sneaky new subject"}})
+            em.p_save_to_platform({"id": "demo-4"})
+            after_save = {"draft": em.list_drafts(), "single": single(), "sched": sched(), "status": status()}
+            # an edit on the platform outside Studio, put back: covered again; changed: refused
+            em.adapter().patch("demo-4", {"subject": "The new season opens"})
+            back = single()
+            em.adapter().patch("demo-4", {"preview_text": "Changed on the platform"})
+            outside = single()
+            em.adapter().patch("demo-4", {"preview_text": "Dates and spaces for the new season"})
+            # the check right before sending: the platform copy is read again
+            body = {"_team_expect": tr._single_entry("email", "demo-4")["hash"]}
+            em.adapter().patch("demo-4", {"subject": "Last-second edit"})
+            late = tr.recheck(body, "email", "demo-4")
+            em.adapter().patch("demo-4", {"subject": "The new season opens"})
+            final = sched()
+            out = {"ok": ok, "after_save": after_save, "back": back, "outside": outside, "late": late,
+                   "final": final, "status": status()}
+        """))
+        self.assertEqual(out["ok"]["calls"], 1)
+        self.assertTrue(out["ok"]["reported"])
+        self.assertEqual(out["after_save"]["draft"], [])
+        self.assertEqual(out["after_save"]["single"]["calls"], 0)
+        self.assertIn("changed since it was approved", out["after_save"]["single"]["message"])
+        self.assertTrue(out["after_save"]["sched"]["needs_team_approval"])
+        self.assertEqual(out["after_save"]["status"], "draft")
+        self.assertEqual(out["back"]["calls"], 1)
+        self.assertEqual(out["outside"]["calls"], 0)
+        self.assertIn("changed after it was approved", out["late"])
+        self.assertTrue(out["final"]["ok"], out["final"])
+        self.assertTrue(out["final"]["reported"])
+        self.assertEqual(out["status"], "scheduled")
         # owners: advice only, never for my own scopes; admins set them
         self.as_owner(f"out = tr.set_owners({{'owners': {{'email/77': {me_b['id']}, 'email/78': {me_a['id']}}}}})")
         out = self.run_in(alex, """
@@ -281,6 +324,67 @@ class Reviews(unittest.TestCase):
         self.assertNotIn("team", out["push"]["res"])
         self.assertEqual(out["calls"], 1)
         self.assertFalse(out["gate"]["joined"])
+
+    def test_fail_closed_scope_mine_push_snapshot_and_editor(self):
+        alex, me_a = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        # never seen the rules and can't reach the server: live actions wait
+        cold, _ = self.member("Cold")
+        out = self.run_in(cold, """
+            ads_put("c1", "Cold budget")
+            appconfig.set_many({"TEAM_SERVER_URL": "http://127.0.0.1:9"})
+            out = {"push": gated({"why": "x"}), "single": tr.single_action("social", "social", "x", {"why": "x"}, "Posted", lambda: {"ok": True})}
+        """)
+        self.assertEqual(out["push"]["pushed"], "not called")
+        self.assertIn("Can't check the team's approval rules", out["push"]["res"]["message"])
+        self.assertFalse(out["single"]["ok"])
+        self.assertIn("Can't check the team's approval rules", out["single"]["message"])
+        # Only mine for one item: someone else's post is refused
+        self.run_in(bo, """
+            with draftstore.tx("social", ROOT, by="you") as t:
+                t.put("sp1", {"id": "sp1", "title": "Bo's post"}, "you")
+            team.sync(); out = None
+        """)
+        out = self.run_in(alex, """
+            team.sync()
+            calls = []
+            act = lambda: calls.append(1) or {"ok": True}
+            mine = tr.single_action("social", "social", "sp1", {"why": "w", "scope": "mine"}, "Posted", act)
+            out = {"mine": mine, "calls": len(calls)}
+            tr.single_action("social", "social", "sp1", {"why": "w"}, "Posted", act)
+            out["all_calls"] = len(calls)
+        """)
+        self.assertFalse(out["mine"]["ok"])
+        self.assertIn("someone else's", out["mine"]["message"])
+        self.assertEqual(out["calls"], 0)
+        self.assertEqual(out["all_calls"], 1)
+        # approved a1, then a1 is edited while the push runs: the push's own read leaves it out
+        self.policy(ads=True)
+        rv = self.run_in(alex, f"""
+            ads_put("a1", "Budget 10")
+            team.sync()
+            out = tr.request({{"items": [{{"coll": COLL, "id": "a1"}}], "reviewers": [{me_b['id']}]}})
+        """)
+        self.run_in(bo, f"out = tr.decide({{'id': {rv['id']}, 'decision': 'approve'}})")
+        out = self.run_in(alex, """
+            def racy(only):
+                ads_put("a1", "Budget 99")  # someone edits it after the plan was made
+                items = draftstore.read(COLL, ROOT)["items"]
+                return {"ok": True, "got": [i["id"] for i in items if tr.admits(only, i)]}
+            ads_put("a1", "Budget 10")
+            res = tr.gated_push("ads", COLL, {"why": "race"}, racy, "Pushed")
+            # Send to Editor goes through the same gate and lands in the feed as send_to_editor
+            ads_put("a1", "Budget 10")
+            ed = tr.gated_push("ads", COLL, {"why": "to Editor"}, lambda only: {"ok": True, "output": "sent", "got": sorted(only)},
+                               "Sent to Google Ads Editor", kind="send_to_editor")
+            evs = [e for e in team._api("GET", "/api/v1/events?since=0")["events"] if e["kind"] == "send_to_editor"]
+            out = {"race": res["got"], "editor": ed["got"], "ev": evs[-1]["summary"] if evs else None,
+                   "no_why": err(tr.gated_push, "ads", COLL, {}, lambda only: {"ok": True}, "x", "send_to_editor")}
+        """)
+        self.assertEqual(out["race"], [])
+        self.assertEqual(out["editor"], ["a1"])
+        self.assertIn("to Editor", out["ev"])
+        self.assertIn("why", out["no_why"])
 
     def test_seo_publish_gated_and_viewer(self):
         alex, me_a = self.member("Alex")

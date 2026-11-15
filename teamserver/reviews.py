@@ -27,6 +27,7 @@ MAX_OWNERS = 2000
 CONTENT_SKIP = ("at", "ts", "by", "updated", "updated_at", "edited_at", "edited_by", "problems", "warnings",
                 "approval", "approved_by", "approved_at")
 SCOPE_RE = re.compile(r"[a-z_][^\x00-\x1f\x7f]{0,199}")
+HASH_RE = re.compile(r"[0-9a-f]{64}")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reviews (
@@ -72,19 +73,30 @@ def _current(db, coll, iid):
     return r["version"], content_hash(json.loads(r["data"]))
 
 
+def _decider_ok(db, r):
+    """An approval counts only while the member who gave it may still approve."""
+    if r["status"] != "approved" or not r["decided_by"]:
+        return False
+    m = db.execute("SELECT * FROM members WHERE id=?", (r["decided_by"],)).fetchone()
+    return _eligible(m)
+
+
 def _review_out(db, r):
     items = []
     for it in json.loads(r["items"]):
         version, h = _current(db, it["coll"], it["id"])
+        ch = it.get("content_hash")
+        # content_hash: the client hashed what a send would really send (e.g. an email campaign: the platform copy with
+        # any draft on top). The server can't see that content, so only the client can tell whether it changed.
         items.append({"coll": it["coll"], "id": it["id"], "version": it["version"], "hash": it["hash"],
-                      "current_version": version, "stale": h != it["hash"]})
+                      "content_hash": ch, "current_version": version, "stale": False if ch else h != it["hash"]})
     n = db.execute("SELECT COUNT(*) n FROM comments WHERE coll='review' AND item_id=?", (str(r["id"]),)).fetchone()["n"]
     return {"id": r["id"], "changeset": {"id": r["cs_id"], "name": r["cs_name"] or ""} if r["cs_id"] else None,
             "title": r["title"] or "", "area": r["area"] or "", "items": items, "requested_by": r["requested_by"],
             "reviewers": json.loads(r["reviewers"]), "status": r["status"], "note": r["note"] or "",
             "decision_note": r["decision_note"] or "", "decided_by": r["decided_by"], "decided_at": iso(r["decided_at"]),
             "at": iso(r["at"]), "updated_at": iso(r["updated_at"]), "comments": n,
-            "stale": any(i["stale"] for i in items)}
+            "stale": any(i["stale"] for i in items), "decider_ok": _decider_ok(db, r)}
 
 
 def _changeset(body):
@@ -128,15 +140,32 @@ def _requested_items(db, raw):
         if (coll, iid) in seen:
             continue
         seen.add((coll, iid))
+        ch = it.get("content_hash")
+        if ch is not None and (not isinstance(ch, str) or not HASH_RE.fullmatch(ch)):
+            raise ApiError(400, "content_hash must be 64 lower-case hex characters")
         cur, h = _current(db, coll, iid)
         if version != cur:
             raise ApiError(409, "%s/%s changed on the server (version %d, not %d): sync and ask again"
                            % (coll, iid, cur, version), {"coll": coll, "id": iid, "current_version": cur})
-        out.append({"coll": coll, "id": iid, "version": version, "hash": h})
+        if not h and not ch:
+            raise ApiError(400, "%s/%s: there is nothing to review (no such item, and no content_hash)" % (coll, iid))
+        entry = {"coll": coll, "id": iid, "version": version, "hash": h}
+        if ch:
+            entry["content_hash"] = ch
+        out.append(entry)
     return out
 
 
-def _reviewers(db, actor, raw):
+def _authored_by(db, items, mid):
+    """Did this member make or last change any of these items? They can't approve their own work."""
+    for it in items:
+        r = db.execute("SELECT author, updated_by FROM items WHERE coll=? AND id=?", (it["coll"], it["id"])).fetchone()
+        if r and mid in (r["author"], r["updated_by"]):
+            return True
+    return False
+
+
+def _reviewers(db, actor, raw, items=()):
     if not isinstance(raw, list) or not raw:
         raise ApiError(400, "pick at least one reviewer (reviewers: [member id])")
     if len(raw) > MAX_REVIEWERS:
@@ -151,6 +180,9 @@ def _reviewers(db, actor, raw):
             raise ApiError(400, "reviewers: unknown member %d" % mid)
         if not _eligible(m):
             raise ApiError(400, "%s can't approve (not an approver, admin or owner)" % m["name"])
+        if _authored_by(db, items, mid):
+            raise ApiError(400, "%s made or changed items in this review, so can't approve it: pick another approver"
+                           % m["name"])
         if mid not in out:
             out.append(mid)
     return out
@@ -193,7 +225,7 @@ def request_review(store, actor, body):
                 raise ApiError(400, "too many items in one review (max %d)" % MAX_ITEMS)
         else:
             items = _requested_items(db, body.get("items"))
-        reviewers = _reviewers(db, actor, body.get("reviewers"))
+        reviewers = _reviewers(db, actor, body.get("reviewers"), items)
         areas = {area_of(i["coll"]) for i in items}
         area = area or (areas.pop() if len(areas) == 1 else "multi")
         title = title or (cs["name"] if cs and cs["name"] else _summary_of(items))
@@ -238,7 +270,8 @@ def list_reviews(store, actor, query):
             if flag("to_me") and actor["id"] not in json.loads(r["reviewers"]):
                 continue
             rv = _review_out(store.db, r)
-            if flag("current") and all(i["stale"] for i in rv["items"]):
+            if flag("current") and (all(i["stale"] for i in rv["items"])
+                                    or (rv["status"] == "approved" and not rv["decider_ok"])):
                 continue
             out.append(rv)
             if len(out) >= MAX_LIST:
@@ -276,6 +309,19 @@ def decide(store, actor, rid, body):
             raise ApiError(403, "only approvers, admins and owners can decide reviews")
         if r["status"] != "open":
             raise ApiError(409, "this review is %s, not open" % r["status"])
+        items = json.loads(r["items"])
+        if decision == "approve":
+            if _authored_by(db, items, actor["id"]):
+                raise ApiError(403, "you made or changed items in this review: another approver must decide it")
+            confirm = body.get("confirm") or []
+            if not isinstance(confirm, list):
+                raise ApiError(400, "confirm must be a list of {coll, id, content_hash}")
+            seen = {(c.get("coll"), str(c.get("id"))): c.get("content_hash") for c in confirm if isinstance(c, dict)}
+            for it in items:
+                if it.get("content_hash") and seen.get((it["coll"], it["id"])) != it["content_hash"]:
+                    raise ApiError(409, "%s/%s is not what was asked about any more (changed in Studio or on the"
+                                        " platform): it has to be asked about again" % (it["coll"], it["id"]),
+                                   {"coll": it["coll"], "id": it["id"]})
         status = "approved" if decision == "approve" else "changes_requested"
         db.execute("UPDATE reviews SET status=?, decision_note=?, decided_by=?, decided_at=?, updated_at=? WHERE id=?",
                    (status, note, actor["id"], now, now, rid))

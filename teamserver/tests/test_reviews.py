@@ -110,13 +110,27 @@ class TestReviews(ReviewBase):
         self.assertEqual(out["current_version"], 1)
         self.assertEqual(self.ask(self.alex, [{"coll": "BAD", "id": "p1", "version": 1}], [self.bo])[0], 400)
         self.assertEqual(self.ask(self.alex, [{"coll": "social", "id": "p1", "version": "1"}], [self.bo])[0], 400)
-        # version 0 = no such item (e.g. an email campaign with no Studio draft)
-        s, rv = self.ask(self.alex, [{"coll": "email", "id": "99", "version": 0}], [self.owner])
+        # version 0 = no such item: a review of nothing is refused unless the client names the content it hashed
+        s, out = self.ask(self.alex, [{"coll": "email", "id": "99", "version": 0}], [self.owner])
+        self.assertEqual(s, 400, out)
+        self.assertIn("nothing to review", out["error"])
+        self.assertEqual(self.ask(self.alex, [{"coll": "email", "id": "99", "version": 0, "content_hash": "xyz"}],
+                                  [self.owner])[0], 400)
+        h = "a" * 64
+        s, rv = self.ask(self.alex, [{"coll": "email", "id": "99", "version": 0, "content_hash": h}], [self.owner])
         self.assertEqual(s, 200, rv)
-        self.assertEqual(rv["items"][0]["hash"], "")
+        self.assertEqual(rv["items"][0]["content_hash"], h)
         self.assertFalse(rv["items"][0]["stale"])
+        # approving content-hashed items needs the approver's own hash of what they saw, and it must match
+        s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve"}, self.owner["token"])
+        self.assertEqual(s, 409, out)
+        s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"],
+                           {"decision": "approve", "confirm": [{"coll": "email", "id": "99", "content_hash": "b" * 64}]},
+                           self.owner["token"])
+        self.assertEqual(s, 409, out)
         # admins and owners may approve without the flag
-        self.assertEqual(self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve"},
+        self.assertEqual(self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"],
+                                 {"decision": "approve", "confirm": [{"coll": "email", "id": "99", "content_hash": h}]},
                                  self.owner["token"])["status"], "approved")
         self.assertEqual(self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "maybe"},
                                    self.owner["token"])[0], 400)
@@ -148,6 +162,39 @@ class TestReviews(ReviewBase):
         s, out = self.call("POST", "/api/v1/reviews", {"changeset": cs, "from_changeset": True,
                                                        "reviewers": [self.bo["member"]["id"]]}, self.owner["token"])
         self.assertEqual(s, 400, out)
+
+
+class TestApproverRules(ReviewBase):
+    def test_authors_cannot_approve_their_own_items(self):
+        self.put(self.alex, "social", "p1", 0, {"id": "p1", "text": "x"})
+        self.put(self.bo, "social", "p2", 0, {"id": "p2", "text": "y"})
+        items = [{"coll": "social", "id": "p1", "version": 1}, {"coll": "social", "id": "p2", "version": 1}]
+        s, out = self.ask(self.alex, items, [self.bo])
+        self.assertEqual(s, 400, out)
+        self.assertIn("made or changed", out["error"])
+        s, rv = self.ask(self.alex, items[:1], [self.bo])
+        self.assertEqual(s, 200, rv)
+        # Bo edits Alex's item after being asked: Bo can no longer approve it
+        self.put(self.bo, "social", "p1", 1, {"id": "p1", "text": "x", "at": "now"})
+        s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve"}, self.bo["token"])
+        self.assertEqual(s, 403, out)
+        # asking for changes is still fine
+        self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "request_changes"}, self.bo["token"])
+
+    def test_approval_lapses_when_decider_loses_rights(self):
+        self.put(self.alex, "social", "p1", 0, {"id": "p1", "text": "x"})
+        s, rv = self.ask(self.alex, [{"coll": "social", "id": "p1", "version": 1}], [self.bo])
+        out = self.ok("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve"}, self.bo["token"])
+        self.assertTrue(out["decider_ok"])
+        self.assertEqual(len(self.ok("GET", "/api/v1/reviews?status=approved&current=1", token=self.alex["token"])["reviews"]), 1)
+        self.ok("PATCH", "/api/v1/members/%d" % self.bo["member"]["id"], {"approver": False}, self.owner["token"])
+        self.assertEqual(self.ok("GET", "/api/v1/reviews?status=approved&current=1", token=self.alex["token"])["reviews"], [])
+        self.assertFalse(self.ok("GET", "/api/v1/reviews/%d" % rv["id"], token=self.alex["token"])["decider_ok"])
+
+    def test_send_to_editor_event_kind(self):
+        ev = self.ok("POST", "/api/v1/events", {"kind": "send_to_editor", "area": "ads", "summary": "Sent: why"},
+                     self.alex["token"])
+        self.assertEqual(ev["kind"], "send_to_editor")
 
 
 class TestPolicyOwners(ReviewBase):

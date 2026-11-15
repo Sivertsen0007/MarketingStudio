@@ -515,15 +515,20 @@ def validate(acct):
     return results
 
 
-def push(acct, title=None, why=None):
-    """Write the whole draft into Editor as pending changes (gae apply --restart), then archive it."""
+def push(acct, title=None, why=None, only=None):
+    """Write the whole draft into Editor as pending changes (gae apply --restart), then archive it.
+    only: (team approvals / push by person) just these draft items; see team_reviews.Only."""
     results = validate(acct)
+    d = draft(acct)
+    if only is not None:
+        keep = {i["id"] for i in d["items"] if (only.admits(i) if hasattr(only, "admits") else i["id"] in only)}
+        results = [r for r in results if r["id"] in keep]
+        d["items"] = [i for i in d["items"] if i["id"] in keep]
     bad = [r for r in results if not r["ok"]]
     if not results:
-        return {"ok": False, "output": "The draft is empty."}
+        return {"ok": False, "output": "The draft is empty." if only is None else "Nothing in the draft can go to Editor."}
     if bad:
         return {"ok": False, "output": "Fix these first:\n" + "\n".join(f"- {r['summary']}: {'; '.join(r['problems'])}" for r in bad)}
-    d = draft(acct)
     stamp = dt.datetime.now()
     plan = {"title": title or f"Ads Studio {stamp:%d %b %H:%M}", "why": why or "; ".join(sorted({i['note'] for i in d['items'] if i['note']})) or None,
             "changes": [i["change"] for i in d["items"]]}

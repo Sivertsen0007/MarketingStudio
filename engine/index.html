@@ -822,9 +822,11 @@ async function sendToEditor(){
   const msg = (st.editor_running ? "Google Ads Editor will close and reopen (about 15 seconds). Any half-typed edit in Editor is lost.\n\n" : "") +
     `Send ${st.draft.items.length} change(s) into Editor as pending changes? Nothing goes live until you Post in Editor.`;
   if (!confirm(msg)) return;
+  const TR = window.TeamReviews; // [team reviews] in a team: the why note, and only approved changes when required
+  if (TR && TR.joined && !(TR.extra().why || "").trim()){ const w = prompt("Why are you sending this? (one line, your team sees it)"); if (!w || !w.trim()) return; TR.setWhy(w) }
   showDialog("Sending to Google Ads Editor", `<div class="prog-h"><span class="spin"></span>Sending ...</div>`, []);
   try {
-    const r = await api("/api/push", {});
+    const r = await api("/api/push", TR ? TR.extra() : {});
     showDialog(r.ok ? "Sent to Google Ads Editor" : "Not sent", `<pre class="out">${esc(r.output)}</pre>${r.ok ? `<p class="hint">Review the changes in Editor (they carry the comment shown above), then Post.</p>` : ""}`, []);
   } catch(err) { toast(err.message) }
   poll(true);

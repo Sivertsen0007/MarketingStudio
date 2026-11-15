@@ -15,6 +15,7 @@
   const get = (name, q) => call(R + name + (q ? "?" + new URLSearchParams(q).toString() : ""));
   const post = (name, body) => call(R + name, body || {});
   const say = m => (typeof toast === "function" ? toast(m) : alert(m));
+  const col = c => /^#[0-9a-fA-F]{6}$/.test(String(c || "")) ? c : "#888888"; // only a real colour goes into style=
   const AREA = {ads:"Ads", email:"Email", seo:"SEO", social:"SoMe", multi:"Several areas"};
   const STATUS = {open:"Waiting", approved:"Approved", changes_requested:"Changes requested", withdrawn:"Withdrawn"};
 
@@ -142,7 +143,7 @@
     let rv; try { rv = (await get("reviewers")).reviewers } catch(e) { return say(e.message) }
     if (!rv.length) return say("Nobody in the team can approve yet: an admin can tick Approver on a member");
     open("Send for approval", `<p>Send ${esc(what || "these changes")} for approval. Studio syncs first, so the reviewers see exactly this version.</p>
-      <p><b>Reviewers</b></p>${rv.map(m => `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" value="${m.id}"> <span class="tr-dot" style="background:${esc(m.colour || "#888")}"></span>${esc(m.name)} <span class="tr-meta">${esc(m.role)}${m.approver ? ", approver" : ""}</span></label>`).join("")}
+      <p><b>Reviewers</b></p>${rv.map(m => `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" value="${m.id}"> <span class="tr-dot" style="background:${col(m.colour)}"></span>${esc(m.name)} <span class="tr-meta">${esc(m.role)}${m.approver ? ", approver" : ""}</span></label>`).join("")}
       <p><b>Note</b></p><textarea class="tr-note" id="trReqNote" maxlength="500" placeholder="What should they look at?"></textarea>`,
       [["Cancel", () => dlg.close()], ["Send for approval", async () => {
         const ids = [...dlg.querySelectorAll("input[type=checkbox]:checked")].map(x => +x.value);
@@ -159,7 +160,7 @@
     return `<h4 style="margin:0 0 4px">Approval needed before going live</h4><p class="hint">When on, Push live / Publish / Send / Schedule in that area only take changes with a current approval.${isAdmin ? "" : " Only admins and owners can change this."}</p>
       ${["ads", "email", "seo", "social"].map(a => `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-pol="${a}" ${p.require_approval[a] ? "checked" : ""} ${dis}> ${AREA[a]}</label>`).join("")}
       <h4 style="margin:14px 0 4px">Owners</h4><p class="hint">Someone who edits in an owned area sees "Owned by ..." (a note, nothing is blocked). Scopes look like ads:&lt;account&gt;/campaign/&lt;campaign&gt;, email/&lt;campaign id&gt;, seo/post/&lt;post id&gt;, seo:map_nodes/&lt;node id&gt;, social/&lt;post id&gt;.</p>
-      ${own.length ? own.map(([s, m]) => `<div class="tr-ln"><div>${esc(s)}</div><div><span class="tr-dot" style="background:${esc(m.colour)}"></span>${esc(m.name)} ${isAdmin ? `<a href="#" data-unown="${esc(s)}">remove</a>` : ""}</div></div>`).join("") : `<p class="tr-meta">No owners set.</p>`}
+      ${own.length ? own.map(([s, m]) => `<div class="tr-ln"><div>${esc(s)}</div><div><span class="tr-dot" style="background:${col(m.colour)}"></span>${esc(m.name)} ${isAdmin ? `<a href="#" data-unown="${esc(s)}">remove</a>` : ""}</div></div>`).join("") : `<p class="tr-meta">No owners set.</p>`}
       ${isAdmin ? `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><input id="trOwnScope" placeholder="scope" style="flex:1;min-width:180px"><select id="trOwnWho">${Object.entries(ST.members || {}).map(([id, m]) => `<option value="${esc(id)}">${esc(m.name)}</option>`).join("")}</select><button id="trOwnAdd">Set owner</button></div>` : ""}`;
   }
   function wireRules(isAdmin){
@@ -182,7 +183,7 @@
       const o = await get("owner_note", {scopes:key});
       if (!o.owner) return;
       const el = document.getElementById("trOwner");
-      el.innerHTML = `<span class="tr-dot" style="background:${esc(o.colour)}"></span>${esc(o.note)}`;
+      el.innerHTML = `<span class="tr-dot" style="background:${col(o.colour)}"></span>${esc(o.note)}`;
       el.style.display = "block"; clearTimeout(el._t); el._t = setTimeout(() => { el.style.display = "none" }, 6000);
     } catch(e) {}
   }
@@ -221,6 +222,6 @@
   const ready = t => !t || !t.joined || !t.why_required || !!WHY.trim();
   async function gate(area, coll, id){ if (!ST.joined) return null; try { return await get("gate", {area, coll, id, scope:SCOPE}) } catch(e) { return {joined:true, why_required:true, error:e.message, needs:[], people:[]} } }
 
-  window.TeamReviews = {section, wire, extra, ready, gate, ownerNote, requestDialog, open:showList,
+  window.TeamReviews = {section, wire, extra, ready, gate, ownerNote, requestDialog, open:showList, setWhy:w => { WHY = String(w || "") },
                         get joined(){ return !!ST.joined }, refresh};
 })();

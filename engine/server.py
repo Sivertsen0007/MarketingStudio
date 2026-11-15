@@ -390,8 +390,9 @@ class H(BaseHTTPRequestHandler):
         def push():
             if not PUSH_LOCK.acquire(blocking=False):
                 raise ValueError("a push is already running")
-            try:
-                return core.push(acct, body.get("title"), body.get("why"))
+            try:  # [team reviews] gated like Push live when the team requires approval for Ads
+                return team_reviews.gated_push("ads", f"ads:{acct}", body, lambda only: core.push(
+                    acct, body.get("title"), body.get("why"), only), "Sent to Google Ads Editor", kind="send_to_editor")
             finally:
                 PUSH_LOCK.release()
 

@@ -1437,6 +1437,12 @@ def _schedule(a, body, when, now_send):
     c, err, probs = _prepare(a, cid, "send" if now_send else "schedule", lines)
     if err:
         return {"ok": False, "message": err, "problems": probs}
+    if body.get("_team_expect"):  # [team reviews] still the approved content, as the platform has it now?
+        import team_reviews  # noqa: PLC0415
+        why = team_reviews.recheck(body, "email", str(cid))
+        if why:
+            progress.finish(KEY, False, why)
+            return {"ok": False, "needs_team_approval": True, "message": why}
     if c["status"] != "draft":
         progress.finish(KEY, False, f"It is {c['status']}, not a draft.")
         return {"ok": False, "message": f"Only a draft can be scheduled (this one is {c['status']})."}
@@ -1465,6 +1471,17 @@ def _schedule(a, body, when, now_send):
         time.sleep(0.5 if a.demo else 3)
     progress.finish(KEY, True, "Still sending: see the campaigns grid for the latest count")
     return {"ok": True, "message": "Still sending. The grid shows the latest count."}
+
+
+TEAM_CONTENT = EDITABLE + ("from_address", "reply_to", "blocks")
+
+
+def team_content(cid, campaign=None):
+    """[team reviews] What a Send would send: the platform campaign (fetched fresh) with any Studio draft on top.
+    An approval covers exactly this, so edits on the platform or a draft saved there outside Send are caught."""
+    if campaign is None:
+        campaign, _, _ = _merged(adapter(), cid, fresh=True)
+    return {"campaign_id": str(cid), **{k: campaign.get(k) for k in TEAM_CONTENT}}
 
 
 def _team(body, what, fn):

@@ -59,8 +59,11 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {"account": ACCT}}},
     {"name": "send_draft_to_editor",
      "description": "Write the whole draft into Google Ads Editor as pending changes (closes and reopens Editor, ~15s). Only call "
-                    "this when the user has explicitly said to send it in this conversation. Nothing goes live until they Post in Editor.",
+                    "this when the user has explicitly said to send it in this conversation. Nothing goes live until they Post in Editor. "
+                    "In a team: needs the user's one-line why, and when the team requires approval for Ads only approved "
+                    "changes are sent.",
      "inputSchema": {"type": "object", "properties": {"account": ACCT, "title": {"type": "string"},
+                                                      "why": {"type": "string", "description": "the user's one-line why (team)"},
                                                       "user_confirmed": {"type": "boolean", "description": "must be true"}},
                      "required": ["user_confirmed"]}},
     {"name": "preview_live_push",
@@ -375,7 +378,9 @@ def call(name, a):
     if name == "send_draft_to_editor":
         if a.get("user_confirmed") is not True:
             raise ValueError("Ask the user first; call again with user_confirmed=true once they have said to send it.")
-        return core.push(acct, a.get("title"))
+        import team_reviews  # noqa: PLC0415 - gated like the Send to Editor button when the team requires approval
+        return team_reviews.gated_push("ads", f"ads:{acct}", {"why": a.get("why")}, lambda only: core.push(
+            acct, a.get("title"), a.get("why"), only), "Sent to Google Ads Editor", kind="send_to_editor")
     if name == "preview_live_push":
         import live
         return live.preview(acct, bool(a.get("enable_new")))

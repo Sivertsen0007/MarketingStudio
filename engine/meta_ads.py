@@ -1614,7 +1614,9 @@ def _check_step(s):
 def _only(only):
     """The draft items in this push: all, or (team approvals / push by person) only the ids in `only`."""
     items = core.draft(acct())["items"]
-    return items if only is None else [i for i in items if i["id"] in only]
+    if only is None:
+        return items
+    return [i for i in items if (only.admits(i) if hasattr(only, "admits") else i["id"] in only)]
 
 
 def plan(tick=False, only=None):

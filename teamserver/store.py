@@ -24,7 +24,7 @@ PALETTE = ("#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
 INVITE_TTL = 7 * 86400
 SESSION_IDLE = 600
 PRESENCE_TTL = 120
-CLIENT_EVENT_KINDS = ("push", "publish", "undo", "custom")
+CLIENT_EVENT_KINDS = ("push", "publish", "undo", "custom", "send_to_editor")
 
 MAX_OPS = 500
 MAX_ITEM_BYTES = 512 * 1024

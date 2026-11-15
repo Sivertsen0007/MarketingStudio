@@ -82,7 +82,9 @@ def policy():
         team._update_state(review_policy=p)
         return {"require_approval": p, "offline": False}
     except team.TeamError as e:
-        cached = team._state().get("review_policy") or {}
+        cached = team._state().get("review_policy")
+        if not isinstance(cached, dict):  # never seen the rules: live actions wait until they can be checked
+            return {"require_approval": {a: True for a in AREAS}, "offline": True, "unknown": True, "error": str(e)}
         return {"require_approval": {a: bool(cached.get(a)) for a in AREAS}, "offline": True, "error": str(e)}
 
 
@@ -99,10 +101,12 @@ def approvals():
     """{"coll\\tid": [{review, hash, title}]} from approved reviews whose items are not stale on the server."""
     out = {}
     for rv in _api("GET", "/api/v1/reviews?status=approved&current=1").get("reviews") or []:
+        if rv.get("decider_ok") is False:
+            continue  # the approver has lost the right to approve since
         for it in rv.get("items") or []:
             if not it.get("stale"):
                 out.setdefault(team._key(it["coll"], it["id"]), []).append(
-                    {"review": rv["id"], "hash": it.get("hash") or "", "title": rv.get("title") or ""})
+                    {"review": rv["id"], "hash": it.get("content_hash") or it.get("hash") or "", "title": rv.get("title") or ""})
     return out
 
 
@@ -146,9 +150,30 @@ def reviewers():
     out = []
     for m in _api("GET", "/api/v1/members").get("members") or []:
         if m.get("active") and m.get("id") != me and (m.get("approver") or m.get("role") in ("owner", "admin")):
-            out.append({"id": m["id"], "name": m.get("name") or m.get("email"), "colour": m.get("colour"),
+            colour = m.get("colour") if team.COLOUR_RE.match(str(m.get("colour") or "")) else "#888888"
+            out.append({"id": m["id"], "name": m.get("name") or m.get("email"), "colour": colour,
                         "role": m.get("role"), "approver": bool(m.get("approver"))})
     return {"reviewers": out}
+
+
+# ---------- content that is checked as it will really go out ----------
+
+def _email_content(iid):
+    """An email campaign as a Send would send it: the platform copy (fetched fresh) with any Studio draft on top."""
+    from areas import email as em  # noqa: PLC0415
+    return em.team_content(iid)
+
+
+# coll -> fn(id) -> dict: for these an approval covers the content that goes out, not only the Studio draft item, so
+# edits on the platform or a draft saved to the platform outside Send are caught at send time.
+CONTENT = {"email": _email_content}
+
+
+def content_of(coll, iid):
+    try:
+        return CONTENT[coll](iid)
+    except Exception as e:  # noqa: BLE001 - can't read it: it can't be approved or sent as approved
+        raise ValueError(f"Can't read {coll} {iid} to check it: {e}") from None
 
 
 # ---------- what an item is: label, group, person, preview lines ----------
@@ -167,8 +192,8 @@ def label_of(coll, data):
     if coll == "seo:new_posts":
         return "New page: " + str(d.get("title") or "")
     if coll == "email":
-        f = d.get("fields") or {}
-        return f.get("subject") or f.get("name") or "Email draft"
+        f = d.get("fields") or d
+        return f.get("subject") or f.get("name") or "Email campaign"
     if coll == "social":
         return d.get("title") or _short(d.get("caption") or "", 80) or "Post"
     return ""
@@ -205,7 +230,9 @@ def lines_of(coll, data):
         return [{"label": k.replace("_", " "), "old": "", "new": _short(d.get(k) or "", 400)}
                 for k in ("title", "slug", "seo_title", "meta_desc", "focus_kw", "status", "content") if d.get(k)]
     if coll == "email":
-        return [{"label": k.replace("_", " "), "old": "", "new": _short(v, 400)} for k, v in (d.get("fields") or {}).items()]
+        f = d.get("fields") if isinstance(d.get("fields"), dict) else d
+        return [{"label": k.replace("_", " "), "old": "", "new": _short(v, 400)} for k, v in f.items()
+                if k != "campaign_id" and v not in (None, "")]
     if coll == "social":
         rows = [{"label": k, "old": "", "new": _short(d.get(k), 400)} for k in ("title", "caption", "channels", "when", "link")
                 if d.get(k)]
@@ -242,8 +269,12 @@ def _single_entry(coll, iid):
     recs = [] if data is None else [r for r in draftstore.items(coll, _root()) if r["id"] == str(iid)]
     who = recs[0].get("updated_by") if recs else ""
     g, gl = group_of(coll, data)
-    return {"coll": coll, "id": str(iid), "label": label_of(coll, data) or f"{coll} {iid}", "group": g, "group_label": gl,
-            "person": _person(who), "hash": content_hash(data), "exists": data is not None}
+    h, label = content_hash(data), label_of(coll, data)
+    if coll in CONTENT:
+        c = content_of(coll, iid)
+        h, label = content_hash(c), label_of(coll, c)
+    return {"coll": coll, "id": str(iid), "label": label or f"{coll} {iid}", "group": g, "group_label": gl,
+            "person": _person(who), "hash": h, "exists": data is not None}
 
 
 def plan(area, entries, scope=None):
@@ -261,9 +292,13 @@ def plan(area, entries, scope=None):
     allowed = list(entries)
     if required:
         try:
+            if pol.get("unknown"):
+                raise team.TeamError("unknown rules")
             cov = approvals()
         except team.TeamError as e:
-            cov, out["error"] = {}, f"Can't check approvals with the team server ({e}). Nothing can go out until it can."
+            cov = {}
+            out["error"] = ("Can't check the team's approval rules: reconnect and try again." if pol.get("unknown") else
+                            f"Can't check approvals with the team server ({e}). Nothing can go out until it can.")
         allowed = []
         for e in entries:
             key = team._key(e["coll"], e["id"])
@@ -282,8 +317,18 @@ def plan(area, entries, scope=None):
     if scope == "mine":
         allowed = [e for e in allowed if e["person"] == "me"]
     out["allowed"] = [team._key(e["coll"], e["id"]) for e in allowed]
+    out["_hashes"] = {team._key(e["coll"], e["id"]): e["hash"] for e in allowed}
     out["count"] = len(out["allowed"])
     return out
+
+
+class Only(dict):
+    """The ids a push may include -> the content hash the plan saw. admits(item) is False for an item that changed
+    since the plan (the push re-reads the draft; an item edited in between is left out, never pushed unchecked)."""
+
+    def admits(self, item):
+        iid = str((item or {}).get("id"))
+        return iid in self and content_hash(item) == self[iid]
 
 
 def only_ids(p, coll):
@@ -291,11 +336,18 @@ def only_ids(p, coll):
     if not p.get("joined") or (not p.get("required") and p.get("scope") != "mine"):
         return None
     pre = coll + "\t"
-    return {k[len(pre):] for k in p["allowed"] if k.startswith(pre)}
+    return Only({k[len(pre):]: p["_hashes"][k] for k in p["allowed"] if k.startswith(pre)})
+
+
+def admits(only, item):
+    """For the push functions: is this draft item in the push? only None = everything."""
+    if only is None:
+        return True
+    return only.admits(item) if hasattr(only, "admits") else item.get("id") in only
 
 
 def public(p):
-    return {k: v for k, v in p.items() if k != "allowed"}
+    return {k: v for k, v in p.items() if k not in ("allowed", "_hashes")}
 
 
 def require_why(body):
@@ -333,7 +385,7 @@ def gated_preview(area, coll, body, fn):
     return res
 
 
-def gated_push(area, coll, body, fn, what):
+def gated_push(area, coll, body, fn, what, kind="push"):
     """The push itself: same plan as the preview, the why note required, reported to the feed when it went out."""
     if not joined():
         return fn(None)
@@ -341,9 +393,9 @@ def gated_push(area, coll, body, fn, what):
     why = require_why(body)
     only = only_ids(p, coll)
     if only is not None and not only:
-        return {"ok": False, "team": public(p), "needs_team_approval": bool(p["needs"]),
-                "message": "Nothing to push: " + ("none of the changes has a current approval."
-                                                  if p["required"] else "none of the changes is yours.")}
+        msg = p.get("error") or ("Nothing to push: " + ("none of the changes has a current approval."
+                                                        if p["required"] else "none of the changes is yours."))
+        return {"ok": False, "team": public(p), "needs_team_approval": bool(p["needs"]), "message": msg, "output": msg}
     res = fn(only)
     if isinstance(res, dict) and p["joined"]:
         res["team"] = public(p)
@@ -351,7 +403,7 @@ def gated_push(area, coll, body, fn, what):
             n = res.get("applied") if isinstance(res.get("applied"), int) else len(p["allowed"])
             pushed = [k.split("\t", 1) for k in p["allowed"] if only is None or k.split("\t", 1)[1] in only]
             res["reported"] = report_push(area, f"{what} ({len(pushed)} change{'s' if len(pushed) != 1 else ''})", why,
-                                          {"items": len(pushed), "operations": n}, pushed, p["scope"])
+                                          {"items": len(pushed), "operations": n}, pushed, p["scope"], kind)
     return res
 
 
@@ -364,7 +416,7 @@ def filter_lists(area, lists, body):
     out = []
     for coll, xs in lists:
         only = only_ids(p, coll)
-        out.append(list(xs) if only is None else [x for x in xs if str(x.get("id")) in only])
+        out.append(list(xs) if only is None else [x for x in xs if admits(only, x)])
     return out, p
 
 
@@ -377,21 +429,41 @@ def single_action(area, coll, iid, body, what, fn):
     """Send / Schedule / Post now for one item: gated, why required, reported when it went out."""
     if not joined():
         return fn()
-    p = plan(area, [_single_entry(coll, iid)])
+    body.pop("_team_expect", None)
+    entry = _single_entry(coll, iid)
+    p = plan(area, [entry], body.get("scope"))
     why = require_why(body)
-    if p["required"] and not p["allowed"]:
+    if not p["allowed"]:
         n = p["needs"][0] if p["needs"] else {}
-        msg = p.get("error") or ("This changed since it was approved: send it for approval again."
-                                  if n.get("reason", "").startswith("changed") else
-                                  "Your team needs an approval for this first: send it for approval.")
-        return {"ok": False, "needs_team_approval": True, "message": msg, "team": public(p)}
-    label = _single_entry(coll, iid)["label"]  # before fn: Send removes the email draft
+        if p["required"]:
+            msg = p.get("error") or ("This changed since it was approved: send it for approval again."
+                                      if n.get("reason", "").startswith("changed") else
+                                      "Your team needs an approval for this first: send it for approval.")
+        else:
+            msg = "This is someone else's change: pick Everything (not Only mine) to include it."
+        return {"ok": False, "needs_team_approval": bool(p["required"]), "message": msg, "team": public(p)}
+    if p["required"]:
+        body["_team_expect"] = entry["hash"]  # the area checks it again right before it sends (recheck())
+    label = entry["label"]  # before fn: Send removes the email draft
     res = fn()
     if isinstance(res, dict) and res.get("ok"):
         res["reported"] = report_push(area, f"{what}: {label}", why, {"items": 1}, [(coll, str(iid))])
     if isinstance(res, dict):
         res["team"] = public(p)
     return res
+
+
+def recheck(body, coll, iid, data=None):
+    """Right before an area sends: is the item still the approved content? -> "" or why not. data: the item as the
+    area has it now (CONTENT colls are read again from the platform)."""
+    want = body.get("_team_expect")
+    if not want:
+        return ""
+    try:
+        now = content_hash(content_of(coll, iid) if coll in CONTENT else data)
+    except ValueError as e:
+        return str(e)
+    return "" if now == want else "It changed after it was approved (in Studio or on the platform): send it for approval again."
 
 
 # ---------- requests and decisions ----------
@@ -428,7 +500,15 @@ def _versions(pairs):
         else:
             raise ValueError(f"{label_of(coll, data) or iid} has changes the team server doesn't have yet (a conflict, or "
                              "refused): sort that out in Sync first")
-        out.append({"coll": coll, "id": iid, "version": v})
+        entry = {"coll": coll, "id": iid, "version": v}
+        if coll in CONTENT:
+            ch = content_hash(content_of(coll, iid))
+            if not ch:
+                raise ValueError(f"{coll} {iid}: there is nothing to review")
+            entry["content_hash"] = ch
+        elif data is None:
+            raise ValueError(f"{coll} {iid} is not in the draft: there is nothing to review")
+        out.append(entry)
     return out
 
 
@@ -473,7 +553,13 @@ def decide(body):
     d = body.get("decision")
     if d not in ("approve", "request_changes"):
         raise ValueError("decision must be approve or request_changes")
-    return _decorate(_api("POST", f"/api/v1/reviews/{int(body['id'])}/decide", {"decision": d, "note": str(body.get("note") or "")[:500]}))
+    rid = int(body["id"])
+    out = {"decision": d, "note": str(body.get("note") or "")[:500]}
+    if d == "approve":  # content-checked items: I confirm the content I see now is what was asked about
+        rv = _api("GET", f"/api/v1/reviews/{rid}")
+        out["confirm"] = [{"coll": i["coll"], "id": i["id"], "content_hash": content_hash(content_of(i["coll"], i["id"]))}
+                          for i in rv.get("items") or [] if i.get("content_hash")]
+    return _decorate(_api("POST", f"/api/v1/reviews/{rid}/decide", out))
 
 
 def withdraw(body):
@@ -538,6 +624,12 @@ def view(q):
         except ValueError:
             data = None
         same = content_hash(data) == i.get("hash")
+        if i.get("content_hash"):
+            try:
+                data = content_of(i["coll"], i["id"])
+                same = content_hash(data) == i["content_hash"]
+            except ValueError:
+                same = False
         items.append({**i, "label": label_of(i["coll"], data) or f"{i['coll']} {i['id']}", "area": area_of(i["coll"]),
                       "lines": lines_of(i["coll"], data), "local_matches": same})
     rv["items"] = items

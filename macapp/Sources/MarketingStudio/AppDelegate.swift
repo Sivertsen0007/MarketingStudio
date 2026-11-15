@@ -291,9 +291,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         webView.loadHTMLString(html, baseURL: nil)
     }
 
+    /// A marketingstudio://join?server=..&invite=.. link (team invite) waiting to be handed to the page.
+    private var pendingJoin: String?
+
+    /// Team invite links: the page gets them as #team-join=<link> and opens Setup > Team with the link filled in
+    /// (the person still presses Join). Works on a cold start too: the link waits until the engine answers.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == "marketingstudio" && url.host?.lowercased() == "join" {
+            pendingJoin = url.absoluteString
+        }
+        guard pendingJoin != nil, window != nil else { return }
+        showWindow()
+        if studioLoaded { loadStudio() }
+    }
+
     private func loadStudio() {
         studioLoaded = true
-        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
+        var address = "http://127.0.0.1:\(port)/"
+        if let link = pendingJoin,
+           let enc = link.addingPercentEncoding(withAllowedCharacters: .alphanumerics) {
+            address += "#team-join=" + enc
+            pendingJoin = nil
+        }
+        guard let url = URL(string: address) else { return }
         webView.load(URLRequest(url: url))
         if let w = window { w.makeFirstResponder(webView) }
     }

@@ -730,7 +730,7 @@ def undo(body, w=None):
            + (f"{',' if edited else ':'} {binned} new page{'s' if binned != 1 else ''} moved to the WordPress bin" if binned else "")
            + f"{' (dry run)' if wname != 'wp' else ''}.")
     progress.finish(PKEY, bad == 0, msg)
-    return {"ok": bad == 0, "message": msg}
+    return {"ok": bad == 0, "message": msg, "live": wname == "wp"}  # [team live] live: false = a dry run
 
 
 PARTS = {"gsc": ("Search Console", ("gsc_",)), "ga4": ("GA4", ("ga4_",)), "wp": ("WordPress posts", ("posts", "categories"))}

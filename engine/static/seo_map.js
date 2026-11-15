@@ -142,6 +142,7 @@ function openNode(id, parent, preset){
   if (!n) return;
   S.el.querySelector("#tmWrap").classList.remove("nopanel");
   const side = S.el.querySelector("#tmSide");
+  Object.assign(side.dataset, {teamColl: "seo:map_nodes", teamId: id || "", teamLabel: n.title || ""});  // [team live] presence, locks, claim
   const opts = (sel, list) => list.map(v => `<option ${v === sel ? "selected" : ""}>${v}</option>`).join("");
   const parents = d.nodes.filter(x => x.id !== n.id).sort((a, b) => a.title.localeCompare(b.title));
   side.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><b>${id ? "Node" : "New node"}</b><button class="link" id="tmClose">Close</button></div>
@@ -169,7 +170,7 @@ function openNode(id, parent, preset){
     if (k === "new") S.ctx.openNewPage({id: n.new_post.id});
     if (k === "write") S.ctx.openNewPage({node: n});
   });
-  $("#tmClose").onclick = () => { S.sel = null; S.el.querySelector("#tmWrap").classList.add("nopanel"); drawMain() };
+  $("#tmClose").onclick = () => { S.sel = null; side.dataset.teamId = ""; S.el.querySelector("#tmWrap").classList.add("nopanel"); drawMain() };
   $("#tmAddLink").onclick = () => $("#tmLinks").insertAdjacentHTML("beforeend", linkRow(parents, {to: "", anchor: ""}, Date.now()));
   $("#tmSave").onclick = async () => {
     const node = {title: $("#tmTitle").value, section: $("#tmSecSel").value, type: $("#tmType").value, parent: $("#tmParent").value,
@@ -207,5 +208,12 @@ function siteDialog(){
     [["Save", async () => { try { await S.ctx.P("map_edit", {ops: [{op: "site", site: {central_entity: $("#tmCe").value, source_context: $("#tmSc").value, central_search_intent: $("#tmCi").value,
       exclude: $("#tmEx").value.split("\n").map(l => l.trim()).filter(Boolean).map(l => { const i = l.indexOf(" - "); return i > 0 ? {path: l.slice(0, i).trim(), why: l.slice(i + 3).trim()} : {path: l} })}}]}); dlg.close(); toast("Saved"); load() } catch(e) { toast(e.message) } }, "primary"]]);
 }
-window.SEO_MAP = {render, reload: force => load(force)};
+// [team live] open a node from the Team tab or a mention (waits for the map to load)
+async function openById(id){
+  for (let i = 0; i < 100 && !(S.data && S.data.nodes.some(n => n.id === id)); i++) await new Promise(r => setTimeout(r, 100));
+  if (!S.data || !S.data.nodes.some(n => n.id === id)) return toast("That node is not in the map any more");
+  S.sel = id; drawMain(); openNode(id);
+  const tr = S.el.querySelector(`tr[data-id="${CSS.escape(id)}"]`); if (tr) tr.scrollIntoView({block: "center"});
+}
+window.SEO_MAP = {render, reload: force => load(force), open: openById};
 })();

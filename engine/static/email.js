@@ -244,7 +244,7 @@ function drawEditor(){
     </div>
     ${can("edit") ? "" : `<div class="em-need">${esc(E.state.needs_api)}: Save to platform, Send test, Schedule, Send now and Cancel schedule. Your edits stay as a Studio draft, and Create draft on platform makes a new draft from them.</div>`}
     ${editable ? "" : `<div class="em-ro">${o.status === "scheduled" ? `Scheduled for ${esc(fmtDate(o.scheduled_for, true))} (London). Cancel the schedule to edit it again.` : o.status === "sent" ? `Sent ${esc(fmtDate(o.sent_at, true))}. A sent email can't be changed or unsent.` : `This campaign is ${esc(o.status)}. Only drafts can be changed.`}</div>`}
-    <div class="em-ed">
+    <div class="em-ed" data-team-coll="email" data-team-id="${esc(o.id)}" data-team-label="${esc(c.name)}" data-team-bar="before">
       <div class="em-left">
         <div class="em-fields">
           <div class="row" data-f="name"><label>Name</label><input id="em_name" value="${esc(c.name)}" ${ro}></div>
@@ -507,5 +507,6 @@ function cancelDialog(){
 }
 
 window.AREAS = window.AREAS || {};
-window.AREAS.email = {label:"Email", render(el){ E.el = el; E.cur = null; renderList() }};
+window.AREAS.email = {label:"Email", render(el){ E.el = el; E.cur = null; E.ready = renderList() },
+  open(coll, id){ return (E.ready || Promise.resolve()).then(() => openEditor(id)) }};  // [team live] jump to a campaign
 })();

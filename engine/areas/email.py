@@ -63,6 +63,14 @@ def _load_test_address():
     except ImportError:
         return
     TEST_ADDRESSES = test_addresses(appconfig.get("STUDIO_TEST_EMAIL"))
+    try:  # the team's test addresses replace this Mac's own (team_settings, key email_test_addresses)
+        import team_settings  # noqa: PLC0415
+        tv = team_settings.team_value("email_test_addresses")
+        if tv and tv["addresses"]:
+            TEST_ADDRESSES = list(tv["addresses"])
+        team_settings.on_change(_load_test_address)
+    except Exception:  # noqa: BLE001
+        pass
     TEST_ADDRESS = TEST_ADDRESSES[0] if TEST_ADDRESSES else "the test address"
     FROM_ADDRESS = appconfig.get("EMAIL_FROM_ADDRESS").strip().lower()
     PLATFORM = appconfig.get("EMAIL_PLATFORM_NAME") or "your email platform"
@@ -896,27 +904,28 @@ def render_local(html):
     return "".join(out)
 
 
-EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]")
-_DEFAULT_RULES = [
-    ("error", r"\bguarantee(d|s)?\b", 'No promises ("guaranteed").'),
-]
-
-
 def copy_rules():
-    """[(level, compiled pattern, message)]: the default rule plus your own from <Studio data>/email_copy_rules.json,
-    a list of {"level": "error"|"warn", "pattern": "<regex>", "message": "..."}. Bad lines are skipped."""
-    rules = list(_DEFAULT_RULES)
+    """[(level "error"|"warn", compiled pattern, message)]: the copy rules for Email (team_settings, key copy_rules:
+    this Mac's own, or the team's) plus this Mac's extra rules from <Studio data>/email_copy_rules.json, a list of
+    {"level": "error"|"warn", "pattern": "<regex>", "message": "..."} (bad lines are skipped). The extra file is not
+    used while your team sets the copy rules."""
+    out, team_set = [], False
+    try:
+        import team_settings  # noqa: PLC0415
+        out = [("error" if lv == "block" else "warn", rx, msg) for lv, rx, msg in team_settings.copy_rules("email")]
+        team_set = team_settings.team_value("copy_rules") is not None
+    except Exception:  # noqa: BLE001 - no settings: the extra file alone
+        pass
+    if team_set:
+        return out
     try:
         for r in json.loads((_data_dir() / "email_copy_rules.json").read_text()):
-            rules.append((r.get("level", "warn"), r["pattern"], r.get("message") or r["pattern"]))
-    except (OSError, ValueError, KeyError, TypeError):
+            try:
+                out.append((r.get("level", "warn"), re.compile(r["pattern"], re.I), r.get("message") or r["pattern"]))
+            except (re.error, KeyError, TypeError, AttributeError):
+                continue
+    except (OSError, ValueError, TypeError):
         pass
-    out = []
-    for level, pat, msg in rules:
-        try:
-            out.append((level, re.compile(pat, re.I), msg))
-        except re.error:
-            continue
     return out
 
 
@@ -1008,13 +1017,9 @@ def link_problems(html, fetch=None):
 
 def copy_problems(text, where):
     out = []
-    if EMOJI.search(text or ""):
-        out.append({"level": "error", "message": f"No emojis ({where})."})
-    if "\u2014" in (text or ""):
-        out.append({"level": "error", "message": f"No em dash; use a dash (-) or rewrite ({where})."})
     for level, pat, msg in copy_rules():
         if pat.search(text or ""):
-            out.append({"level": level, "message": f"{msg[:-1]} ({where})."})
+            out.append({"level": level, "message": f"{msg.rstrip('.')} ({where})."})
     return out
 
 
@@ -1427,6 +1432,15 @@ def p_test_send(body):
     return {"ok": True, "message": f"Test sent to {to}." + (" Demo data: nothing was really sent." if a.demo else ""), "problems": probs}
 
 
+def _calendar(fn, *args):
+    """shared_calendar.<fn>(*args), or None: the shared calendar must never stop a schedule or a cancel."""
+    try:
+        import shared_calendar  # noqa: PLC0415
+        return getattr(shared_calendar, fn)(*args)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _schedule(a, body, when, now_send):
     import progress
     _need(a, "schedule")
@@ -1440,13 +1454,16 @@ def _schedule(a, body, when, now_send):
     if c["status"] != "draft":
         progress.finish(KEY, False, f"It is {c['status']}, not a draft.")
         return {"ok": False, "message": f"Only a draft can be scheduled (this one is {c['status']})."}
+    clash = _calendar("email_clashes", c, when) or []  # warnings only (shared calendar); never stops the schedule
     progress.phase(KEY, "scheduling", "Scheduling")
-    c = a.schedule(cid, _iso(when))
+    merged, c = c, a.schedule(cid, _iso(when))
     progress.sent(KEY, "schedule")
+    _calendar("mark_email", {**merged, "id": cid}, when)
     london = when.astimezone(LONDON).strftime("%d %B %Y %H:%M").lstrip("0")
     if not now_send:
         progress.finish(KEY, True, f"Scheduled for {london} (London)" + (" (demo)" if a.demo else ""))
-        return {"ok": True, "message": f"Scheduled for {london}, London time." + (" Demo data: nothing will really go out." if a.demo else ""), "campaign": c}
+        return {"ok": True, "message": f"Scheduled for {london}, London time." + (" Demo data: nothing will really go out." if a.demo else ""), "campaign": c,
+                "clashes": clash}
     deadline, last = time.time() + 20 * 60, None
     while time.time() < deadline:
         p = a.progress(cid)
@@ -1461,7 +1478,8 @@ def _schedule(a, body, when, now_send):
         if p.get("status") in ("sent", "failed", "cancelled"):
             ok = p["status"] == "sent"
             progress.finish(KEY, ok, f"{sent:,} of {total:,} sent" + ("" if ok else f" ({p['status']})") + (" (demo)" if a.demo else ""))
-            return {"ok": ok, "message": f"{sent:,} of {total:,} sent." + (" Demo data: nothing was really sent." if a.demo else "")}
+            return {"ok": ok, "message": f"{sent:,} of {total:,} sent." + (" Demo data: nothing was really sent." if a.demo else ""),
+                    "clashes": clash}
         time.sleep(0.5 if a.demo else 3)
     progress.finish(KEY, True, "Still sending: see the campaigns grid for the latest count")
     return {"ok": True, "message": "Still sending. The grid shows the latest count."}
@@ -1508,6 +1526,7 @@ def p_cancel(body):
     _need(a, "schedule")
     progress.start(KEY, "cancel", [("cancel", "Cancel the schedule", 1)], "sending", "Cancelling the schedule")
     c = a.cancel(body["id"])
+    _calendar("unmark_email", body["id"])
     progress.sent(KEY, "cancel")
     progress.finish(KEY, True, "Back to draft: it will not go out")
     return {"ok": True, "message": "Cancelled. The campaign is a draft again.", "campaign": c}

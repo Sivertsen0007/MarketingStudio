@@ -108,8 +108,17 @@ def _read(name, default):
 
 # ---------- settings ----------
 
-def settings():
-    return {**DEFAULT_SETTINGS, **_read("social_settings.json", {})}
+def settings(team=True):
+    """SoMe settings. team: the fields a team has set (slots, utm, utm_campaign, late_minutes) replace this Mac's own
+    (team_settings.py; not there on the VPS job, which then uses the file as it is)."""
+    s = {**DEFAULT_SETTINGS, **_read("social_settings.json", {})}
+    if team:
+        try:
+            import team_settings  # noqa: PLC0415
+            s = team_settings.merge_social(s, team_settings.team_value("social"))
+        except Exception:  # noqa: BLE001 - the VPS job, or a broken team cache: this Mac's own settings
+            pass
+    return s
 
 
 def save_settings(changes):

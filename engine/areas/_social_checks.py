@@ -1,4 +1,4 @@
-"""SoMe checks: ML copy rules, caption limits, links, media rules per channel. Pure functions (link and media
+"""SoMe checks: copy rules (team_settings, key copy_rules, area "social"), caption limits, links, media rules per channel. Pure functions (link and media
 lookups are passed in), so they are unit tested without the network.
 
 Limits (checked 10 November 2026 in Meta's and LinkedIn's docs):
@@ -23,32 +23,26 @@ REEL_MAX, REEL_SECONDS = 300 * 1024 * 1024, (3, 15 * 60)
 CAROUSEL = (2, 10)
 FB_SCHEDULE_MIN, FB_SCHEDULE_MAX = 10 * 60, 30 * 24 * 3600
 
-EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍]")
-BLOCK = [(re.compile(r"\u2014"), "em dash: use a normal dash (-) or rewrite"),
-         (re.compile(r"\bbahamas\b", re.I), "never mention the Bahamas"),
-         (EMOJI, "no emojis in ML posts"),
-         (re.compile(r"\bguarantee(d|s)?\b|\byou will see\b|\byou'll see\b|\bwill definitely see\b|\b100% (chance|sure)\b", re.I),
-          "never promise sightings, weather or conditions")]
-WARN = [(re.compile(r"\byachts?\b", re.I), 'say "vessel", not "yacht"'),
-        (re.compile(r"\bour own (vessels?|boats?|fleet)\b|\bwe own\b", re.I), "no ownership claims about vessels"),
-        (re.compile(r"\bexpeditions?\b", re.I), 'no "Expeditions" in ML copy')]
-CABIN_PRICE = re.compile(r"(?:[$£€]\s?\d[\d,.]*|\d[\d,.]*\s?(?:USD|GBP|EUR)).{0,60}\bcabins?\b|\bcabins?\b.{0,60}(?:[$£€]\s?\d|\d\s?(?:USD|GBP|EUR))", re.I)
 URL = re.compile(r"https?://[^\s<>\"')]+")
 HASHTAG = re.compile(r"(?<!\w)#\w+")
 MENTION = re.compile(r"(?<!\w)@[\w.]+")
 
 
+def _rules():
+    """The SoMe copy rules [(level, compiled, message)]; none where team_settings is not there (the VPS job)."""
+    try:
+        import team_settings  # noqa: PLC0415
+        return team_settings.copy_rules("social")
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def copy_problems(label, text):
-    """-> (problems, warnings) for one piece of copy."""
+    """-> (problems, warnings) for one piece of copy: "block" rules are problems, "warn" rules warnings."""
     problems, warnings = [], []
-    for pat, msg in BLOCK:
+    for level, pat, msg in _rules():
         if pat.search(text or ""):
-            problems.append(f"{label}: {msg}")
-    for pat, msg in WARN:
-        if pat.search(text or ""):
-            warnings.append(f"{label}: {msg}")
-    if CABIN_PRICE.search(text or ""):
-        warnings.append(f'{label}: prices are per space: say "spaces", not "cabins"')
+            (problems if level == "block" else warnings).append(f"{label}: {msg}")
     return problems, warnings
 
 

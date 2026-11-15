@@ -24,7 +24,7 @@
 | | |
 |---|---|
 | **Start** | [What it is](#what-it-is) · [Install](#install) · [First run: Setup](#first-run-setup) · [Updates](#updates) |
-| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Keyboard](#keyboard) |
+| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Keyboard](#keyboard) |
 | **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email platform](#email-platform) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
@@ -329,6 +329,22 @@ Everything that happened in a period, across channels. Read-only.
 - Google only keeps 30 days of change history, so Studio keeps its own archive. The longer you use it, the further back it goes.
 - *Who made it* (staff names) is hidden unless you tick it.
 
+## Calendar
+
+One calendar for every channel, plus the shared library and the copy rules. Works solo; in a team it is shared.
+
+- **Calendar** (week or month): SoMe posts with a time, email campaigns scheduled or sent, and SEO pages with a publish
+  time, each in its owner's team colour. Dashed = in review, faded = already out.
+- **Clash warnings** when you press Schedule (SoMe, Email): too many posts on a channel in a day, two posts too close
+  together, the same link, image or topic within a few days, or an email to the same list or segment within a few days.
+  Each warning says who scheduled the other item. Warnings only: you can always go ahead.
+- **Library**: approved headlines, calls to action, image URLs, UTM presets and email blocks. In the Ads, Email, SEO and
+  SoMe editors, click **Library** next to a text field to insert one. In a team the library syncs like drafts.
+- **Team settings**: copy rules (a regular expression, *block* or *warn*, per area), SEO sites, test email addresses, SoMe
+  slots / UTM / late posting and the calendar limits. Solo, these are this Mac's own. In a team, an owner or admin can
+  share a value with everyone: it then shows as *Set by your team* and is read-only for the others.
+- A new install starts with **no copy rules**: add your own. An install from before this version keeps the rules it had.
+
 ---
 
 ## Keyboard
@@ -522,6 +538,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Topical map | `seo_map_get` (nodes, numbers, issues, coverage; filter by state), `seo_map_unmapped`, `seo_map_propose` (changes you accept in Studio), `seo_write_page` (a new page for a node, into the draft) |
 | SoMe | `social_calendar`, `social_list_drafts`, `social_add_draft` |
 | Activity | `activity_summary`, `activity_rows` (who made each change is always left out) |
+| Calendar | `calendar_list`, `library_list`, `team_settings_get` (read only) |
 
 ---
 

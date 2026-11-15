@@ -1,7 +1,6 @@
 """SEO area: checks on drafted changes. level "error" blocks Publish, "warn" is shown for the user to judge.
 
-ML copy rules (memory feedback notes): no emojis, never "Bahamas", "vessel" not "yacht", no promised sightings,
-"spaces" not "cabins" for pricing, and no em dash anywhere.
+Copy rules come from team_settings (key copy_rules, area "seo"): this Mac's own, or the team's.
 """
 import concurrent.futures as cf
 import re
@@ -12,16 +11,6 @@ import urllib.request
 from . import _seo_common as c
 from . import _seo_wp as wp
 
-EM_DASH = chr(0x2014)  # the em dash, written as a code so this file has none
-EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002B50\U00002B55\U00002934\U00002935\U00003030\U0000303D\U0000FE0F]")
-PRICE = r"(?:£|\$|€|usd|gbp|eur|price|prices|priced|from|per|rate|rates|cost|costs)"
-RULES = [
-    ("error", re.compile(r"\bbahamas\b", re.I), 'Never use "Bahamas" in ML copy.'),
-    ("warn", re.compile(r"\byachts?\b", re.I), 'Say "vessel", not "yacht".'),
-    ("warn", re.compile(r"\b(guarantee[sd]?|guaranteed sightings?|you will (?:see|spot|meet)|you'll (?:see|spot|meet)|always see|certain to see|sure to see)\b", re.I),
-     "Do not promise sightings, weather or conditions."),
-    ("warn", re.compile(rf"(\bcabins?\b[^.]{{0,40}}{PRICE}\b|{PRICE}\b[^.]{{0,40}}\bcabins?\b)", re.I), 'For pricing, say "spaces", not "cabins".'),
-]
 SEO_TITLE = (30, 60)
 META = (70, 160)
 LINK_TTL = 3600
@@ -36,14 +25,15 @@ def text_rules(field, text):
     """Copy rules on visible text (HTML stripped for the body)."""
     out = []
     t = wp.text_of(text) if field in ("content", "excerpt") else str(text or "")
-    if EM_DASH in str(text or ""):
-        out.append(_issue("error", field, "Has an em dash. Use a regular dash or rewrite."))
-    if EMOJI.search(t):
-        out.append(_issue("error", field, "Has an emoji. ML copy uses none."))
-    for level, rx, msg in RULES:
+    try:
+        import team_settings  # noqa: PLC0415
+        rules = team_settings.copy_rules("seo")
+    except Exception:  # noqa: BLE001
+        rules = []
+    for level, rx, msg in rules:
         m = rx.search(t)
         if m:
-            out.append(_issue(level, field, f'{msg} Found: "{m.group(0)[:60]}".'))
+            out.append(_issue("error" if level == "block" else "warn", field, f'{msg.rstrip(".")}. Found: "{m.group(0)[:60]}".'))
     return out
 
 
@@ -110,7 +100,7 @@ def body_links(html_text):
         if not h or h.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
         if h.startswith("/"):
-            h = "https://www.masterliveaboards.com" + h
+            h = c.SITES["prod"] + h
         if h.startswith(("http://", "https://")) and h not in out:
             out.append(h)
     return out

@@ -356,10 +356,15 @@ def draft(acct):
     return draftstore.read(_coll(acct), STUDIO_DIR)
 
 
-# ML copy rules from memory (feedback_*): hard blocks are in gae.lint (em dash, lengths, Bahamas); these are warnings
-WARN = [(r"\bcabins?\b", 'say "spaces", not "cabins"'), (r"\bguarantee", "never guarantee marine life or conditions"),
-        (r"\byachts?\b", 'say "vessel", not "yacht"'), (r"\bexpeditions?\b", 'no "Expeditions" in ad copy'),
-        (r"[\U0001F300-\U0001FAFF☀-➿]", "no emojis in marketing copy")]
+# Copy rules: team_settings (key copy_rules, area "ads"): "block" rules run in gae.lint (with the length limits),
+# "warn" rules here. A new install has none; an older one keeps the rules it had built in (_legacy_copy_rules.py).
+def copy_warn_rules():
+    """[(compiled pattern, message)] of the Ads "warn" copy rules."""
+    try:
+        import team_settings  # noqa: PLC0415
+        return [(rx, msg) for lv, rx, msg in team_settings.copy_rules("ads") if lv == "warn"]
+    except Exception:  # noqa: BLE001
+        return []
 
 
 # Change types that only the Google Ads API can carry out (Push live). Send to Editor refuses them.
@@ -374,11 +379,11 @@ def live_only(change):
 
 
 def _warn(rows):
-    out = []
+    out, rules = [], copy_warn_rules()
     for r in rows:
         for k, v in r.items():
-            for pat, msg in WARN:
-                if v and isinstance(v, str) and re.search(pat, v, re.I) and k not in ("Campaign", "Ad Group", "Final URL"):
+            for pat, msg in rules:
+                if v and isinstance(v, str) and pat.search(v) and k not in ("Campaign", "Ad Group", "Final URL"):
                     out.append(f"{k}: {msg}")
     return sorted(set(out))
 

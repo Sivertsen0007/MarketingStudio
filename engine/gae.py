@@ -365,19 +365,28 @@ LIMITS = {"Headline": 30, "Description": 90, "Path": 15, "Link Text": 25, "Descr
           "Snippet Values": 999, "Item": 25}
 
 
+def _block_rules():
+    """The Ads "block" copy rules from Studio's settings (team_settings, key copy_rules), [(pattern, message)]."""
+    try:
+        import team_settings  # noqa: PLC0415
+        return [(rx, msg) for lv, rx, msg in team_settings.copy_rules("ads") if lv == "block"]
+    except Exception:  # noqa: BLE001 - gae on its own: length limits only
+        return []
+
+
 def lint(rows):
-    problems = []
+    problems, rules = [], _block_rules()
     for i, r in enumerate(rows, 1):
         for k, v in r.items():
             if not v:
                 continue
-            if "—" in v:
-                problems.append(f"row {i} {k}: contains an em dash")
             for prefix, lim in LIMITS.items():
                 if k.startswith(prefix) and not k.endswith("position") and len(v) > lim:
                     problems.append(f"row {i} {k}: {len(v)} chars > {lim} ({v!r})")
-            if re.search(r"bahamas", v, re.I):
-                problems.append(f"row {i} {k}: mentions Bahamas (ML ban)")
+            if isinstance(v, str):
+                for rx, msg in rules:
+                    if rx.search(v):
+                        problems.append(f"row {i} {k}: {msg}")
     return problems
 
 

@@ -209,6 +209,24 @@ def _mark_removed():
     _LISTENER["stop"].set()
 
 
+# ---------- hooks (team_settings.py and friends) ----------
+
+HOOKS = []  # fn(kind, data): kind "join", "leave", "sync" or "event:<sse event name>" (other than items)
+
+
+def on_hook(fn):
+    if fn not in HOOKS:
+        HOOKS.append(fn)
+
+
+def _hook(kind, data=None):
+    for fn in list(HOOKS):
+        try:
+            fn(kind, data)
+        except Exception:  # noqa: BLE001 - a hook must never break sync
+            pass
+
+
 # ---------- join / leave ----------
 
 def parse_link(link):
@@ -259,6 +277,7 @@ def join(link=None, server=None, invite=None, device_name=None):
         _refresh_members()
     if _LISTENER["wanted"]:
         start_listener()
+    _hook("join")
     return status()
 
 
@@ -276,6 +295,7 @@ def leave():
             appconfig.set_secret("TEAM_DEVICE_TOKEN", None)
             with contextlib.suppress(OSError):
                 shutil.rmtree(_root() / draftstore.TEAM_DIR)
+    _hook("leave")
     return status()
 
 
@@ -849,6 +869,8 @@ def sync():
                    "errors": ctx["errors"], **t}
     finally:
         _tls.syncing = False
+    if not out["offline"] and not out["removed"]:
+        _hook("sync", out)
     return {**out, "status": status()}
 
 
@@ -1049,6 +1071,8 @@ def remote_waiting():
 
 
 def _on_event(kind, data):
+    if kind != "items":
+        _hook("event:" + str(kind), data)
     if kind == "items":
         try:
             cur = int(json.loads(data or "{}").get("cursor") or 0)

@@ -763,7 +763,6 @@ def summarise(c, d=None, items=None):
     return json.dumps(c, ensure_ascii=False)
 
 
-OWN = [(r"\bour own (vessels?|boats?|fleet)\b|\bwe own\b", "no ownership claims about vessels")]
 PRICE = re.compile(r"(?:[$£€]\s?\d(?:[\d,.]*\d)?|\d(?:[\d,.]*\d)?\s?(?:USD|GBP|EUR))")
 PCT = re.compile(r"\d{1,2}\s?%")
 
@@ -999,15 +998,17 @@ def check(c, d=None, items=None):
     except (KeyError, TypeError, ValueError) as ex:
         problems.append(f"invalid change: {ex}")
     texts = _texts(c)
+    try:
+        import team_settings  # noqa: PLC0415 - copy rules (key copy_rules, area "ads")
+        rules = team_settings.copy_rules("ads")
+    except Exception:  # noqa: BLE001
+        rules = []
     for k, v in texts:
-        if "—" in v:
-            problems.append(f"{k}: em dash - use a normal dash")
-        if re.search(r"\bbahamas\b", v, re.I):
-            problems.append(f"{k}: never mention the Bahamas")
-        if COPY_LABEL.match(k):
-            for pat, msg in core.WARN + OWN:
-                if re.search(pat, v, re.I):
-                    warnings.append(f"{k}: {msg}")
+        for level, rx, msg in rules:
+            if level == "block" and rx.search(v):
+                problems.append(f"{k}: {msg}")
+            elif level == "warn" and COPY_LABEL.match(k) and rx.search(v):
+                warnings.append(f"{k}: {msg}")
     if links and not problems:
         bodies = [("primary_text", c.get("primary_text"))] + [(f"bodies {i + 1}", v) for i, v in enumerate(c.get("bodies") or [])]
         main = next((u for u, _ in links if u), "")

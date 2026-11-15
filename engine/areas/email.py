@@ -32,6 +32,8 @@ import uuid
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import draftstore
+
 LABEL = "Email"
 KEY = "email"  # progress key
 FROM_ADDRESS = ""  # set from Setup (EMAIL_FROM_ADDRESS); empty = the platform decides
@@ -1045,12 +1047,9 @@ def run_checks(c, links=True, fetch=None):
 
 # ---------------------------------------------------------------- Studio drafts (Claude may only use these)
 
-def _draft_path():
-    return _data_dir() / "email_draft.json"
-
-
 def _drafts():
-    return _read_json(_draft_path(), {"version": 0, "drafts": {}})
+    """{version, drafts: {campaign_id: {fields, by, at, note}}} (draftstore collection "email")."""
+    return draftstore.read("email", _data_dir())
 
 
 def list_drafts():
@@ -1075,23 +1074,16 @@ def add_draft(change, by="you"):
         fields["list_id"] = None
     elif fields.get("list_id"):
         fields["segment_id"] = None
-    with _lock:
-        d = _drafts()
-        cur = d["drafts"].get(cid, {"fields": {}})
+    with _lock, draftstore.tx("email", _data_dir(), by=by) as t:
+        cur = (t.get(cid) or {"data": {"fields": {}}})["data"]
         cur = {"fields": {**cur["fields"], **fields}, "by": by, "at": _iso(_now()), "note": change.get("note") or cur.get("note")}
-        d["drafts"][cid] = cur
-        d["version"] = d.get("version", 0) + 1
-        _write_json(_draft_path(), d)
+        t.put(cid, cur, by)
         return {"campaign_id": cid, **cur}
 
 
 def remove_draft(cid):
-    with _lock:
-        d = _drafts()
-        hit = d["drafts"].pop(str(cid), None)
-        d["version"] = d.get("version", 0) + 1
-        _write_json(_draft_path(), d)
-        return hit is not None
+    with _lock, draftstore.tx("email", _data_dir()) as t:
+        return t.delete(str(cid))
 
 
 def _merged(a, cid, fresh=False):

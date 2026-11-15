@@ -14,6 +14,7 @@ import os
 import time
 import uuid
 
+import draftstore
 import progress
 
 from . import _seo_checks as chk
@@ -307,7 +308,13 @@ def get_opportunities(q):
 # ---------- the SEO draft ----------
 
 def _draft():
-    return c.read_json(DRAFT, {"version": 0, "changes": []})
+    """{version, changes, new_posts?} (draftstore collections seo:changes and seo:new_posts, both in DRAFT)."""
+    return draftstore.read("seo:changes", c.data_dir(), {"version": 0, "changes": []})
+
+
+def _locked_draft(by=None):
+    """The draft file under its lock; callers bump its version themselves, as before."""
+    return draftstore.doc("seo:changes", c.data_dir(), by=by, default={"version": 0, "changes": []})
 
 
 def _norm(f, v):
@@ -326,7 +333,7 @@ def add_draft(change, by="claude"):
     kind = "todo" if change.get("kind") == "todo" else "edit"
     if kind == "edit" and "new" not in change:
         raise ValueError("An edit needs a new value. Use kind todo for a suggestion without text.")
-    with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+    with _locked_draft(by) as d:
         if kind == "todo":
             if any(x for x in d["changes"] if x["post_id"] == pid and x["field"] == f and x.get("kind") == "todo" and x.get("note") == change.get("note")):
                 return {"ok": True, "duplicate": True, "version": d["version"]}
@@ -362,14 +369,14 @@ def list_drafts():
 
 def remove_drafts(ids):
     ids = set(ids or [])
-    with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+    with _locked_draft() as d:
         d["changes"] = [x for x in d["changes"] if x["id"] not in ids]
         d["version"] += 1
     return list_drafts()
 
 
 def clear_drafts(body=None):
-    with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+    with _locked_draft() as d:
         d["changes"] = []
         d["new_posts"] = []
         d["version"] += 1
@@ -417,7 +424,7 @@ def save_new_post(body, by="claude"):
     status = body.get("status")
     if status is not None and status not in ("publish", "draft"):
         raise ValueError("status is publish or draft.")
-    with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+    with _locked_draft(by) as d:
         lst = d.setdefault("new_posts", [])
         row = next((x for x in lst if (body.get("id") and x["id"] == body["id"]) or (not body.get("id") and nid and x.get("node_id") == nid)), None)
         if row is None:
@@ -443,7 +450,7 @@ def save_new_post(body, by="claude"):
 
 
 def remove_new_post(body):
-    with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+    with _locked_draft() as d:
         d["new_posts"] = [x for x in d.get("new_posts", []) if x["id"] != body.get("id")]
         d["version"] += 1
     return list_drafts()
@@ -630,7 +637,7 @@ def _publish_new(news, s, w, push_id):
             progress.mark(PKEY, x["id"], "failed")
         out.append(res)
     if done:
-        with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+        with _locked_draft() as d:
             d["new_posts"] = [y for y in d.get("new_posts", []) if y["id"] not in done]
             d["version"] += 1
     return out

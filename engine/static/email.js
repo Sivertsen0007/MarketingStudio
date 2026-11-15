@@ -465,9 +465,15 @@ async function runAction(title, key, extra){
 }
 async function testDialog(){
   if (!(await beforeAction())) return;
-  showDialog("Send a test", `<p>Sends one test email <b>to ${esc(E.state.test_address)}</b>. Tests never go anywhere else.</p>
-    <p class="hint">Checks run first. ${E.cur.draft ? "Your Studio draft is saved to " + esc(PN()) + " first, so the test shows your edits." : ""}${E.state.demo ? " Demo data: nothing is really sent." : ""}</p>`,
-    [["Send test", () => runAction("Send test", "test_send"), "primary"]]);
+  const list = (E.state && E.state.test_addresses) || [];
+  const where = list.length > 1
+    ? `<div class="row"><label>Send to</label><select id="emTestTo">${list.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select></div>`
+    : `<p>Sends one test email <b>to ${esc(list[0] || "the platform's test inbox")}</b>.</p>`;
+  showDialog("Send a test", `${where}
+    <p class="hint">Checks run first. ${E.cur.draft ? "Your Studio draft is saved to " + esc(PN()) + " first, so the test shows your edits." : ""}${E.state.demo ? " Demo data: nothing is really sent." : ""}${list.length ? "" : " Add your own test addresses in Setup > Email."}</p>`,
+    [["Send test", () => runAction("Send test", "test_send", list.length > 1 ? {to: $("#emTestTo").value} : (list[0] ? {to: list[0]} : {})), "primary"]]);
+  const sel = $("#emTestTo");
+  if (sel){ const last = localGet("email.testTo"); if (last && list.includes(last)) sel.value = last; sel.onchange = () => localSet("email.testTo", sel.value) }
 }
 function defaultWhen(){
   const p = londonParts(new Date(Date.now() + 86400000));

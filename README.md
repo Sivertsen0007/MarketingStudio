@@ -370,7 +370,7 @@ Search Console / GA4 use the sign-in.
 | `EMAIL_MCP_URL`, `EMAIL_MCP_TOKEN` | The platform's [MCP server](#mcp-contract) over HTTP and its bearer token: read access + new drafts |
 | `EMAIL_FROM_ADDRESS` | Optional: every campaign must use this From and Reply-to (a check). Empty = the platform decides |
 | `EMAIL_OWN_DOMAINS` | Optional, comma separated: domains whose addresses may be shown (the From domain is always one) |
-| `STUDIO_TEST_EMAIL` | Where *Send test* goes |
+| `STUDIO_TEST_EMAIL` | One or more test addresses, comma separated. With one, *Send test* goes there; with several you pick one in a dropdown |
 | `EMAIL_TIMEZONE` | Send timezone, IANA name (default `Europe/London`) |
 | `EMAIL_IMAGE_HOST` | Optional: warn when an image is not on this host |
 
@@ -391,7 +391,7 @@ which Studio only sets when you pressed the button.
 | `PATCH /campaigns/{id}` | any of `name, subject, preview_text, html, text, from_name, list_id, segment_id` | `{"campaign": Campaign}` |
 | `POST /campaigns/{id}/preview` | | `{"html": "..."}` with merge tags filled with sample data |
 | `POST /campaigns/{id}/checks` | | `{"problems": [{level: "error"or"warn", message}]}` |
-| `POST /campaigns/{id}/test-send` | | `{"ok": true, "to": "..."}` |
+| `POST /campaigns/{id}/test-send` | `{"to"?: address}` (one of your test addresses; the platform may limit it to internal ones) | `{"ok": true, "to": "..."}` |
 | `POST /campaigns/{id}/schedule` | `{"scheduled_for": ISO 8601}` | `{"campaign": Campaign}` (now or later) |
 | `POST /campaigns/{id}/cancel` | | `{"campaign": Campaign}` |
 | `GET /campaigns/{id}/progress` | | `{"status", "sent", "total"}` while sending |

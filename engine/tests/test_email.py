@@ -615,5 +615,27 @@ class Delete(Base):
         self.assertIn("delete", em.POST)
 
 
+
+class TestAddresses(Base):
+    def test_one_or_several_test_addresses(self):
+        old = em.TEST_ADDRESSES, em.TEST_ADDRESS
+        try:
+            em.TEST_ADDRESSES, em.TEST_ADDRESS = ["a@demobrand.com"], "a@demobrand.com"
+            r = em.p_test_send({"id": "demo-4", "confirm": em.CONFIRM})
+            self.assertTrue(r["ok"], r)
+            self.assertIn("a@demobrand.com", r["message"])
+            em.TEST_ADDRESSES = ["a@demobrand.com", "b@demobrand.com"]
+            r = em.p_test_send({"id": "demo-4", "confirm": em.CONFIRM})
+            self.assertFalse(r["ok"])  # several: you must pick one
+            r = em.p_test_send({"id": "demo-4", "confirm": em.CONFIRM, "to": "B@demobrand.com"})
+            self.assertTrue(r["ok"], r)
+            self.assertIn("b@demobrand.com", r["message"])
+            r = em.p_test_send({"id": "demo-4", "confirm": em.CONFIRM, "to": "x@elsewhere.com"})
+            self.assertFalse(r["ok"])  # only the addresses from Setup
+        finally:
+            em.TEST_ADDRESSES, em.TEST_ADDRESS = old
+        self.assertEqual(em.test_addresses("A@x.com, b@x.com;b@x.com bad"), ["a@x.com", "b@x.com"])
+
+
 if __name__ == "__main__":
     unittest.main()

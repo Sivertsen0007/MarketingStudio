@@ -35,21 +35,33 @@ from zoneinfo import ZoneInfo
 LABEL = "Email"
 KEY = "email"  # progress key
 FROM_ADDRESS = ""  # set from Setup (EMAIL_FROM_ADDRESS); empty = the platform decides
-TEST_ADDRESS = "the test address"  # set from Setup (STUDIO_TEST_EMAIL); the platform decides where tests really go
+TEST_ADDRESS = "the test address"  # the first of TEST_ADDRESSES (shown when no address is set up)
+TEST_ADDRESSES = []  # Setup: STUDIO_TEST_EMAIL, one or more addresses; with several you pick one per test
 PLATFORM = "your email platform"  # set from Setup (EMAIL_PLATFORM_NAME), used in labels and messages
 IMAGE_HOST = ""  # optional (EMAIL_IMAGE_HOST): warn when an image is not on this host
 OWN_DOMAINS = ()  # business domains whose addresses may be shown (from the from-address + EMAIL_OWN_DOMAINS)
 LONDON = ZoneInfo("Europe/London")  # the send timezone (EMAIL_TIMEZONE)
 
 
+def test_addresses(raw):
+    """'a@x.com, b@x.com' (commas, semicolons, spaces or new lines) -> ['a@x.com', 'b@x.com'], lower-case, no repeats."""
+    out = []
+    for part in re.split(r"[\s,;]+", raw or ""):
+        part = part.strip().lower()
+        if part and re.fullmatch(r"[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}", part) and part not in out:
+            out.append(part)
+    return out
+
+
 def _load_test_address():
     """Read the email settings from Setup (appconfig). Runs at import and whenever keys change."""
-    global TEST_ADDRESS, FROM_ADDRESS, PLATFORM, IMAGE_HOST, OWN_DOMAINS, LONDON
+    global TEST_ADDRESS, TEST_ADDRESSES, FROM_ADDRESS, PLATFORM, IMAGE_HOST, OWN_DOMAINS, LONDON
     try:
         import appconfig  # noqa: PLC0415
     except ImportError:
         return
-    TEST_ADDRESS = appconfig.get("STUDIO_TEST_EMAIL") or "the test address"
+    TEST_ADDRESSES = test_addresses(appconfig.get("STUDIO_TEST_EMAIL"))
+    TEST_ADDRESS = TEST_ADDRESSES[0] if TEST_ADDRESSES else "the test address"
     FROM_ADDRESS = appconfig.get("EMAIL_FROM_ADDRESS").strip().lower()
     PLATFORM = appconfig.get("EMAIL_PLATFORM_NAME") or "your email platform"
     IMAGE_HOST = appconfig.get("EMAIL_IMAGE_HOST").strip().lower()
@@ -347,8 +359,8 @@ class EmailApiAdapter:
     def server_checks(self, cid):
         return self._req("POST", f"/campaigns/{urllib.parse.quote(str(cid))}/checks", {})
 
-    def test_send(self, cid):
-        return self._req("POST", f"/campaigns/{urllib.parse.quote(str(cid))}/test-send", {}, confirm=True)
+    def test_send(self, cid, to=None):
+        return self._req("POST", f"/campaigns/{urllib.parse.quote(str(cid))}/test-send", {"to": to} if to else {}, confirm=True)
 
     def schedule(self, cid, when_iso):
         return self._req("POST", f"/campaigns/{urllib.parse.quote(str(cid))}/schedule", {"scheduled_for": when_iso}, confirm=True)["campaign"]
@@ -599,7 +611,7 @@ class McpAdapter:
     def patch(self, cid, fields):
         raise AdapterError(NEEDS_API)
 
-    def test_send(self, cid):
+    def test_send(self, cid, to=None):
         raise AdapterError(NEEDS_API)
 
     def schedule(self, cid, when_iso):
@@ -817,9 +829,9 @@ class FakeAdapter:
     def server_checks(self, cid):
         return {"ok": True, "problems": []}
 
-    def test_send(self, cid):
+    def test_send(self, cid, to=None):
         self.get_campaign(cid)
-        return {"ok": True, "to": TEST_ADDRESS}
+        return {"ok": True, "to": to or TEST_ADDRESS}
 
     def schedule(self, cid, when_iso):
         with _lock:
@@ -1147,7 +1159,7 @@ def g_state(q):
     s = settings()
     a = adapter()
     return {**_source(a, s), "api_url": s["api_url"], "mcp_url": s["mcp_url"], "token_set": bool(s["token"]), "mcp_token_set": bool(s["mcp_token"]),
-            "from_address": FROM_ADDRESS, "test_address": TEST_ADDRESS, "drafts": list_drafts(), "secrets_file": str(SECRETS)}
+            "from_address": FROM_ADDRESS, "test_address": TEST_ADDRESS, "test_addresses": TEST_ADDRESSES, "drafts": list_drafts(), "secrets_file": str(SECRETS)}
 
 
 def _fresh(q):
@@ -1405,13 +1417,20 @@ def p_test_send(body):
     import progress
     a = adapter()
     _need(a, "test")
-    c, err, probs = _prepare(a, body["id"], "test", [("test", f"Test to {TEST_ADDRESS}", 1)])
+    want = (body.get("to") or "").strip().lower()
+    if want and want not in TEST_ADDRESSES:
+        raise ValueError("Pick one of the test addresses from Setup.")
+    if not want and len(TEST_ADDRESSES) > 1:
+        raise ValueError("Pick which test address to send to.")
+    want = want or (TEST_ADDRESSES[0] if TEST_ADDRESSES else "")
+    shown = want or "the platform's test inbox"
+    c, err, probs = _prepare(a, body["id"], "test", [("test", f"Test to {shown}", 1)])
     if err:
         return {"ok": False, "message": err, "problems": probs}
-    progress.phase(KEY, "sending", f"Sending a test to {TEST_ADDRESS}")
-    r = a.test_send(body["id"])
+    progress.phase(KEY, "sending", f"Sending a test to {shown}")
+    r = a.test_send(body["id"], want or None)
     progress.sent(KEY, "test")
-    to = r.get("to") or TEST_ADDRESS
+    to = r.get("to") or shown
     progress.finish(KEY, True, f"Test sent to {to}" + (" (demo: nothing was sent)" if a.demo else ""))
     return {"ok": True, "message": f"Test sent to {to}." + (" Demo data: nothing was really sent." if a.demo else ""), "problems": probs}
 

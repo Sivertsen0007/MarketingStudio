@@ -56,8 +56,17 @@ claim   `{coll, id, member, note, at}`
 
 ## Members (admin)
 
-- `GET /api/v1/me`, `GET /api/v1/members`. Admin/owner: `POST /api/v1/invites {email, role, name?}` -> links,
-  `PATCH /api/v1/members/<id> {role?, approver?, active?}`, `DELETE /api/v1/devices/<id>`.
+- `GET /api/v1/me`, `GET /api/v1/members` (admin/owner also get each member's `devices` and pending `invites`
+  `[{id, email, name, role, created_by, member_id, expires_at}]`). Admin/owner: `POST /api/v1/invites {email, role, name?}`
+  -> `{id, web, app, email, role, device, expires_at}`, `PATCH /api/v1/members/<id> {role?, approver?, active?}`,
+  `DELETE /api/v1/devices/<id>` (only an owner revokes an owner's device; anyone revokes their own).
+- `DELETE /api/v1/invites/<id>` withdraws a pending invite: its creator or an admin/owner; owner invites only by an owner.
+  409 if already used.
+- An invite for an email that already belongs to a member is a device invite (`device: true`): only that member may
+  make one (any role), it keeps their role, and nobody else (owners included) can make one over the API.
+- An invite only works while its creator could still grant it (active; owner for owner invites, admin/owner otherwise).
+  Demoting or deactivating a member voids the pending invites they can no longer grant; deactivation also revokes
+  all their device tokens.
 
 ## Live updates
 

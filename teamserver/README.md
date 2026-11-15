@@ -21,8 +21,13 @@ python3 -m teamserver serve --data ./teamdata --port 8790
 (`marketingstudio://join?...`). Open either on the Mac with Marketing Studio to join. Invites are single use and
 expire after 7 days.
 
-The server binds to `127.0.0.1` by default. Put it behind an HTTPS reverse proxy (Caddy, nginx) and pass
-`--host 0.0.0.0` only when it runs inside a container or on a private network.
+The server binds to `127.0.0.1` by default. In production it should always sit behind an HTTPS reverse proxy
+(for example Caddy or nginx): the proxy terminates TLS and absorbs slow or abusive connections. Start the server
+with `--trust-proxy` there, so rate limits and the per-address connection cap use the forwarded client address.
+Pass `--host 0.0.0.0` only when it runs inside a container or on a private network.
+
+Built-in limits (for direct exposure and as a second line behind the proxy): 15 s per socket read, 20 s to send a
+whole request, 200 connections in total, 20 per client address, 5 live streams per device, 4 MB per request.
 
 ## Manage the team
 
@@ -30,7 +35,7 @@ These commands work on the data directory directly, so run them on the server ho
 
 ```sh
 python3 -m teamserver invite  --data ./teamdata --email alex@example.com --role editor --name "Alex"
-python3 -m teamserver members --data ./teamdata          # members, device ids, pending invites
+python3 -m teamserver members --data ./teamdata          # members, device ids, pending invite ids
 python3 -m teamserver revoke  --data ./teamdata 3        # revoke device 3
 ```
 

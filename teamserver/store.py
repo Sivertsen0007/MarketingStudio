@@ -266,8 +266,26 @@ class Store:
             used[r["colour"]] = r["n"]
         return min(PALETTE, key=lambda c: (used.get(c, 0), PALETTE.index(c)))
 
+    def _fresh_actor(self, db, actor):
+        """Re-read the acting member inside a transaction, so a role change or deactivation applies at once."""
+        r = db.execute("SELECT * FROM members WHERE id=?", (actor["id"],)).fetchone()
+        if not r or not r["active"]:
+            raise ApiError(401, "missing or bad token")
+        return self.member_out(r)
+
+    @staticmethod
+    def _may_grant(creator_role, role):
+        """Whether a member with creator_role may invite a new member with role."""
+        if role == "owner":
+            return creator_role == "owner"
+        return creator_role in MANAGERS
+
     def create_invite(self, email, role, name=None, by=None):
-        """Make a single-use invite and return (token, expires_at). `by` is the inviting member dict or None (CLI)."""
+        """Make a single-use invite. `by` is the inviting member dict, or None for the host CLI.
+
+        Returns {id, token, expires_at, email, role, member_id}. For an email that already belongs to a member this
+        is a device invite: only that member themself (or the host CLI) may make one, and the role stays theirs.
+        """
         email = need_email({"email": email})
         role = need_role({"role": role})
         if name is not None:
@@ -277,24 +295,60 @@ class Store:
         with self.tx() as db:
             existing = db.execute("SELECT * FROM members WHERE email=?", (email,)).fetchone()
             if by is not None:
+                by = self._fresh_actor(db, by)
                 if existing is not None:
-                    # A second device for an existing member: only that member or an owner may ask for one,
-                    # so nobody can take over someone else's identity.
-                    if existing["id"] != by["id"] and by["role"] != "owner":
-                        raise ApiError(403, "that email already belongs to a member; only they or an owner can"
-                                            " invite another device for it")
+                    # A device invite hands out that member's identity: only they may ask for one (owners
+                    # included in "nobody else"), so no one can act as someone else.
+                    if existing["id"] != by["id"]:
+                        raise ApiError(403, "that email already belongs to a member; only they can invite"
+                                            " another device for it")
                 else:
                     if by["role"] not in MANAGERS:
                         raise ApiError(403, "only an admin or owner can invite")
-                    if role == "owner" and by["role"] != "owner":
+                    if not self._may_grant(by["role"], role):
                         raise ApiError(403, "only an owner can invite an owner")
             if existing is not None:
                 role = existing["role"]  # a device invite never changes the member's role
-            db.execute("INSERT INTO invites(token_hash, email, name, role, created_by, created_at, expires_at,"
-                       " member_id) VALUES(?,?,?,?,?,?,?,?)",
-                       (hash_token(token), email, name, role, by["id"] if by else None, now, now + INVITE_TTL,
-                        existing["id"] if existing is not None else None))
-        return token, now + INVITE_TTL
+            cur = db.execute("INSERT INTO invites(token_hash, email, name, role, created_by, created_at, expires_at,"
+                             " member_id) VALUES(?,?,?,?,?,?,?,?)",
+                             (hash_token(token), email, name, role, by["id"] if by else None, now, now + INVITE_TTL,
+                              existing["id"] if existing is not None else None))
+        return {"id": cur.lastrowid, "token": token, "expires_at": now + INVITE_TTL, "email": email, "role": role,
+                "member_id": existing["id"] if existing is not None else None}
+
+    def delete_invite(self, actor, iid):
+        """Withdraw a pending invite: its creator or an admin/owner; invites for owners only by an owner."""
+        iid = need_int(iid, "invite", 1)
+        with self.tx() as db:
+            actor = self._fresh_actor(db, actor)
+            inv = db.execute("SELECT * FROM invites WHERE id=?", (iid,)).fetchone()
+            if not inv:
+                raise ApiError(404, "invite not found")
+            if inv["created_by"] != actor["id"] and actor["role"] not in MANAGERS:
+                raise ApiError(403, "only the inviter or an admin or owner can withdraw an invite")
+            if inv["role"] == "owner" and actor["role"] != "owner" and inv["created_by"] != actor["id"]:
+                raise ApiError(403, "only an owner can withdraw an owner invite")
+            if inv["used_at"] is not None:
+                raise ApiError(409, "invite already used")
+            db.execute("DELETE FROM invites WHERE id=?", (iid,))
+        return {"ok": True, "invite": iid}
+
+    def _void_invites_of(self, db, member):
+        """Drop pending invites `member` may no longer grant (after a demotion or deactivation)."""
+        for inv in db.execute("SELECT * FROM invites WHERE created_by=? AND used_at IS NULL",
+                              (member["id"],)).fetchall():
+            if not self._invite_creator_ok(inv, member):
+                db.execute("DELETE FROM invites WHERE id=?", (inv["id"],))
+
+    def _invite_creator_ok(self, inv, creator):
+        """Whether the invite's creator (a member row/dict, or None for the CLI) still backs it."""
+        if inv["created_by"] is None:
+            return True
+        if creator is None or not creator["active"]:
+            return False
+        if inv["member_id"] is not None:  # device invite: made by the member for themself
+            return inv["member_id"] == creator["id"]
+        return self._may_grant(creator["role"], inv["role"])
 
     def has_owner(self):
         return self.q1("SELECT 1 FROM members WHERE role='owner' AND active=1") is not None
@@ -313,6 +367,10 @@ class Store:
                 raise ApiError(401, "invite already used")
             if inv["expires_at"] <= now:
                 raise ApiError(401, "invite expired")
+            if inv["created_by"] is not None:
+                creator = db.execute("SELECT * FROM members WHERE id=?", (inv["created_by"],)).fetchone()
+                if not self._invite_creator_ok(inv, creator):
+                    raise ApiError(403, "the person who sent this invite can no longer grant it; ask for a new one")
             m = db.execute("SELECT * FROM members WHERE email=?", (inv["email"],)).fetchone()
             if m and not m["active"]:
                 raise ApiError(403, "member is deactivated")
@@ -378,13 +436,12 @@ class Store:
 
     def pending_invites(self):
         now = self.now()
-        return [{"email": r["email"], "name": r["name"], "role": r["role"], "expires_at": iso(r["expires_at"])}
+        return [{"id": r["id"], "email": r["email"], "name": r["name"], "role": r["role"],
+                 "created_by": r["created_by"], "member_id": r["member_id"], "expires_at": iso(r["expires_at"])}
                 for r in self.q("SELECT * FROM invites WHERE used_at IS NULL AND expires_at>? ORDER BY id", (now,))]
 
     def update_member(self, actor, mid, body):
         """Admin/owner change of role, approver flag or active state."""
-        if actor["role"] not in MANAGERS:
-            raise ApiError(403, "only an admin or owner can change members")
         fields = {}
         if "role" in body:
             fields["role"] = need_role(body)
@@ -395,6 +452,9 @@ class Store:
         if not fields:
             raise ApiError(400, "nothing to change (role, approver, active)")
         with self.tx() as db:
+            actor = self._fresh_actor(db, actor)
+            if actor["role"] not in MANAGERS:
+                raise ApiError(403, "only an admin or owner can change members")
             t = db.execute("SELECT * FROM members WHERE id=?", (mid,)).fetchone()
             if not t:
                 raise ApiError(404, "member not found")
@@ -413,6 +473,7 @@ class Store:
                 db.execute("UPDATE devices SET revoked_at=? WHERE member_id=? AND revoked_at IS NULL",
                            (self.now(), mid))
             r = db.execute("SELECT * FROM members WHERE id=?", (mid,)).fetchone()
+            self._void_invites_of(db, r)
         if fields.get("active") == 0:
             self.presence.pop(mid, None)
             self.emit("_close_member", {"member": mid})
@@ -422,6 +483,8 @@ class Store:
         """Revoke one device token. Admin/owner for anyone's device, any member for their own. actor None = CLI."""
         did = need_int(did, "device", 1)
         with self.tx() as db:
+            if actor is not None:
+                actor = self._fresh_actor(db, actor)
             d = db.execute("SELECT * FROM devices WHERE id=?", (did,)).fetchone()
             if not d:
                 raise ApiError(404, "device not found")

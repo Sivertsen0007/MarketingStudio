@@ -111,6 +111,18 @@ def approvals():
     return out
 
 
+def changes_requested():
+    """{"coll\tid": [{review, hash}]}: content someone asked changes for. While an item is still exactly that content it
+    stays out of every push, even when another review approved it; a change to it (or withdrawing that review) lifts it."""
+    out = {}
+    for rv in _api("GET", "/api/v1/reviews?status=changes_requested&current=1").get("reviews") or []:
+        for it in rv.get("items") or []:
+            if not it.get("stale"):
+                h = it.get("content_hash") if it["coll"] in CONTENT else it.get("hash")
+                out.setdefault(team._key(it["coll"], it["id"]), []).append({"review": rv["id"], "hash": h or ""})
+    return out
+
+
 def owners():
     """{scope: {id, name, colour, me}} (empty when not in a team or offline)."""
     if not joined():
@@ -212,35 +224,81 @@ def group_of(coll, data):
     return None, None
 
 
+def _full(v):
+    """A value as text, in full (never cut: the approver confirms exactly what is shown)."""
+    if v is None:
+        return ""
+    return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str, indent=1)
+
+
+def _row(label, new, old="", kind="text"):
+    return {"label": label, "old": _full(old), "new": _full(new), "kind": kind}
+
+
+def _rest(d, shown):
+    """Every other field of the item (bookkeeping keys aside), so nothing the hash covers goes unseen."""
+    return [_row(k.replace("_", " "), v) for k, v in d.items()
+            if k not in shown and k not in CONTENT_SKIP and v not in (None, "", [], {})]
+
+
+def _social_rows(d):
+    """Per channel, what that channel receives: built with the same function Post now / Schedule use (build_job)."""
+    from areas import social as so  # noqa: PLC0415
+    from areas import _social_publish as pub  # noqa: PLC0415
+    from areas import _social_store as sst  # noqa: PLC0415
+    rows = []
+    for ch in d.get("channels") or []:
+        lab = sst.CHANNEL_LABEL.get(ch, ch)
+        try:
+            job = pub.build_job(d, ch, so.media_lookup, so.tracker(d))
+            media = [f"{m.get('kind', '')} {Path_name(m.get('path'))} ({m.get('media_id')})" for m in job.get("media") or []]
+        except Exception:  # noqa: BLE001 - media not on this Mac: the same fields, without the file lookup
+            job = {"text": sst.caption_for(d, ch), "link": d.get("link", "") if ch != "instagram" else "",
+                   "title": d.get("title", ""), "alt_text": d.get("alt_text", ""), "location": d.get("location", ""),
+                   "first_comment": d.get("first_comment", "") if ch == "instagram" else "", "format": d.get("format") or "text"}
+            media = [f"{m.get('kind', '')} {m.get('name') or m.get('file') or ''} ({m.get('media_id')})" for m in d.get("media") or []]
+        rows.append(_row(f"{lab}: text", job.get("text")))
+        for k in ("link", "title", "first_comment", "alt_text", "location", "format"):
+            if job.get(k):
+                rows.append(_row(f"{lab}: {k.replace('_', ' ')}", job[k]))
+        rows.append(_row(f"{lab}: media", f"{len(media)} file(s)" + ("\n" + "\n".join(media) if media else "")))
+    return rows
+
+
+def Path_name(p):
+    return str(p or "").rsplit("/", 1)[-1]
+
+
 def lines_of(coll, data):
-    """Old / new rows for the review screen, like the area's Push / Publish preview: [{label, old, new}]."""
+    """Rows for the review screen [{label, old, new, kind}]: every field the area sends live, in full (kind "html" is
+    shown rendered in a sandbox with a source toggle), then every other field of the item. Nothing is shortened."""
     d = data or {}
     if data is None:
-        return [{"label": "Removed", "old": "", "new": "(removed from the draft)"}]
+        return [_row("Removed", "(removed from the draft)")]
     if coll.startswith("ads:"):
-        rows = [{"label": "Change", "old": "", "new": d.get("summary") or ""}]
+        c = d.get("change") or {}
+        rows = [_row("Change", d.get("summary") or ""), _row("Type", c.get("type") or "")]
         if d.get("note"):
-            rows.append({"label": "Note", "old": "", "new": d["note"]})
-        for k, v in (d.get("change") or {}).items():
-            if k != "type":
-                rows.append({"label": k.replace("_", " "), "old": "", "new": _short(v)})
-        return rows
+            rows.append(_row("Note", d["note"]))
+        rows += [_row(k.replace("_", " "), v) for k, v in c.items() if k != "type"]
+        return rows + _rest(d, {"summary", "note", "change", "id"})
     if coll == "seo:changes":
-        return [{"label": d.get("field") or "", "old": _short(d.get("old") or "", 400), "new": _short(d.get("new") or "", 400)}]
+        f = d.get("field") or ""
+        rows = [_row("Post", f"{d.get('post_title') or ''} (post id {d.get('post_id')})"),
+                _row(f, d.get("new"), d.get("old"), "html" if f == "content" else "text")]
+        return rows + _rest(d, {"field", "old", "new", "post_title", "post_id", "id"})
     if coll == "seo:new_posts":
-        return [{"label": k.replace("_", " "), "old": "", "new": _short(d.get(k) or "", 400)}
-                for k in ("title", "slug", "seo_title", "meta_desc", "focus_kw", "status", "content") if d.get(k)]
+        keys = ("title", "slug", "seo_title", "meta_desc", "focus_kw", "status", "excerpt", "categories", "node_title", "content")
+        rows = [_row(k.replace("_", " "), d.get(k), kind="html" if k == "content" else "text") for k in keys if d.get(k) not in (None, "", [])]
+        return rows + _rest(d, set(keys) | {"id"})
     if coll == "email":
         f = d.get("fields") if isinstance(d.get("fields"), dict) else d
-        return [{"label": k.replace("_", " "), "old": "", "new": _short(v, 400)} for k, v in f.items()
+        return [_row(k.replace("_", " "), v, kind="html" if k == "html" else "text") for k, v in f.items()
                 if k != "campaign_id" and v not in (None, "")]
     if coll == "social":
-        rows = [{"label": k, "old": "", "new": _short(d.get(k), 400)} for k in ("title", "caption", "channels", "when", "link")
-                if d.get(k)]
-        if d.get("media"):
-            rows.append({"label": "media", "old": "", "new": f"{len(d['media'])} file(s)"})
-        return rows
-    return [{"label": k, "old": "", "new": _short(v)} for k, v in d.items()]
+        return _social_rows(d) + [_row(k, d.get(k)) for k in ("channels", "when") if d.get(k)] + \
+            _rest(d, {"channels", "when", "id"})
+    return _rest(d, set())
 
 
 def _person(updated_by):
@@ -295,21 +353,23 @@ def plan(area, entries, scope=None):
         try:
             if pol.get("unknown"):
                 raise team.TeamError("unknown rules")
-            cov = approvals()
+            cov, held = approvals(), changes_requested()
         except team.TeamError as e:
-            cov = {}
+            cov, held = {}, {}
             out["error"] = ("Can't check the team's approval rules: reconnect and try again." if pol.get("unknown") else
                             f"Can't check approvals with the team server ({e}). Nothing can go out until it can.")
         allowed = []
         for e in entries:
             key = team._key(e["coll"], e["id"])
             ok = any(a["hash"] == e["hash"] for a in cov.get(key, []))
-            if ok:
+            held_now = any(a["hash"] == e["hash"] for a in held.get(key, []))  # someone asked for changes to this
+            if ok and not held_now:
                 allowed.append(e)
             else:
                 out["needs"].append({"coll": e["coll"], "id": e["id"], "label": e["label"], "group": e.get("group"),
                                      "group_label": e.get("group_label"), "person": e["person"],
-                                     "reason": "changed since it was approved" if key in cov else "needs approval"})
+                                     "reason": "changes requested" if held_now else
+                                     "changed since it was approved" if key in cov else "needs approval"})
     people = {}
     for e in allowed:
         people[e["person"]] = people.get(e["person"], 0) + 1

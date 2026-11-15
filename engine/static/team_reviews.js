@@ -33,7 +33,7 @@
   .tr-chip.approved{background:#e6f4ea;color:#137333} .tr-chip.changes_requested,.tr-chip.stale{background:#fce8e6;color:#c5221f} .tr-chip.open{background:#e8f0fe;color:#1967d2}
   .tr-item{border:1px solid var(--line,#dadce0);border-radius:6px;padding:8px 10px;margin:8px 0}
   .tr-ln{display:grid;grid-template-columns:150px 1fr;gap:8px;font-size:13px;padding:3px 0;border-top:1px dashed var(--line,#dadce0)}
-  .tr-ln .old{text-decoration:line-through;color:var(--muted,#5f6368)} .tr-ln .new{color:var(--text,#202124)} .tr-ln div{min-width:0;word-break:break-word;white-space:pre-wrap}
+  .tr-ln span.old{text-decoration:line-through;color:var(--muted,#5f6368)} .tr-ln .new{color:var(--text,#202124)} .tr-ln div{min-width:0;word-break:break-word;white-space:pre-wrap}
   .tr-cm{font-size:13px;margin:6px 0 0;padding-left:8px;border-left:3px solid var(--line,#dadce0)} .tr-cm p{margin:3px 0}
   .tr-cm textarea,.tr-note{width:100%;min-height:52px;box-sizing:border-box;font:13px/1.4 inherit}
   .tr-sec{border:1px solid var(--line,#dadce0);border-radius:6px;padding:8px 10px;margin:10px 0;font-size:13px}
@@ -99,8 +99,16 @@
     const sc = document.getElementById("trSendCs"); if (sc) sc.onclick = () => requestDialog({changeset:true}, "your changeset");
     if (TAB === "rules") wireRules(isAdmin);
   }
+  // Every field in full: long text folds behind an expander (never cut), HTML shows rendered in a sandbox (no scripts,
+  // no same-origin) with its source a click away. What the approver confirms is exactly this set.
+  const long = (t, cls) => t.length > 600 || t.split("\n").length > 12
+    ? `<details><summary>${esc(t.slice(0, 140).replace(/\s+/g, " "))} ... (${t.length.toLocaleString()} characters: show all)</summary><span class="${cls}">${esc(t)}</span></details>`
+    : `<span class="${cls}">${esc(t)}</span>`;
+  const html = (t, cls) => t ? `<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="${esc(t)}" style="width:100%;height:320px;border:1px solid var(--line,#dadce0);border-radius:4px;background:#fff"></iframe>
+    <details><summary>Source (${t.length.toLocaleString()} characters)</summary><span class="${cls}">${esc(t)}</span></details>` : "";
   function linesHTML(lines){
-    return (lines || []).map(l => `<div class="tr-ln"><div>${esc(l.label)}</div><div>${l.old ? `<span class="old">${esc(l.old)}</span><br>` : ""}<span class="new">${esc(l.new)}</span></div></div>`).join("");
+    return (lines || []).map(l => { const show = l.kind === "html" ? html : long;
+      return `<div class="tr-ln"><div>${esc(l.label)}</div><div>${l.old ? `<div class="old">${l.kind === "html" ? "Before:" : ""}${show(l.old, "old")}</div>` : ""}<div>${l.old && l.kind === "html" ? "After:" : ""}${show(l.new, "new")}</div></div></div>` }).join("");
   }
   async function commentsHTML(coll, id){
     try {

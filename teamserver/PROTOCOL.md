@@ -75,20 +75,20 @@ review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, h
   (editor+). Each version must be the item's current server version (0 = no such item, e.g. an email campaign with no
   draft); else 409 with `{coll, id, current_version}`: sync and ask again. An item that does not exist (or is deleted) and
   has no `content_hash` is refused (400, nothing to review).
-  `content_hash` (64 lower-case hex): the client's hash of what would really go out, for items whose live content is not
-  only the draft item (Studio sends it for email: the platform campaign with any Studio draft on top). The server cannot
+  `content_hash` (64 lower-case hex, only for coll `email`, else 400): the client's hash of what would really go out,
+  for items whose live content is not only the draft item (an email: the platform campaign with any Studio draft on top). The server cannot
   see that content, so such items are never `stale` on the server; the client checks the hash again at send time against
   the platform copy (so edits on the platform, or a draft saved there outside Send, end the approval). Instead of items, `{changeset:{id,name}, from_changeset:true}`
   takes every live item whose last write was the requester's, tagged with that changeset. Reviewers must be active
-  members who may approve (`approver: true`, or admin / owner), not the requester, and not the author or last writer of
-  any item in the review (400 otherwise).
+  members who may approve (`approver: true`, or admin / owner), not the requester, and who never wrote any item in the
+  review (author, last writer, or any edit session that touched it, at any time; 400 otherwise).
 - `GET /api/v1/reviews?mine=1&to_me=1&status=open,approved&current=1&before=<id>` (filters combine; newest first, 200
   per page; `{reviews, more, next_before}`: pass `before=next_before` for the next page).
   `current=1` leaves out reviews whose every item is stale, and approvals whose decider may no longer approve. `GET /api/v1/reviews/<id>` -> review.
 - `POST /api/v1/reviews/<id>/decide {decision: approve|request_changes, note?, confirm?:[{coll, id, content_hash}]}`: only
   a listed reviewer who may approve, never the requester (403), only while open (409). Approving needs that the approver
-  is not the author or last writer of any item and wrote none of them since the request (from their edit sessions,
-  so an edit put back later still counts; 403), that no item is stale, and for EVERY item an entry in `confirm`: the
+  never wrote any item in it (author, last writer, or any of their edit sessions touching it, before or after the
+  request, so an edit put back later still counts; 403), that no item is stale, and for EVERY item an entry in `confirm`: the
   approver's own hash of exactly what their review screen showed, equal to the item's `content_hash` (or `hash` when
   it has none). Otherwise 409: the review has to be asked for again.
 - An approval counts only while the member who gave it may still approve: `decider_ok` is false once they are
@@ -112,7 +112,10 @@ review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, h
 - When `require_approval` is on for an area, Studio's Push live / Publish / Send / Schedule only includes items covered
   by a current approval, and every push in a team carries a one-line why note, reported as a `push` event
   `{kind: "push", area, summary, data: {why, counts, items, scope}}` (`send_to_editor` for Ads Send to Editor, gated the
-  same way). If the rules were never fetched and the server can't be reached, live actions wait (fail closed). That gate is the client's: the server stores the
+  same way). If the rules were never fetched and the server can't be reached, live actions wait (fail closed). An item
+  whose current content has a `changes_requested` decision in any review stays out of pushes, even if another review
+  approved it, until it changes or that review is withdrawn. The review screen shows every field an item sends live, in
+  full, and the approver's `confirm` hash is computed from exactly what it showed. That gate is the client's: the server stores the
   policy and the approvals, it never pushes anything itself.
 
 ## Team settings

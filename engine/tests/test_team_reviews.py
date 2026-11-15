@@ -47,6 +47,13 @@ def err(fn, *a):
 """
 
 
+SP = """
+from areas import social as so
+from areas import _social_store as sst
+import datetime as dt
+"""
+
+
 class Reviews(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -397,6 +404,136 @@ out = None
         self.assertIn("to Editor", out["ev"])
         self.assertIn("why", out["no_why"])
 
+    def shared_email(self, homes):
+        """Members of one team share one email platform: point every Studio's demo platform at the same file."""
+        d = tempfile.mkdtemp(dir=self.tmp.name, prefix="emailplatform-")
+        return f"from areas import email as _em\n_em.FakeAdapter.__init__.__defaults__ = ({os.path.join(d, 'email_fake.json')!r},)\n"
+
+    # regression tests from the third independent review: the approver sees everything that goes out
+    def test_review_shows_every_social_field_sent(self):
+        alex, _ = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        self.policy(social=True)
+        pid = self.run_in(alex, SP + textwrap.dedent("""
+            sst.save_settings({**sst.settings(), "local_scheduler": True})
+            W = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=3)).replace(microsecond=0).isoformat()
+            p = sst.save({"title": "Launch", "channels": ["linkedin"], "when": W, "caption": "Shown caption",
+                          "captions": {"linkedin": "HIDDEN_LINKEDIN_TEXT"}, "first_comment": "HIDDEN_COMMENT",
+                          "hashtags": "#hiddentag", "alt_text": "HIDDEN_ALT", "format": "text"}, "you")
+            team.sync(); out = p["id"]
+        """))
+        rv = self.run_in(alex, f"PID={pid!r}\nout = tr.request({{'items': [{{'coll': 'social', 'id': PID}}], 'reviewers': [{me_b['id']}]}})")
+        seen = self.run_in(bo, f"""
+            team.sync()
+            v = tr.view({{"id": {rv['id']}}})
+            d = tr.decide({{"id": {rv['id']}, "decision": "approve"}})
+            out = {{"lines": v["items"][0]["lines"], "status": d.get("status")}}
+        """)
+        out = self.run_in(alex, SP + textwrap.dedent(f"""
+            PID = {pid!r}
+            team.sync()
+            r = so.schedule({{"id": PID, "pressed": "user", "why": "launch", "channels": ["linkedin"]}})
+            q = [x["payload"] for x in sst.queue() if x["post_id"] == PID and x["status"] == "scheduled"]
+            out = {{"ok": r.get("ok"), "msg": r.get("message"), "res": r.get("results"), "probs": r.get("problems"), "payload": json.dumps(q)}}
+        """))
+        shown = json.dumps(seen["lines"])
+        live = out["payload"]
+        for tok in ("HIDDEN_LINKEDIN_TEXT", "hiddentag"):
+            self.assertIn(tok, live)
+            self.assertIn(tok, shown, f"{tok} goes out but the approver was never shown it")
+        for tok in ("HIDDEN_COMMENT", "HIDDEN_ALT"):  # every field of the post is on the screen, sent or not
+            self.assertIn(tok, shown)
+
+    def test_review_shows_full_email_html(self):
+        alex, _ = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        self.policy(email=True)
+        shared = self.shared_email([alex, bo])
+        html = "<p>" + ("x" * 1200) + " HIDDEN_TAIL_PARAGRAPH <a href=\"{{unsubscribe_url}}\">Unsubscribe</a></p>"
+        self.run_in(alex, shared + f"team.sync(); em.add_draft({{'campaign_id': 'demo-4', 'fields': {{'html': {html!r}}}}}); team.sync(); out=None")
+        rv = self.run_in(alex, shared + f"out = tr.request({{'group': {{'area': 'email', 'key': 'demo-4'}}, 'reviewers': [{me_b['id']}]}})")
+        seen = self.run_in(bo, shared + textwrap.dedent(f"""
+            team.sync()
+            v = tr.view({{"id": {rv['id']}}})
+            d = tr.decide({{"id": {rv['id']}, "decision": "approve"}})
+            out = {{"lines": v["items"][0]["lines"], "status": d.get("status")}}
+        """))
+        out = self.run_in(alex, shared + textwrap.dedent("""
+            team.sync()
+            s = em.p_send_now({"id": "demo-4", "confirm": em.CONFIRM, "why": "go"})
+            c = em.adapter().get_campaign("demo-4", fresh=True)
+            out = {"msg": s.get("message"), "probs": s.get("problems"), "ok": s.get("ok"), "status": c["status"], "html_has": "HIDDEN_TAIL" in (c.get("html") or "")}
+        """))
+        self.assertTrue(out["ok"], out)
+        self.assertTrue(out["html_has"])
+        html_rows = [l for l in seen["lines"] if l["kind"] == "html"]
+        self.assertEqual(len(html_rows), 1)
+        self.assertIn("HIDDEN_TAIL", html_rows[0]["new"], "email body sent but the approver saw only a truncated html")
+
+    def test_review_shows_full_new_page(self):
+        alex, _ = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        self.policy(seo=True)
+        out = self.run_in(alex, """
+            from areas import seo
+            r = seo.save_new_post({"title": "New page", "slug": "new-page", "content": "<p>" + "y"*800 + " HIDDEN_SEO_TAIL</p>", "status": "publish"}, by="you")
+            team.sync()
+            pv = seo.publish_preview({}, link_check=lambda u: (200, ""))
+            out = {"new_pages": pv["new_pages"], "team": pv.get("team", {}).get("needs"), "ids": [x["id"] for x in seo._draft().get("new_posts", [])]}
+        """)
+        self.assertEqual(out["new_pages"], 0)
+        nid = out["ids"][0]
+        rv = self.run_in(alex, f"out = tr.request({{'items': [{{'coll': 'seo:new_posts', 'id': {nid!r}}}], 'reviewers': [{me_b['id']}]}})")
+        seen = self.run_in(bo, f"team.sync(); v = tr.view({{'id': {rv['id']}}}); d = tr.decide({{'id': {rv['id']}, 'decision': 'approve'}}); out = {{'lines': v['items'][0]['lines'], 's': d.get('status')}}")
+        out2 = self.run_in(alex, """
+            from areas import seo
+            team.sync()
+            pv = seo.publish_preview({}, link_check=lambda u: (200, ""))
+            r = seo.publish({"token": pv["token"], "why": "x"}, lambda u: (200, ""))
+            out = {"new_pages": pv["new_pages"], "ok": r.get("ok"), "team_event": r.get("team_event"), "live": r.get("live")}
+        """)
+        self.assertEqual(seen["s"], "approved")
+        self.assertTrue(out2["ok"], out2)
+        self.assertEqual(out2["new_pages"], 1)
+        self.assertTrue(out2["team_event"])
+        content = [l for l in seen["lines"] if l["label"] == "content"]
+        self.assertEqual(content[0]["kind"], "html")
+        self.assertIn("HIDDEN_SEO_TAIL", content[0]["new"])
+
+    def test_earlier_editor_cannot_approve(self):
+        alex, _ = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        self.policy(ads=True)
+        self.run_in(alex, "ads_put('e1', 'Budget 10'); team.sync(); out=None")
+        self.run_in(bo, "team.sync(); ads_put('e1', 'BO WROTE THIS'); team.sync(); out=None")
+        out = self.run_in(alex, """
+            team.sync()
+            with draftstore.tx(COLL, ROOT, by="you") as t:
+                d = dict(draftstore.peek(COLL, "e1", ROOT)[0]); d["note"] = "ok"
+                t.put("e1", d, "you")
+            team.sync(); out = draftstore.peek(COLL, "e1", ROOT)[0]["summary"]
+        """)
+        rv = self.run_in(alex, f"out = err(tr.request, {{'items': [{{'coll': COLL, 'id': 'e1'}}], 'reviewers': [{me_b['id']}]}}) or tr.request({{'items': [{{'coll': COLL, 'id': 'e1'}}], 'reviewers': [{me_b['id']}]}})")
+        self.assertIn("can't approve", rv)  # Bo edited it earlier: he can't be asked
+        if isinstance(rv, dict):
+            d = self.run_in(bo, f"team.sync(); out = err(tr.decide, {{'id': {rv['id']}, 'decision': 'approve'}}) or 'APPROVED'")
+            self.assertNotEqual(d, "APPROVED", "Bo approved content he wrote himself (someone else touched it last)")
+
+    def test_changes_requested_elsewhere_blocks_push(self):
+        alex, _ = self.member("Alex")
+        bo, me_b = self.member("Bo", approver=True)
+        cy, me_c = self.member("Cy", approver=True)
+        self.policy(ads=True)
+        rv1 = self.run_in(alex, f"""
+            ads_put("v1", "A1"); ads_put("v2", "A2"); team.sync()
+            out = tr.request({{"items": [{{"coll": COLL, "id": "v1"}}, {{"coll": COLL, "id": "v2"}}], "reviewers": [{me_b['id']}]}})
+        """)
+        rv2 = self.run_in(alex, f"out = tr.request({{'items': [{{'coll': COLL, 'id': 'v1'}}], 'reviewers': [{me_c['id']}]}})")
+        self.run_in(cy, f"team.sync(); out = tr.decide({{'id': {rv2['id']}, 'decision': 'request_changes'}})")
+        self.run_in(bo, f"team.sync(); out = tr.decide({{'id': {rv1['id']}, 'decision': 'approve'}})")
+        out = self.run_in(alex, "out = gated({'why': 'w'})['pushed']")
+        self.assertEqual(out, ["v2"])  # v1 is held by Cy's request for changes, v2 is approved
+
     # regression tests from the second independent review (M1, M2)
     def test_stale_review_cannot_be_approved_then_reverted(self):
         alex, _ = self.member("Alex")
@@ -488,7 +625,7 @@ out = None
             out = {"posts": [p["post_id"] for p in pv["posts"]], "team": pv["team"]}
         """)
         self.assertEqual(out["posts"], [])
-        self.assertEqual({n["id"] for n in out["team"]["needs"]}, {"c1", "c2"})
+        self.assertEqual({n["id"] for n in out["team"]["needs"] if n["coll"] == "seo:changes"}, {"c1", "c2"})
         rv = self.run_in(alex, f"out = tr.request({{'group': {{'area': 'seo', 'key': '5'}}, 'reviewers': [{me_b['id']}]}})")
         self.assertEqual([i["id"] for i in rv["items"]], ["c1"])
         self.run_in(bo, f"out = tr.decide({{'id': {rv['id']}, 'decision': 'approve'}})")

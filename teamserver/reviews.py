@@ -28,6 +28,7 @@ CONTENT_SKIP = ("at", "ts", "by", "updated", "updated_at", "edited_at", "edited_
                 "approval", "approved_by", "approved_at")
 SCOPE_RE = re.compile(r"[a-z_][^\x00-\x1f\x7f]{0,199}")
 HASH_RE = re.compile(r"[0-9a-f]{64}")
+CONTENT_COLLS = ("email",)  # items whose live content the server can't see (the platform campaign + the draft)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reviews (
@@ -141,6 +142,9 @@ def _requested_items(db, raw):
             continue
         seen.add((coll, iid))
         ch = it.get("content_hash")
+        if ch is not None and coll not in CONTENT_COLLS:
+            raise ApiError(400, "content_hash is only for %s items (the server checks the others itself)"
+                           % ", ".join(CONTENT_COLLS))
         if ch is not None and (not isinstance(ch, str) or not HASH_RE.fullmatch(ch)):
             raise ApiError(400, "content_hash must be 64 lower-case hex characters")
         cur, h = _current(db, coll, iid)
@@ -157,12 +161,13 @@ def _requested_items(db, raw):
 
 
 def _authored_by(db, items, mid):
-    """Did this member make or last change any of these items? They can't approve their own work."""
+    """Did this member make or ever change any of these items (at any time, before or after a request)? They can't
+    approve their own work."""
     for it in items:
         r = db.execute("SELECT author, updated_by FROM items WHERE coll=? AND id=?", (it["coll"], it["id"])).fetchone()
         if r and mid in (r["author"], r["updated_by"]):
             return True
-    return False
+    return _edited_since(db, items, mid, 0)
 
 
 def _edited_since(db, items, mid, since):
@@ -176,6 +181,9 @@ def _edited_since(db, items, mid, since):
             continue
         if any((x.get("coll"), x.get("id")) in keys for x in got if isinstance(x, dict)):
             return True
+        d = json.loads(e["data"] or "{}")
+        if d.get("truncated") and any(c in (d.get("colls") or {}) for c, _ in keys):
+            return True  # a session too big to list every item: assume it touched them
     return False
 
 

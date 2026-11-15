@@ -215,7 +215,7 @@ class TestApproverRules(ReviewBase):
         s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve", "confirm": self.conf(rv)},
                            self.bo["token"])
         self.assertEqual(s, 403, out)
-        self.assertIn("after it was asked", out["error"])
+        self.assertIn("another approver", out["error"])
 
     def test_list_paging(self):
         from teamserver import reviews as rmod
@@ -233,6 +233,29 @@ class TestApproverRules(ReviewBase):
             self.assertEqual(self.call("GET", "/api/v1/reviews?before=x", token=self.bo["token"])[0], 400)
         finally:
             rmod.MAX_LIST = old
+
+    def test_content_hash_only_for_email(self):
+        self.put(self.alex, "social", "p1", 0, {"id": "p1", "text": "x"})
+        s, out = self.ask(self.alex, [{"coll": "social", "id": "p1", "version": 1, "content_hash": "c" * 64}], [self.bo])
+        self.assertEqual(s, 400, out)
+        self.assertIn("only for email", out["error"])
+
+    def test_any_earlier_editor_cannot_approve(self):
+        # Bo wrote the item once, Alex wrote it last: Bo still can't be asked, nor approve
+        self.put(self.alex, "social", "p1", 0, {"id": "p1", "text": "a"})
+        self.put(self.bo, "social", "p1", 1, {"id": "p1", "text": "bo wrote this"})
+        self.put(self.alex, "social", "p1", 2, {"id": "p1", "text": "bo wrote this", "at": "x"})
+        s, out = self.ask(self.alex, [{"coll": "social", "id": "p1", "version": 3}], [self.bo])
+        self.assertEqual(s, 400, out)
+        self.assertIn("made or changed", out["error"])
+        # asked before his edit session is found (made directly here): the decision is refused too
+        s, rv = self.ask(self.alex, [{"coll": "social", "id": "p1", "version": 3}], [self.owner])
+        self.assertEqual(s, 200, rv)
+        with self.srv.store.lock:
+            self.srv.store.db.execute("UPDATE reviews SET reviewers=? WHERE id=?", ("[%d]" % self.bo["member"]["id"], rv["id"]))
+        s, out = self.call("POST", "/api/v1/reviews/%d/decide" % rv["id"], {"decision": "approve", "confirm": self.conf(rv)},
+                           self.bo["token"])
+        self.assertEqual(s, 403, out)
 
     def test_send_to_editor_event_kind(self):
         ev = self.ok("POST", "/api/v1/events", {"kind": "send_to_editor", "area": "ads", "summary": "Sent: why"},

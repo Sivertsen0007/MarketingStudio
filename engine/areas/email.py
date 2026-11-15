@@ -270,7 +270,7 @@ class EmailApiAdapter:
     demo = False
     source = "api"
     label = "Connected (Email API)"
-    can = {"edit": True, "test": True, "schedule": True, "create": True, "segments_on_create": True}
+    can = {"edit": True, "test": True, "schedule": True, "create": True, "segments_on_create": True, "delete": True}
 
     def __init__(self, api_url, token, timeout=20):
         self.base_url = api_url.rstrip("/")
@@ -359,6 +359,9 @@ class EmailApiAdapter:
     def progress(self, cid):
         return self._req("GET", f"/campaigns/{urllib.parse.quote(str(cid))}/progress")
 
+    def delete(self, cid):
+        return self._req("DELETE", f"/campaigns/{urllib.parse.quote(str(cid))}", confirm=True)
+
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 MCP_TTL = 600  # 10 minutes
@@ -395,7 +398,7 @@ class McpAdapter:
     demo = False
     source = "mcp"
     label = "Live data through MCP (read-only)"
-    can = {"edit": False, "test": False, "schedule": False, "create": True, "segments_on_create": False}
+    can = {"edit": False, "test": False, "schedule": False, "create": True, "segments_on_create": False, "delete": False}
     PROTOCOL = "2025-06-18"
 
     def __init__(self, mcp_url, token, timeout=20, cache_path=None):
@@ -703,7 +706,7 @@ class FakeAdapter:
     demo = True
     source = "demo"
     label = "Demo data: no email platform connected."
-    can = {"edit": True, "test": True, "schedule": True, "create": True, "segments_on_create": True}
+    can = {"edit": True, "test": True, "schedule": True, "create": True, "segments_on_create": True, "delete": True}
     SEND_SECONDS = 6.0
 
     def __init__(self, path=None):
@@ -840,6 +843,16 @@ class FakeAdapter:
             c["status"], c["scheduled_for"] = "draft", None
             self._save(st)
             return self._out(st, c)
+
+    def delete(self, cid):
+        with _lock:
+            st = self._load()
+            c = self._find(st, cid)
+            if c["status"] != "draft":
+                raise AdapterError("only a draft can be deleted", 409)
+            st["campaigns"] = [x for x in st["campaigns"] if x["id"] != c["id"]]
+            self._save(st)
+            return {"ok": True, "id": c["id"]}
 
     def progress(self, cid):
         with _lock:
@@ -1456,6 +1469,27 @@ def p_send_now(body):
     return _schedule(adapter(), body, _now(), True)
 
 
+def p_delete(body):
+    """Delete a DRAFT campaign on the platform (the user's right-click > Delete draft). Never an MCP tool.
+    The Studio draft of it goes too. Anything that is not a draft is refused here and by the platform."""
+    _need_user(body)
+    a = adapter()
+    if not a.can.get("delete"):
+        raise ValueError(NEEDS_API)
+    cid = str(body["id"])
+    c = a.get_campaign(cid, fresh=True)
+    if c.get("status") != "draft":
+        raise ValueError(f"Only drafts can be deleted (this campaign is {c.get('status')}).")
+    try:
+        a.delete(cid)
+    except AdapterError as ex:
+        raise ValueError(str(ex)) from None
+    remove_draft(cid)
+    if hasattr(a, "forget"):
+        a.forget()
+    return {"ok": True, "id": cid, "name": c.get("name"), "demo": a.demo}
+
+
 @_guard
 def p_cancel(body):
     import progress
@@ -1504,7 +1538,7 @@ GET = {"state": g_state, "campaigns": g_campaigns, "campaign": g_campaign, "audi
        "drafts": g_drafts, "settings": g_settings, "send_progress": g_progress,
        "numbers": g_overview_numbers}
 POST = {"refresh": refresh, "preview": p_preview, "checks": p_checks, "save_draft": p_save_draft, "discard_draft": p_discard_draft,
-        "save_to_platform": p_save_to_platform, "new_campaign": p_new_campaign, "save_html": p_save_html, "connect": p_connect,
+        "save_to_platform": p_save_to_platform, "delete": p_delete, "new_campaign": p_new_campaign, "save_html": p_save_html, "connect": p_connect,
         "test_connection": p_test_connection, "test_send": p_test_send, "schedule": p_schedule, "send_now": p_send_now, "cancel": p_cancel}
 
 

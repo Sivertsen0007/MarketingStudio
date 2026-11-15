@@ -123,6 +123,7 @@ async function renderList(){
     </div>
     <div class="grid-wrap" id="emGrid"><div class="empty">Loading campaigns ...</div></div>`;
   el.onclick = onClick;
+  el.oncontextmenu = onRowMenu;
   $("#emSearch").oninput = e => { E.search = e.target.value; clearTimeout(E._st); E._st = setTimeout(loadGrid, 250) };
   $("#emView").onchange = e => { E.view = e.target.value; localSet("email.view", E.view); drawGrid() };
   await loadGrid();
@@ -157,6 +158,47 @@ function onClick(e){
   const act = {connect:connectDialog, refresh:async () => { await dataRefresh("email", null, {reload:false}); loadGrid() }, newdraft:createFromEditor, new:newDialog, back:goBack, check:runChecks, save:() => saveDraft(false), discard:discardDraft,
                platform:saveToPlatform, file:saveHtmlDialog, test:testDialog, schedule:scheduleDialog, now:sendNowDialog, cancel:cancelDialog, prev:() => preview(true)}[b.dataset.em];
   if (act) act();
+}
+
+// ---- right-click on a campaign row: Open / Delete draft ----
+(function(){
+  if (document.getElementById("emMenuCss")) return;
+  const st = document.createElement("style"); st.id = "emMenuCss";
+  st.textContent = `.em-menu{position:fixed;z-index:60;min-width:190px;background:var(--panel,#fff);border:1px solid var(--line,#dadce0);border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px 0;font-size:13px}
+  .em-menu button{display:block;width:100%;text-align:left;border:0;border-radius:0;background:none;padding:8px 14px;color:var(--text,#202124)}
+  .em-menu button:hover:not(:disabled){background:var(--hover,#f1f3f4)}
+  .em-menu button.danger{color:var(--bad,#c5221f)} .em-menu button:disabled{color:var(--muted,#80868b);cursor:default}
+  .em-menu .why{padding:2px 14px 6px;color:var(--muted,#80868b);font-size:11px;max-width:240px}`;
+  document.head.appendChild(st);
+})();
+function closeRowMenu(){ const m = document.getElementById("emMenu"); if (m) m.remove(); document.removeEventListener("mousedown", outsideMenu, true) }
+function outsideMenu(e){ if (!e.target.closest("#emMenu")) closeRowMenu() }
+function onRowMenu(e){
+  const tr = e.target.closest("tr[data-emid]"); if (!tr || E.cur) return;
+  e.preventDefault(); closeRowMenu();
+  const r = (E.rows || []).find(x => String(x.id) === tr.dataset.emid); if (!r) return;
+  const isDraft = r.status === "draft", okDel = isDraft && can("delete");
+  const why = !isDraft ? "Only drafts can be deleted." : !can("delete") ? "Deleting needs the Email API connection." : "";
+  document.body.insertAdjacentHTML("beforeend", `<div class="em-menu" id="emMenu" role="menu">
+    <button data-m="open" role="menuitem">Open</button>
+    <button data-m="del" class="danger" role="menuitem" ${okDel ? "" : "disabled"}>Delete draft</button>
+    ${why ? `<div class="why">${esc(why)}</div>` : ""}</div>`);
+  const m = document.getElementById("emMenu");
+  m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + "px";
+  m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 8) + "px";
+  m.onclick = ev => { const b = ev.target.closest("[data-m]"); if (!b || b.disabled) return; closeRowMenu();
+    if (b.dataset.m === "open") openEditor(r.id); else deleteDialog(r) };
+  setTimeout(() => document.addEventListener("mousedown", outsideMenu, true), 0);
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeRowMenu() });
+window.addEventListener("blur", closeRowMenu);
+function deleteDialog(r){
+  showDialog("Delete draft", `<p>Delete <b>${esc(r.name)}</b>${E.state.demo ? " from the demo data" : " on " + esc(PN())}?</p>
+    <p class="hint">The draft and any Studio edits to it are removed. This can't be undone. Sent and scheduled campaigns can never be deleted from here.</p>`,
+    [["Keep it", () => dlg.close()], ["Delete draft", async () => {
+      try { await api(A("delete"), {id:r.id, confirm:USER}); dlg.close(); toast(`Deleted "${r.name}"`); await loadGrid(true) }
+      catch(err) { toast(err.message) }
+    }, "danger"]]);
 }
 
 // ---- editor ----

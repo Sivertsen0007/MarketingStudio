@@ -597,5 +597,23 @@ class Choice(Base):
         self.assertNotIn(GOOD_TOKEN, em.SECRETS.read_text())
 
 
+
+class Delete(Base):
+    def test_delete_draft_only_and_removes_studio_draft(self):
+        em.add_draft({"campaign_id": "demo-4", "fields": {"subject": "Edited"}})
+        with self.assertRaises(ValueError):
+            em.p_delete({"id": "demo-4"})  # the user's button only
+        r = em.p_delete({"id": "demo-4", "confirm": em.CONFIRM})
+        self.assertTrue(r["ok"])
+        self.assertNotIn("demo-4", [c["id"] for c in em.FakeAdapter().list_campaigns()])
+        self.assertEqual([d for d in em.list_drafts() if d.get("campaign_id") == "demo-4"], [])
+        with self.assertRaises(ValueError):
+            em.p_delete({"id": "demo-1", "confirm": em.CONFIRM})  # sent: never deleted
+        self.assertIn("demo-1", [c["id"] for c in em.FakeAdapter().list_campaigns()])
+        self.assertTrue(em.FakeAdapter.can["delete"])
+        self.assertFalse(em.McpAdapter.can["delete"])
+        self.assertIn("delete", em.POST)
+
+
 if __name__ == "__main__":
     unittest.main()

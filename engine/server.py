@@ -521,6 +521,11 @@ def main():
     p.add_argument("--port", type=int, default=4830)
     p.add_argument("--no-open", action="store_true")
     a = p.parse_args()
+    try:  # once per install: an older install keeps its built-in copy rules, a new one starts with none
+        import team_settings  # noqa: PLC0415
+        team_settings.first_run()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
     if datapolicy.install_call_log():
         print("STUDIO_CALL_LOG: counting outgoing calls at /api/data/calls")
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)

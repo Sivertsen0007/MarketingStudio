@@ -12,6 +12,8 @@ it (you, claude, ...), updated_by the last writer. The collections, and the file
   seo:map_site        seo_topical_map.json    "site" dict, one item, id = "site"
   seo:map_proposals   seo_topical_map.json    "proposals" list, id = "p_" + 8 hex
   social              social_draft.json       "posts" list, id = the post's 10-hex id (the publish queue is not a draft)
+  library             library.json            "items" list, id = "lib_" + 10 hex (the shared library, team_settings.py)
+  calendar            calendar_marks.json     "marks" list, id = e.g. "email_<campaign id>" (who scheduled what; shared_calendar.py)
 
 Storage: the store keeps each area's own file (same name, same folder, same JSON shape) and adds one block to it,
 "_draftstore": {format, colls: {coll: {version, items: {id: meta}}}, outbox}. So every reader of the old shape keeps
@@ -67,7 +69,9 @@ SEO_MAP = Layout("seo_topical_map.json", ".seo_topical_map.json.lock",
                  {"seo:map_nodes": ("nodes", "dict"), "seo:map_site": ("site", "single"), "seo:map_proposals": ("proposals", "list")},
                  "version", _MAP_EMPTY)
 SOCIAL = Layout("social_draft.json", ".social_draft.json.lock", {"social": ("posts", "list")}, None, {"posts": []})
-FIXED = (EMAIL, SEO, SEO_MAP, SOCIAL)
+LIBRARY = Layout("library.json", ".library.json.lock", {"library": ("items", "list")}, "version", {"version": 0, "items": []})
+CALENDAR = Layout("calendar_marks.json", ".calendar_marks.json.lock", {"calendar": ("marks", "list")}, None, {"marks": []})
+FIXED = (EMAIL, SEO, SEO_MAP, SOCIAL, LIBRARY, CALENDAR)
 
 
 def ads_layout(acct):

@@ -604,12 +604,17 @@ async function settingsDialog(){
       <p class="hint"><b>Connect LinkedIn:</b> 1. Confirm the Master Liveaboards company page and who its admins are. 2. Create a LinkedIn developer app and apply for the Community Management API (LinkedIn approves it, this can take weeks). 3. A page admin signs in once to give the app w_organization_social. 4. The token and the page URN go in shared/.env as LINKEDIN_ACCESS_TOKEN and LINKEDIN_ORG_URN. Studio never shows the token.</p>
       <button id="soLiTest">Test connection</button> <span id="soLiOut" class="hint"></span></div>`, [["Close", () => dlg.close()], ["Save", saveSet, "primary"]]);
   document.getElementById("soLocal").onchange = e => { document.getElementById("soLocalNote").style.display = e.target.checked ? "" : "none" };
+  // fields the team has set (Calendar > Team settings): read-only here
+  const tf = s.team_fields || [], tsel = {slots:"[data-slots]", utm:"[data-utm]", utm_campaign:"#soCamp", late_minutes:"#soLate"};
+  for (const k of tf) document.querySelectorAll(tsel[k] || "x-none").forEach(x => { x.disabled = true; x.title = "Set by your team"; });
+  if (tf.length) document.querySelector(tsel[tf[0]] || "body").closest(".set-sec").insertAdjacentHTML("afterbegin", `<p class="hint"><b>Set by your team:</b> ${esc(tf.join(", ").replace(/_/g, " "))}. Owners and admins change these in Calendar &gt; Team settings.</p>`);
   document.getElementById("soLiTest").onclick = async () => { const o = document.getElementById("soLiOut"); o.textContent = "Checking ...";
     try { const r = await sapi("linkedin_test", {}); o.textContent = r.message } catch(e) { o.textContent = e.message } };
   async function saveSet(){
     const b = {local_scheduler: document.getElementById("soLocal").checked, late_minutes: +document.getElementById("soLate").value || 0,
       slots: Object.fromEntries([...document.querySelectorAll("[data-slots]")].map(x => [x.dataset.slots, x.value])),
       utm: Object.fromEntries([...document.querySelectorAll("[data-utm]")].map(x => [x.dataset.utm, x.checked])), utm_campaign: document.getElementById("soCamp").value};
+    for (const k of tf) delete b[k];
     try { await sapi("settings", b); toast("Saved"); dlg.close(); SO.quick = null; await loadState(); draw() } catch(e) { toast(e.message) }
   }
 }

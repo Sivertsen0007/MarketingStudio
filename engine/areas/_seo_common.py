@@ -14,11 +14,35 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-ML_HOSTS = ("masterliveaboards.com", "www.masterliveaboards.com")
+ML_HOSTS = ["masterliveaboards.com", "www.masterliveaboards.com"]  # the site's own hosts (internal links)
 SITES = {
     "prod": "https://www.masterliveaboards.com",
     "staging": "https://staging.masterliveaboards.com",
 }
+_BUILTIN = (list(ML_HOSTS), dict(SITES))
+
+
+def apply_site_settings():
+    """The SEO sites setting (team_settings, key seo_sites: this Mac's own or the team's) replaces the built-in prod /
+    staging addresses where it gives one. Runs at import and whenever the settings change; edits in place, so every
+    module that holds SITES / ML_HOSTS sees it."""
+    hosts, sites = list(_BUILTIN[0]), dict(_BUILTIN[1])
+    try:
+        import team_settings  # noqa: PLC0415
+        v = team_settings.get("seo_sites")
+        team_settings.on_change(apply_site_settings)
+    except Exception:  # noqa: BLE001 - no settings: the built-in sites
+        v = {}
+    for k in ("prod", "staging"):
+        if v.get(k):
+            sites[k] = v[k]
+    if v.get("prod"):
+        h = urllib.parse.urlparse(v["prod"]).hostname or ""
+        bare = h[4:] if h.startswith("www.") else h
+        hosts = [bare, "www." + bare] if bare else hosts
+    SITES.clear()
+    SITES.update(sites)
+    ML_HOSTS[:] = hosts
 SECRETS = Path(os.environ.get("SEO_SECRETS_FILE", str(Path.home() / ".claude" / "secrets" / "marketing-studio.env")))
 UA = "MarketingStudio-SEO/1.0 (+local; read-only unless the user publishes)"
 
@@ -271,3 +295,6 @@ def scrub(text):
     if p:
         s = s.replace(p, "***").replace(p.replace(" ", ""), "***")
     return re.sub(r"(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", r"\1 ***", s)
+
+
+apply_site_settings()

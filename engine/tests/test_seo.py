@@ -25,6 +25,9 @@ from areas import _seo_checks as chk  # noqa: E402
 from areas import _seo_common as c  # noqa: E402
 from areas import _seo_wp as wp  # noqa: E402
 from areas import seo  # noqa: E402
+import _legacy_copy_rules  # noqa: E402
+import team_settings  # noqa: E402
+team_settings.local_set("copy_rules", {"rules": _legacy_copy_rules.RULES})  # the rules these tests check (a new install has none)
 
 EM = chr(0x2014)
 

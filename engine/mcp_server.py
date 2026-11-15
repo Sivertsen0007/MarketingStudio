@@ -205,6 +205,37 @@ TEAM_TOOLS = [
                                          "nothing goes live anywhere.",
      "inputSchema": {"type": "object", "properties": {}}},
 ]
+SHARED_TOOLS = [
+    {"name": "team_settings_get", "description": "The settings that apply in Studio now: copy rules (per area, block or warn), SEO "
+                                                 "sites, test email addresses, SoMe slots / UTM / late posting and the calendar "
+                                                 "limits, each with whether it is set by the team or by this Mac. Read only.",
+     "inputSchema": {"type": "object", "properties": {"key": {"type": "string", "description": "one key (copy_rules, seo_sites, "
+                                                              "email_test_addresses, social, calendar_limits); none = all"}}}},
+    {"name": "calendar_list", "description": "The shared calendar: SoMe posts, email campaigns and SEO publishes with a time between "
+                                             "start and end, each with channel, status and who owns it. Read only.",
+     "inputSchema": {"type": "object", "properties": {"start": {"type": "string", "description": "ISO date, default this Monday"},
+                                                      "end": {"type": "string", "description": "ISO date, default start + 28 days"}}}},
+    {"name": "library_list", "description": "The team library: approved headlines, CTAs, image URLs, UTM presets and email blocks.",
+     "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["headline", "cta", "image", "utm", "email_block"]},
+                                                      "q": {"type": "string", "description": "text to look for"}}}},
+]
+
+
+def call_shared(name, a):
+    import shared_calendar  # noqa: PLC0415
+    import team_settings  # noqa: PLC0415
+    if name == "team_settings_get":
+        info = team_settings.info()
+        keys = {k: {x: v[x] for x in ("label", "value", "source")} for k, v in info["keys"].items()
+                if not a.get("key") or k == a["key"]}
+        if a.get("key") and not keys:
+            raise ValueError(f"unknown key {a['key']}")
+        return {"joined": info["joined"], "keys": keys}
+    if name == "calendar_list":
+        return shared_calendar.calendar_list(a.get("start"), a.get("end"))
+    return team_settings.library_list(a.get("kind"), a.get("q"))
+
+
 # [team live] activity, comments and mentions (team_live.py). Comments Claude adds are marked "Claude: " for the team.
 ITEM_REF = {"coll": {"type": "string", "description": "the item's collection, e.g. ads:<account>, email, seo:posts, seo:new_posts, "
                                                        "seo:map_nodes, social"},
@@ -224,7 +255,7 @@ TEAM_LIVE_TOOLS = [
     {"name": "mentions_list", "description": "Comments that mention the user (unread first).",
      "inputSchema": {"type": "object", "properties": {"unread_only": {"type": "boolean"}}}},
 ]
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + TEAM_LIVE_TOOLS
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS
 TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
 
 
@@ -347,6 +378,8 @@ def call(name, a):
         return call_team(name)
     if name in TEAM_LIVE_NAMES:
         return call_team_live(name, a)
+    if name in ("team_settings_get", "calendar_list", "library_list"):
+        return call_shared(name, a)
     if name == "setup_status":
         st = appconfig.status()
         return {"keys": {k["name"]: k["set"] for k in st["keys"]}, "google_signed_in": st["google_signed_in"],
@@ -449,6 +482,11 @@ def handle(msg):
 
 
 def main():
+    try:  # once per install (see team_settings.first_run)
+        import team_settings  # noqa: PLC0415
+        team_settings.first_run()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc(file=sys.stderr)
     for line in sys.stdin:
         if not line.strip():
             continue

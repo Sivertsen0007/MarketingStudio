@@ -178,10 +178,45 @@ team_live.after_post("/api/area/seo/publish", {}, {"ok": True, "live": False, "m
 team_live.after_post("/api/area/email/send_now", {"id": "c9"}, {"ok": False, "error": "checks failed"})
 team_live.after_post("/api/area/email/send_now", {"id": "c9"}, {"ok": True})
 team_live.after_post("/api/draft/add", {}, {"ok": True})
+# results that changed nothing real, as the areas return them: never reported
+team_live.after_post("/api/area/email/schedule", {"id": "c9"}, {"ok": True, "message": "Scheduled. Demo data: nothing will really go out.", "demo": True})
+team_live.after_post("/api/area/email/send_now", {"id": "c9"}, {"ok": True, "demo": True})
+team_live.after_post("/api/area/social/post_now", {"id": "p1"}, {"ok": True, "test_mode": True})
+team_live.after_post("/api/area/social/schedule", {"id": "p1"}, {"ok": True, "test_mode": True})
+team_live.after_post("/api/area/seo/undo", {}, {"ok": True, "message": "1 of 1 posts undone (dry run).", "live": False})
+team_live.after_post("/api/live/push", {}, {"ok": True, "team_event": True})  # approvals already posted it
 done()
 out = [e for e in team_live.feed(person=%r)["events"] if e["kind"] != "join"]""" % sa["me"]["id"])
         self.assertEqual([(e["kind"], e["area"], e["coll"], e["id"]) for e in r], [("publish", "email", "email", "c9")])
         self.assertEqual(r[0]["summary"], "sent an email campaign")
+
+    def test_received_reads_each_collection_once(self):
+        h = self.home()
+        r = self.live(h, """
+fake_join()
+for i in range(300):
+    seo_put("r%03d" % i, {"post_id": i, "field": "title", "new": "T%d" % i})
+with draftstore.tx("social", ROOT, by="you") as t:
+    for i in range(50):
+        t.put("s%03d" % i, {"id": "s%03d" % i, "caption": "x"}, "you")
+calls = {"items": 0, "peek": 0}
+real_items, real_peek = draftstore.items, draftstore.peek
+def items(*a, **k):
+    calls["items"] += 1
+    return real_items(*a, **k)
+def peek(*a, **k):
+    calls["peek"] += 1
+    return real_peek(*a, **k)
+draftstore.items, draftstore.peek = items, peek
+S = {"updated_by": 3, "updated_at": "2026-11-15T10:00:00Z"}
+team_live.on_received([{"coll": "seo:changes", "id": "r%03d" % i, "before": None, "item": S} for i in range(300)]
+                      + [{"coll": "social", "id": "s%03d" % i, "before": None, "item": S} for i in range(50)])
+draftstore.items, draftstore.peek = real_items, real_peek
+rec = team._load("received.json", {})
+out = {"calls": calls, "n": len(rec), "h": rec["seo:changes\tr007"]["h"] == draftstore.item_hash(real_peek("seo:changes", "r007", ROOT)[0])}""")
+        self.assertEqual(r["calls"], {"items": 2, "peek": 0})
+        self.assertEqual(r["n"], 350)
+        self.assertTrue(r["h"])
 
     def test_mcp_tools(self):
         a, _ = self.member("Gil")

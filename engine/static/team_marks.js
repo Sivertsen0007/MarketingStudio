@@ -562,7 +562,7 @@
     TM.presence = st.presence || []; TM.claims = st.claims || []; TM.unread = st.unread || 0;
     if (st.ping) TM.kinds = st.ping.kinds || {};
     drawBell(); emit("state");
-    if (!was){ loadMarks(); loadCounts() }
+    if (!was){ loadMarks(); loadCounts() }  // after that, marks reload only when the ping says items changed
     decorate();
   }
   TM.loadState = loadState;
@@ -610,9 +610,14 @@
   let lastArea = "";
   setInterval(() => { const a = area() + "|" + (acctColl() || ""); if (a !== lastArea && TM.st.joined){ lastArea = a; loadCounts() } beat() }, 1500);
   setInterval(tick, 3000);
-  setInterval(() => { if (TM.st.joined) loadMarks() }, 10000);
   setInterval(() => { if (TM.st.joined) loadCounts() }, 60000);
-  setInterval(loadState, 60000);
+  setInterval(() => { if (TM.st.joined) loadState() }, 60000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible"){ lastSent = ""; beat() } });
-  loadState();
+  // started by team.js's own status (which it fetches anyway): a solo user makes no request from here
+  window.addEventListener("team:status", e => {
+    const t = e.detail || {}, on = !!(t.joined && !t.removed);
+    if (on && !TM.st.joined) loadState();
+    else if (!on && TM.st.joined){ TM.st = {joined: !!t.joined, removed: !!t.removed}; TM.marks = {}; TM.claims = []; TM.presence = []; TM.unread = 0;
+      panel.classList.remove("on"); drawBell(); decorate(); emit("state") }
+  });
 })();

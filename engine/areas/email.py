@@ -1446,7 +1446,8 @@ def _schedule(a, body, when, now_send):
     london = when.astimezone(LONDON).strftime("%d %B %Y %H:%M").lstrip("0")
     if not now_send:
         progress.finish(KEY, True, f"Scheduled for {london} (London)" + (" (demo)" if a.demo else ""))
-        return {"ok": True, "message": f"Scheduled for {london}, London time." + (" Demo data: nothing will really go out." if a.demo else ""), "campaign": c}
+        return {"ok": True, "message": f"Scheduled for {london}, London time." + (" Demo data: nothing will really go out." if a.demo else ""), "campaign": c,
+                "demo": bool(a.demo)}  # [team live] demo: nothing really went out
     deadline, last = time.time() + 20 * 60, None
     while time.time() < deadline:
         p = a.progress(cid)
@@ -1461,10 +1462,11 @@ def _schedule(a, body, when, now_send):
         if p.get("status") in ("sent", "failed", "cancelled"):
             ok = p["status"] == "sent"
             progress.finish(KEY, ok, f"{sent:,} of {total:,} sent" + ("" if ok else f" ({p['status']})") + (" (demo)" if a.demo else ""))
-            return {"ok": ok, "message": f"{sent:,} of {total:,} sent." + (" Demo data: nothing was really sent." if a.demo else "")}
+            return {"ok": ok, "message": f"{sent:,} of {total:,} sent." + (" Demo data: nothing was really sent." if a.demo else ""),
+                    "demo": bool(a.demo)}
         time.sleep(0.5 if a.demo else 3)
     progress.finish(KEY, True, "Still sending: see the campaigns grid for the latest count")
-    return {"ok": True, "message": "Still sending. The grid shows the latest count."}
+    return {"ok": True, "message": "Still sending. The grid shows the latest count.", "demo": bool(a.demo)}
 
 
 @_guard

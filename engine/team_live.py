@@ -108,12 +108,20 @@ def ping():
 
 def on_received(entries):
     """team.py, end of a sync: items that arrived from teammates."""
-    root = team._root()
+    root, cache = team._root(), {}
+
+    def now_hash(coll, iid):
+        if coll not in cache:  # each collection read once per sync, not once per item
+            try:
+                cache[coll] = {r["id"]: draftstore.item_hash(r["data"]) for r in draftstore.items(coll, root)}
+            except ValueError:
+                cache[coll] = {}
+        return cache[coll].get(str(iid), "")
     with _lock:
         rec = team._load("received.json", {})
         for e in entries:
             S = e.get("item") or {}
-            cur, h = draftstore.peek(e["coll"], e["id"], root)
+            h = now_hash(e["coll"], e["id"])
             rec.pop(team._key(e["coll"], e["id"]), None)
             rec[team._key(e["coll"], e["id"])] = {"before": e.get("before"), "h": h, "by": S.get("updated_by"),
                                                    "at": S.get("updated_at") or team._now()}
@@ -125,6 +133,7 @@ def on_received(entries):
 
 team.EVENT_HOOKS.append(on_event)
 team.RECEIVE_HOOKS.append(on_received)
+draftstore.on_local_write(lambda root: _bump("items"))  # my own edit can clear a tint: the page re-reads marks
 
 
 # ---------- field changes ----------
@@ -439,20 +448,25 @@ def _merge_events(events, new):
 def _refresh_feed():
     with _lock:
         f = team._load("feed.json", {})
-        seq, events = int(f.get("seq") or 0), list(f.get("events") or [])
-        for _ in range(200):
-            r = _api("GET", f"/api/v1/events?since={seq}&limit=1000")
-            if r.get("reset") and seq:
-                seq, events = 0, []
-                continue
-            got = r.get("events") or []
-            _merge_events(events, got)
-            nseq = r.get("seq")
-            seq = nseq if isinstance(nseq, int) and not isinstance(nseq, bool) and nseq >= seq else seq
-            if len(got) < 1000:
-                break
-        team._save("feed.json", {"seq": seq, "events": events})
-        return events
+    seq, events = int(f.get("seq") or 0), list(f.get("events") or [])
+    start = seq
+    # the network calls run outside the lock
+    for _ in range(200):
+        r = _api("GET", f"/api/v1/events?since={seq}&limit=1000")
+        if r.get("reset") and seq:
+            seq, events = 0, []
+            continue
+        got = r.get("events") or []
+        _merge_events(events, got)
+        nseq = r.get("seq")
+        seq = nseq if isinstance(nseq, int) and not isinstance(nseq, bool) and nseq >= seq else seq
+        if len(got) < 1000:
+            break
+    with _lock:
+        cur = team._load("feed.json", {})
+        if int(cur.get("seq") or 0) <= seq or int(cur.get("seq") or 0) == start:  # never step back over a newer save
+            team._save("feed.json", {"seq": seq, "events": events})
+    return events
 
 
 def _labeller():
@@ -507,7 +521,9 @@ def report(kind, area, summary, coll=None, iid=None, data=None):
     return _api("POST", "/api/v1/events", body)
 
 
-# what the user's own live buttons did, told to the team (POST path -> kind, area, what happened)
+# what the user's own live buttons did, told to the team (POST path -> kind, area, what happened). One table: drop a
+# line when another part of Studio reports that action itself (or have it return "team_event": true).
+# Areas mark results that changed nothing real: live false (dry run), demo true, test_mode true.
 ACTIONS = {
     "/api/live/push": ("push", "ads", "pushed Ads changes live"),
     "/api/live/undo": ("undo", "ads", "undid a live Ads push"),
@@ -526,8 +542,9 @@ def after_post(path, body, result):
     a = ACTIONS.get(str(path).split("?")[0])
     if not a or not isinstance(result, dict) or result.get("ok") is False or result.get("error") or result.get("problems"):
         return
-    if result.get("live") is False or result.get("demo") or result.get("test_mode") or result.get("needs_approval"):
-        return  # a dry run, demo data or nothing really happened
+    if result.get("live") is False or result.get("demo") or result.get("test_mode") or result.get("needs_approval") \
+            or result.get("team_event"):
+        return  # a dry run, demo data, nothing really happened, or the event was already posted (approvals)
     if not team.joined() or team._state().get("removed"):
         return
     kind, area, summary = a

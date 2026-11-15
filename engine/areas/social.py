@@ -548,7 +548,7 @@ def post_now(body):
         stamp = store.iso(store.now())
         p = _save_results(p["id"], res, lambda x: x.__setitem__("when", x.get("when") or stamp))  # shows on the calendar when it went out
         res = {**found, **res}
-        return {"ok": ok, "message": _message(res, "Published"), "results": res, "post": _view(p)}
+        return {"ok": ok, "message": _message(res, "Published"), "results": res, "post": _view(p), "test_mode": bool(test_mode())}
     return _guard(go)
 
 
@@ -604,7 +604,7 @@ def schedule(body):
             ok = bool(res) and all(not r.get("error") for r in res.values())
             _finish(ok, _message(res, "Scheduled") if res else "Stopped with an error")
         p = _save_results(p["id"], res)
-        return {"ok": ok, "message": _message(res, "Scheduled"), "results": res, "post": _view(p)}
+        return {"ok": ok, "message": _message(res, "Scheduled"), "results": res, "post": _view(p), "test_mode": bool(test_mode())}
     return _guard(go)
 
 

@@ -296,6 +296,7 @@ class Buttons(unittest.TestCase):
         p = self.new()
         r = social.post_now({"id": p["id"], "pressed": "user"})
         self.assertTrue(r["ok"], r)
+        self.assertIs(r["test_mode"], True)  # team feed: test mode never reported as posted
         self.assertEqual(set(r["results"]), {"facebook", "instagram"})
         self.assertEqual(r["post"]["status"], "published")
         self.assertEqual(social._fake_host.put_calls[0][1], "social/m1.jpg")  # IG needs a public URL, made at the press
@@ -379,6 +380,7 @@ class Buttons(unittest.TestCase):
         self.assertTrue(any("Studio's scheduler" in x for x in r["problems"]))
         r = social.schedule({"id": p["id"], "pressed": "user", "channels": ["facebook"]})
         self.assertTrue(r["ok"], r)
+        self.assertIs(r["test_mode"], True)
         self.assertEqual(r["results"]["facebook"]["via"], "meta")
         self.assertEqual(social._fakes["facebook"].calls[0][0], "schedule")
         self.assertEqual(store.queue(), [])  # nothing for the VPS

@@ -234,7 +234,10 @@ class H(BaseHTTPRequestHandler):
             res = fn()
             self._send(200, res)
             if self.command == "POST":
-                team_live.after_post(self.path, body, res)  # [team live] tell the team about pushes / publishes
+                try:
+                    team_live.after_post(self.path, body, res)  # [team live] tell the team about pushes / publishes
+                except Exception:  # noqa: BLE001 - the answer is already sent; never a second response
+                    traceback.print_exc()
         except Exception as ex:  # noqa: BLE001 - surface every error in the UI
             traceback.print_exc()
             self._send(400, {"error": str(ex)})

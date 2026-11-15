@@ -42,6 +42,7 @@
 
   function badge(cls, n){ const el = btn.querySelector(cls); el.textContent = n; el.classList.toggle("on", !!n) }
   function drawButton(){
+    window.dispatchEvent(new CustomEvent("team:status", {detail: T}));  // [team live] team_marks.js only starts when joined
     btn.style.display = T.joined ? "" : "none";
     if (!T.joined) return;
     badge(".tm-in", T.removed ? 0 : T.remote_waiting || 0);

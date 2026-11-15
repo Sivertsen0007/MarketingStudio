@@ -281,6 +281,7 @@ class Buttons(Base):
         when = (dt.datetime.now(em.LONDON) + dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
         r = em.p_schedule({"id": "demo-4", "when": when, "confirm": em.CONFIRM})
         self.assertTrue(r["ok"], r)
+        self.assertIs(r["demo"], True)  # team feed: demo data never reported as sent
         self.assertEqual(em.FakeAdapter().get_campaign("demo-4")["status"], "scheduled")
         self.assertFalse(em.p_schedule({"id": "demo-4", "when": "2020-01-01T09:00", "confirm": em.CONFIRM})["ok"])
         self.assertTrue(em.p_cancel({"id": "demo-4", "confirm": em.CONFIRM})["ok"])
@@ -291,6 +292,7 @@ class Buttons(Base):
         r = em.p_send_now({"id": "demo-4", "confirm": em.CONFIRM})
         self.assertTrue(r["ok"], r)
         self.assertIn("4,385 of 4,385 sent", r["message"])
+        self.assertIs(r["demo"], True)
         c = em.FakeAdapter().get_campaign("demo-4")
         self.assertEqual((c["status"], c["subject"]), ("sent", "Sent from the draft"))
         p = progress.get(em.KEY)

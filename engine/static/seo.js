@@ -83,7 +83,7 @@ function render(el){
 }
 function tabs(){
   const n = T.draft ? T.draft.changes.length : 0;
-  $("#seoTabs").innerHTML = [["posts", "Posts"], ["opps", "Opportunities"], ["draft", `Draft<span class="n">${n}</span>`], ["settings", "Settings"]]
+  $("#seoTabs").innerHTML = [["posts", "Posts"], ["opps", "Opportunities"], ["map", `Topical map${T.mapProps ? `<span class="n">${T.mapProps}</span>` : ""}`], ["draft", `Draft<span class="n">${n}</span>`], ["settings", "Settings"]]
     .map(([k, l]) => `<button data-t="${k}" class="${k === T.tab ? "on" : ""}">${l}</button>`).join("");
 }
 function targetChip(){
@@ -97,13 +97,19 @@ function targetChip(){
 }
 async function loadSettings(){ try { T.settings = await A("settings") } catch(e) { T.settings = {target: "staging", mode: "dry"} } targetChip() }
 async function loadDraft(){ try { T.draft = await A("draft") } catch(e) { T.draft = {changes: []} } tabs(); if (T.tab === "draft") drawDraft() }
-function reload(force){ if (T.tab === "posts") loadPosts(force); else if (T.tab === "opps") loadOpps(); }
+function reload(force){ if (T.tab === "posts") loadPosts(force); else if (T.tab === "opps") loadOpps(); else if (T.tab === "map" && window.SEO_MAP) window.SEO_MAP.reload(force); }
+function mapScript(){
+  if (window.SEO_MAP) return Promise.resolve();
+  return new Promise((ok, bad) => { const sc = document.createElement("script"); sc.src = "/static/seo_map.js"; sc.onload = ok; sc.onerror = () => bad(new Error("could not load the topical map")); document.head.appendChild(sc) });
+}
 function show(){
   tabs();
   const b = $("#seoBody");
   if (T.tab === "posts"){ b.innerHTML = postsShell(); wirePosts(); if (T.data) drawPosts(); else loadPosts() }
   else if (T.tab === "opps"){ b.innerHTML = `<div class="seo-scroll" id="seoOpp"><p class="hint">Loading opportunities ...</p></div>`; loadOpps() }
   else if (T.tab === "draft"){ b.innerHTML = `<div class="seo-scroll" id="seoDraft"></div>`; drawDraft(); loadHistory() }
+  else if (T.tab === "map"){ b.innerHTML = `<div id="seoMap" style="flex:1;min-height:0;display:flex;flex-direction:column"></div>`;
+    mapScript().then(() => window.SEO_MAP.render($("#seoMap"), {A, P, rq, badge: n => { if (T.mapProps !== n){ T.mapProps = n; tabs() } }})).catch(e => { b.innerHTML = `<p class="hint" style="padding:16px">${esc(e.message)}</p>` }) }
   else { b.innerHTML = `<div class="seo-scroll" id="seoSet"></div>`; drawSettings() }
 }
 

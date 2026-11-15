@@ -109,6 +109,33 @@ AREA_TOOLS = [
                                                       "note": {"type": "string"}, "kind": {"type": "string", "enum": ["edit", "todo"]}},
                      "required": ["post_id", "field"]}},
     # SoMe (organic Facebook, Instagram, LinkedIn). Posting and scheduling are the user's buttons.
+    {"name": "seo_map_get",
+     "description": "The SEO topical map (Koray method) joined with Search Console + GA4: site (central entity, source context, "
+                    "central search intent), every node (id, parent, title, section core|outer, type root|hub|attribute|commercial, "
+                    "entity, attribute, macro context, target queries with their own numbers, url, links, clicks, impressions, CTR, "
+                    "position, change vs the previous period, sessions, key events, issues, state ok|update|gap), coverage per "
+                    "section and pending proposals. Use state='gap' or 'update' to get only the nodes that need work.",
+     "inputSchema": {"type": "object", "properties": {
+         "days": {"type": "integer", "enum": [7, 28, 90], "description": "period (default 28)"},
+         "state": {"type": "string", "enum": ["all", "gap", "update", "ok"]},
+         "section": {"type": "string", "enum": ["core", "outer"]},
+         "limit": {"type": "integer", "description": "max nodes (default 300)"}}}},
+    {"name": "seo_map_unmapped",
+     "description": "Search Console demand the topical map does not cover yet: pages with impressions that no node points at, "
+                    "with their top queries. Use it to find missing nodes (gaps) when building or extending the map.",
+     "inputSchema": {"type": "object", "properties": {"days": {"type": "integer", "enum": [7, 28, 90]}, "limit": {"type": "integer"}}}},
+    {"name": "seo_map_propose",
+     "description": "Propose changes to the topical map. Nothing changes until the user accepts the proposal in Studio (SEO > "
+                    "Topical map). ops is a list of: {op:'site', site:{central_entity, source_context, central_search_intent}} | "
+                    "{op:'add', ref:'<temp name, optional>', node:{title, parent (node id or a ref from this batch), section "
+                    "core|outer, type root|hub|attribute|commercial, entity, attribute, macro_context, queries [..], intent, "
+                    "priority 1-4, url, links [{to, anchor}], note}} | {op:'update', id, node:{fields to change}} | "
+                    "{op:'remove', id}. Build it the Koray way: one central entity for the site, core section = what the source "
+                    "context sells, outer section = the attributes that build authority, one entity-attribute pair per node, "
+                    "target queries from real Search Console demand where it exists.",
+     "inputSchema": {"type": "object", "properties": {"ops": {"type": "array", "items": {"type": "object"}},
+                                                      "note": {"type": "string", "description": "why, shown to the user"}},
+                     "required": ["ops"]}},
     {"name": "social_calendar", "description": "The SoMe calendar: Studio posts (draft, scheduled, published) and posts already live on Facebook and Instagram, between start and end.",
      "inputSchema": {"type": "object", "properties": {"start": {"type": "string", "description": "YYYY-MM-DD (default 1st of this month)"},
                                                       "end": {"type": "string", "description": "YYYY-MM-DD (default start + 42 days)"}}}},
@@ -212,6 +239,21 @@ def call_area(name, a):
         return seo.list_drafts()
     if name == "seo_add_draft":
         return seo.add_draft({k: a[k] for k in ("post_id", "field", "new", "note", "kind") if k in a}, by="claude")
+    if name in ("seo_map_get", "seo_map_unmapped"):
+        q = {"range": str(a.get("days") or 28)}
+        r = seo.get_map(q)
+        if name == "seo_map_unmapped":
+            return {"range": r["range"], "unmapped": r["unmapped"][: a.get("limit") or 50], "errors": r["errors"]}
+        rows = r["nodes"]
+        if a.get("state") and a["state"] != "all":
+            rows = [x for x in rows if x["state"] == a["state"]]
+        if a.get("section"):
+            rows = [x for x in rows if x["section"] == a["section"]]
+        return {"site": r["site"], "coverage": r["coverage"], "proposals": r["proposals"], "range": r["range"], "errors": r["errors"],
+                **_limit(rows, {"limit": a.get("limit") or 300})}
+    if name == "seo_map_propose":
+        from areas import _seo_map as tmap  # noqa: PLC0415
+        return tmap.propose(a.get("ops") or [], a.get("note") or "", by="claude")
     if name == "social_calendar":
         return so.get_calendar({k: a[k] for k in ("start", "end") if a.get(k)})
     if name == "social_list_drafts":

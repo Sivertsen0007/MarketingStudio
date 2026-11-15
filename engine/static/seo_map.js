@@ -1,0 +1,188 @@
+// Marketing Studio - SEO > Topical map: the Koray-style map joined with Search Console + GA4.
+// Claude proposes changes over MCP (seo_map_propose); they show here as proposals the user accepts or rejects.
+(() => {
+const CSS = `
+.tm-sub{display:flex;gap:8px;align-items:center;padding:8px 14px;background:var(--head);border-bottom:1px solid var(--line);flex-wrap:wrap;font-size:13px}
+.tm-cov{display:inline-flex;gap:6px;align-items:center;padding:3px 10px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.tm-cov b{font-weight:500}
+.tm-wrap{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 420px}
+.tm-wrap.nopanel{grid-template-columns:minmax(0,1fr) 0}
+.tm-main{overflow:auto;min-width:0}
+.tm-side{border-left:1px solid var(--line);overflow:auto;padding:14px 16px;background:var(--side,var(--panel))}
+.tm-main table{width:100%}
+.tm-main tr.tm-row{cursor:pointer} .tm-main tr.tm-row:hover td{background:var(--hover)}
+.tm-main tr.tm-row.sel td{background:var(--accent-bg)}
+.tm-main tr.dim td{opacity:.45}
+.tm-t{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.tm-type{display:inline-block;min-width:18px;text-align:center;font-size:10px;font-weight:700;border-radius:3px;padding:1px 4px;background:var(--line2);color:var(--text2)}
+.tm-type.root{background:#1a73e8;color:#fff} .tm-type.hub{background:#5e35b1;color:#fff} .tm-type.commercial{background:#e37400;color:#fff}
+.tm-st{font-size:11px;font-weight:500;padding:2px 8px;border-radius:10px;white-space:nowrap}
+.tm-st.gap{background:var(--bad-bg,#fce8e6);color:var(--bad,#c5221f)} .tm-st.update{background:var(--warn-bg,#fef7e0);color:#8a5a00} .tm-st.ok{background:var(--ok-bg,#e6f4ea);color:var(--ok,#188038)}
+.tm-sec{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.tm-prop{margin:10px 14px 0;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-bg)}
+.tm-prop .r{display:flex;gap:8px;align-items:center;margin:4px 0;flex-wrap:wrap}
+.tm-prop .r .s{flex:1;min-width:200px}
+.tm-f{margin-bottom:10px} .tm-f label{display:block;color:var(--muted);font-size:12px;margin-bottom:3px} .tm-f input,.tm-f textarea,.tm-f select{width:100%;box-sizing:border-box}
+.tm-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tm-iss{font-size:12px;margin:3px 0;padding:5px 8px;border-radius:4px;background:var(--warn-bg,#fef7e0)} .tm-iss.gap{background:var(--bad-bg,#fce8e6)}
+.tm-q{width:100%;font-size:12px} .tm-q td{padding:3px 4px;border-bottom:1px solid var(--line2)}
+.tm-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.tm-empty{padding:40px 20px;text-align:center;color:var(--muted)}
+.tm-site{font-size:12px;color:var(--text2);padding:6px 14px 0}
+.tm-site b{font-weight:500}
+`;
+if (!document.getElementById("tm-css")){ const st = document.createElement("style"); st.id = "tm-css"; st.textContent = CSS; document.head.appendChild(st) }
+
+const S = {el: null, ctx: null, data: null, filter: localGet("tm.filter") || "all", search: "", sel: null, view: "map"};
+const N = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
+const TY = {root: "R", hub: "H", attribute: "A", commercial: "C"};
+const STATE = {gap: "Gap", update: "Update", ok: "OK"};
+
+function render(el, ctx){ S.el = el; S.ctx = ctx; S.sel = null; shell(); load() }
+async function load(force){
+  const m = document.getElementById("tmMain"); if (m && !S.data) m.innerHTML = `<div class="tm-empty">Loading the topical map with Search Console ...</div>`;
+  try { S.data = await S.ctx.A("map", {...S.ctx.rq(), ...(force ? {force: 1} : {})}) } catch(e) { if (m) m.innerHTML = `<div class="tm-empty">${esc(e.message)}</div>`; return }
+  draw();
+}
+function shell(){
+  S.el.innerHTML = `<div class="tm-sub">
+      <span id="tmCov"></span>
+      <div class="fpills" id="tmPills"></div>
+      <input type="search" id="tmSearch" placeholder="Search nodes, queries, URLs" value="${esc(S.search)}">
+      <span class="spacer"></span>
+      <button id="tmSite" title="Central entity, source context, central search intent">Site</button>
+      <label class="tb" style="cursor:pointer;padding:5px 10px;border:1px solid var(--line);border-radius:4px">Import CSV<input type="file" id="tmCsv" accept=".csv,text/csv" style="display:none"></label>
+      <button id="tmAdd" class="primary">+ Node</button>
+    </div><div id="tmSiteLine" class="tm-site"></div><div id="tmProps"></div>
+    <div class="tm-wrap" id="tmWrap"><div class="tm-main" id="tmMain"></div><div class="tm-side" id="tmSide"></div></div>`;
+  const $ = s => S.el.querySelector(s);
+  $("#tmPills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; S.filter = b.dataset.f; localSet("tm.filter", S.filter); draw() };
+  $("#tmSearch").oninput = e => { S.search = e.target.value.toLowerCase(); drawMain() };
+  $("#tmSite").onclick = siteDialog;
+  $("#tmAdd").onclick = () => openNode(null, S.sel || "");
+  $("#tmCsv").onchange = async e => { const f = e.target.files[0]; if (!f) return; e.target.value = "";
+    if (!confirm(`Import "${f.name}" into the topical map? Rows are added as nodes (parents by title). Nothing is published.`)) return;
+    try { const r = await S.ctx.P("map_import", {csv: await f.text()}); toast(`Imported ${r.done.length} nodes`); load() } catch(err) { toast(err.message) } };
+}
+function draw(){
+  const d = S.data; if (!d) return;
+  const $ = s => S.el.querySelector(s);
+  const cov = d.coverage || {};
+  $("#tmCov").innerHTML = ["core", "outer"].map(s => cov[s] && cov[s].nodes ? `<span class="tm-cov" title="Live = the node has a page with impressions or a WordPress post"><span class="tm-sec">${s}</span><b>${cov[s].pct}%</b> live · ${cov[s].gaps} gaps · ${cov[s].update} to update</span>` : "").join(" ");
+  const cnt = k => d.nodes.filter(n => k === "all" || n.state === k).length;
+  $("#tmPills").innerHTML = [["all", "All"], ["gap", "Gaps"], ["update", "Needs update"], ["ok", "OK"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l} <span class="n">${cnt(k)}</span></button>`).join("")
+    + `<button data-f="unmapped" class="${S.filter === "unmapped" ? "on" : ""}" title="Search Console demand with no node in the map">Unmapped demand <span class="n">${(d.unmapped || []).length}</span></button>`;
+  const site = d.site || {};
+  $("#tmSiteLine").innerHTML = site.central_entity || site.source_context ? `<b>Central entity:</b> ${esc(site.central_entity || "-")} · <b>Source context:</b> ${esc(site.source_context || "-")} · <b>Central search intent:</b> ${esc(site.central_search_intent || "-")}`
+    : `No central entity yet. Press <b>Site</b>, or ask Claude to build the map (MCP: seo_map_propose).`;
+  drawProps(); drawMain();
+  if (S.sel) openNode(S.sel); else $("#tmWrap").classList.add("nopanel");
+  if (S.ctx.badge) S.ctx.badge((d.proposals || []).length);
+}
+function drawProps(){
+  const ps = S.data.proposals || [], box = S.el.querySelector("#tmProps");
+  if (!ps.length){ box.innerHTML = ""; return }
+  const sum = p => { const c = {add: 0, update: 0, remove: 0, site: 0}; (p.summary || []).forEach(x => c[x.op]++);
+    return [c.add && `${c.add} new`, c.update && `${c.update} changed`, c.remove && `${c.remove} removed`, c.site && "site settings"].filter(Boolean).join(", ") };
+  box.innerHTML = `<div class="tm-prop"><b>${ps.length} proposal${ps.length > 1 ? "s" : ""} for the map</b> <span class="hint">Nothing changes until you accept.</span>
+    ${ps.map(p => `<div class="r"><span class="s"><b>${p.by === "claude" ? "Claude" : esc(p.by)}</b> · ${esc((p.at || "").replace("T", " ").slice(0, 16))} · ${esc(sum(p))}${p.note ? " · " + esc(p.note) : ""}</span>
+      <button class="link" data-show="${p.id}">Show</button><button data-rej="${p.id}">Reject</button><button class="primary" data-acc="${p.id}">Accept</button></div>`).join("")}</div>`;
+  box.onclick = async e => {
+    const a = e.target.closest("[data-acc]"), r = e.target.closest("[data-rej]"), s = e.target.closest("[data-show]");
+    if (s){ const p = ps.find(x => x.id === s.dataset.show); showDialog("Proposal", `${p.note ? `<p>${esc(p.note)}</p>` : ""}<ul>${(p.summary || []).map(x => `<li>${esc({add: "Add", update: "Change", remove: "Remove", site: "Site settings"}[x.op])}${x.title ? ": " + esc(x.title) : ""}</li>`).join("")}</ul>`, [["Close", () => dlg.close()]]); return }
+    try {
+      if (a){ const res = await S.ctx.P("map_accept", {id: a.dataset.acc}); toast(`Accepted: ${res.done.length} change${res.done.length === 1 ? "" : "s"}`); load() }
+      if (r){ await S.ctx.P("map_reject", {id: r.dataset.rej}); toast("Proposal rejected"); load() }
+    } catch(err) { toast(err.message) }
+  };
+}
+function visible(){
+  const d = S.data, byId = Object.fromEntries(d.nodes.map(n => [n.id, n]));
+  const hit = n => (S.filter === "all" || n.state === S.filter) && (!S.search || [n.title, n.url, n.entity, n.attribute, ...(n.queries || []).map(q => q.query)].join(" ").toLowerCase().includes(S.search));
+  const show = new Set(), strong = new Set();
+  d.nodes.forEach(n => { if (hit(n)){ strong.add(n.id); let p = n; while (p){ show.add(p.id); p = byId[p.parent] } } });
+  return {show, strong, byId};
+}
+function drawMain(){
+  const d = S.data, main = S.el.querySelector("#tmMain");
+  if (S.filter === "unmapped") return drawUnmapped(main);
+  if (!d.nodes.length){ main.innerHTML = `<div class="tm-empty">The map is empty.<br><br>Import a spreadsheet (Import CSV), add nodes by hand (+ Node),<br>or ask Claude to build it with the Koray method (MCP tool seo_map_propose).</div>`; return }
+  const {show, strong} = visible();
+  const kids = {};
+  d.nodes.forEach(n => (kids[n.parent && d.nodes.some(x => x.id === n.parent) ? n.parent : ""] = kids[n.parent && d.nodes.some(x => x.id === n.parent) ? n.parent : ""] || []).push(n));
+  Object.values(kids).forEach(a => a.sort((x, y) => (x.priority || 3) - (y.priority || 3) || x.title.localeCompare(y.title)));
+  const rows = [];
+  const walk = (pid, depth) => (kids[pid] || []).forEach(n => { if (!show.has(n.id)) return; rows.push([n, depth]); walk(n.id, depth + 1) });
+  walk("", 0);
+  const dc = v => v ? `<span class="${v > 0 ? "seo-up" : "seo-down"}">${v > 0 ? "+" : ""}${N(v)}</span>` : "";
+  main.innerHTML = rows.length ? `<table><thead><tr><th>Node</th><th>Section</th><th class="num">Clicks</th><th class="num">vs prev</th><th class="num">Impr.</th><th class="num">Pos.</th><th class="num">Sessions</th><th>State</th><th>Issues</th></tr></thead><tbody>
+    ${rows.map(([n, depth]) => `<tr class="tm-row ${strong.has(n.id) ? "" : "dim"} ${S.sel === n.id ? "sel" : ""}" data-id="${n.id}">
+      <td><span class="tm-t" style="padding-left:${depth * 18}px"><span class="tm-type ${n.type}" title="${esc(n.type)}">${TY[n.type] || "?"}</span>${esc(n.title)}${n.children ? ` <span class="hint">(${n.children})</span>` : ""}</span></td>
+      <td><span class="tm-sec">${esc(n.section)}</span></td><td class="num">${N(n.clicks)}</td><td class="num">${dc(n.delta_clicks)}</td><td class="num">${N(n.impressions)}</td>
+      <td class="num">${n.position ? n.position.toFixed(1) : ""}</td><td class="num">${N(n.sessions)}</td>
+      <td><span class="tm-st ${n.state}">${STATE[n.state]}</span></td><td class="wrap" style="font-size:12px;color:var(--text2)">${esc((n.issues || []).map(i => i.text).join(" ").slice(0, 140))}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="tm-empty">Nothing matches this filter.</div>`;
+  main.onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr){ S.sel = tr.dataset.id; drawMain(); openNode(S.sel) } };
+}
+function drawUnmapped(main){
+  const u = S.data.unmapped || [];
+  main.innerHTML = u.length ? `<div style="padding:10px 14px" class="hint">Pages with Search Console impressions that no node points at, with their top queries. Add one as a node, or ask Claude to fit them into the map.</div>
+    <table><thead><tr><th>Page</th><th class="num">Impr.</th><th class="num">Clicks</th><th>Top queries</th><th></th></tr></thead><tbody>
+    ${u.map((g, i) => `<tr><td>${esc(g.page)}</td><td class="num">${N(g.impressions)}</td><td class="num">${N(g.clicks)}</td>
+      <td class="wrap" style="font-size:12px">${esc(g.queries.slice(0, 6).map(q => q.query).join(", "))}</td><td><button class="link" data-add="${i}">Add as node</button></td></tr>`).join("")}</tbody></table>`
+    : `<div class="tm-empty">No unmapped demand above the threshold for this period.</div>`;
+  main.onclick = e => { const b = e.target.closest("[data-add]"); if (!b) return; const g = u[+b.dataset.add];
+    openNode(null, "", {title: g.queries[0] ? g.queries[0].query.replace(/^./, c => c.toUpperCase()) : g.page, url: g.page, queries: g.queries.slice(0, 8).map(q => ({query: q.query}))}) };
+}
+function openNode(id, parent, preset){
+  const d = S.data, n = id ? d.nodes.find(x => x.id === id) : {id: "", parent: parent || "", title: "", section: "outer", type: "attribute", queries: [], links: [], priority: 3, issues: [], ...(preset || {})};
+  if (!n) return;
+  S.el.querySelector("#tmWrap").classList.remove("nopanel");
+  const side = S.el.querySelector("#tmSide");
+  const opts = (sel, list) => list.map(v => `<option ${v === sel ? "selected" : ""}>${v}</option>`).join("");
+  const parents = d.nodes.filter(x => x.id !== n.id).sort((a, b) => a.title.localeCompare(b.title));
+  side.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><b>${id ? "Node" : "New node"}</b><button class="link" id="tmClose">Close</button></div>
+    ${(n.issues || []).map(i => `<div class="tm-iss ${i.level}">${esc(i.text)}</div>`).join("")}
+    ${id && n.url ? `<p class="hint" style="margin:8px 0">${N(n.clicks)} clicks · ${N(n.impressions)} impressions · CTR ${((n.ctr || 0) * 100).toFixed(1)}% · position ${n.position ? n.position.toFixed(1) : "-"} · ${N(n.sessions)} sessions · ${N(n.key_events)} key events</p>` : ""}
+    <div class="tm-f"><label>Title</label><input id="tmTitle" value="${esc(n.title)}"></div>
+    <div class="tm-2"><div class="tm-f"><label>Section</label><select id="tmSecSel">${opts(n.section, ["core", "outer"])}</select></div>
+      <div class="tm-f"><label>Type</label><select id="tmType">${opts(n.type, ["root", "hub", "attribute", "commercial"])}</select></div></div>
+    <div class="tm-f"><label>Parent</label><select id="tmParent"><option value="">(top level)</option>${parents.map(p => `<option value="${p.id}" ${p.id === n.parent ? "selected" : ""}>${esc(p.title)}</option>`).join("")}</select></div>
+    <div class="tm-2"><div class="tm-f"><label>Entity</label><input id="tmEntity" value="${esc(n.entity || "")}"></div><div class="tm-f"><label>Attribute</label><input id="tmAttr" value="${esc(n.attribute || "")}"></div></div>
+    <div class="tm-f"><label>Macro context</label><input id="tmMacro" value="${esc(n.macro_context || "")}"></div>
+    <div class="tm-2"><div class="tm-f"><label>Search intent</label><input id="tmIntent" value="${esc(n.intent || "")}" placeholder="informational, commercial ..."></div>
+      <div class="tm-f"><label>Priority</label><select id="tmPrio">${[1, 2, 3, 4].map(v => `<option value="${v}" ${v === (n.priority || 3) ? "selected" : ""}>${["", "1 - highest", "2 - high", "3 - normal", "4 - low"][v]}</option>`).join("")}</select></div></div>
+    <div class="tm-f"><label>URL</label><input id="tmUrl" value="${esc(n.url || "")}" placeholder="https://... or /path/ (empty = not written yet)"></div>
+    <div class="tm-f"><label>Target queries (one per line)</label><textarea id="tmQ" rows="4">${esc((n.queries || []).map(q => q.query || q).join("\n"))}</textarea></div>
+    ${id && (n.queries || []).length ? `<table class="tm-q"><tr><th>Query</th><th class="num">Impr.</th><th class="num">Clicks</th><th class="num">Pos.</th><th>Lands on</th></tr>${n.queries.map(q => `<tr><td>${esc(q.query)}</td><td class="num">${N(q.impressions)}</td><td class="num">${N(q.clicks)}</td><td class="num">${q.position ? q.position.toFixed(1) : ""}</td><td>${q.lands_on ? `<span class="seo-down">${esc(q.lands_on)}</span>` : ""}</td></tr>`).join("")}</table>` : ""}
+    <div class="tm-f" style="margin-top:10px"><label>Must link to (node, anchor text)</label><div id="tmLinks">${(n.links || []).map((l, i) => linkRow(parents, l, i)).join("")}</div><button class="link" id="tmAddLink">+ link</button></div>
+    <div class="tm-f"><label>Note</label><textarea id="tmNote" rows="2">${esc(n.note || "")}</textarea></div>
+    <div class="tm-acts"><button class="primary" id="tmSave">${id ? "Save" : "Add node"}</button>${id ? `<button id="tmChild">Add child</button><button class="danger" id="tmDel">Remove</button>` : ""}</div>`;
+  const $ = s => side.querySelector(s);
+  $("#tmClose").onclick = () => { S.sel = null; S.el.querySelector("#tmWrap").classList.add("nopanel"); drawMain() };
+  $("#tmAddLink").onclick = () => $("#tmLinks").insertAdjacentHTML("beforeend", linkRow(parents, {to: "", anchor: ""}, Date.now()));
+  $("#tmSave").onclick = async () => {
+    const node = {title: $("#tmTitle").value, section: $("#tmSecSel").value, type: $("#tmType").value, parent: $("#tmParent").value,
+      entity: $("#tmEntity").value, attribute: $("#tmAttr").value, macro_context: $("#tmMacro").value, intent: $("#tmIntent").value,
+      priority: +$("#tmPrio").value, url: $("#tmUrl").value, queries: $("#tmQ").value.split("\n").map(s => s.trim()).filter(Boolean), note: $("#tmNote").value,
+      links: [...side.querySelectorAll(".tm-link")].map(r => ({to: r.querySelector("select").value, anchor: r.querySelector("input").value})).filter(l => l.to)};
+    try { const r = await S.ctx.P("map_edit", {ops: [id ? {op: "update", id, node} : {op: "add", node}]}); if (!id) S.sel = r.done[0].id; toast("Saved"); load() }
+    catch(e) { toast(e.message) }
+  };
+  if ($("#tmChild")) $("#tmChild").onclick = () => openNode(null, id);
+  if ($("#tmDel")) $("#tmDel").onclick = async () => { if (!confirm(`Remove "${n.title}" from the map? Its children move up one level. The page itself is not touched.`)) return;
+    try { await S.ctx.P("map_edit", {ops: [{op: "remove", id}]}); S.sel = null; toast("Removed from the map"); load() } catch(e) { toast(e.message) } };
+}
+function linkRow(nodes, l, i){
+  return `<div class="tm-link tm-2" style="margin-bottom:4px"><select><option value="">(node)</option>${nodes.map(p => `<option value="${p.id}" ${p.id === l.to ? "selected" : ""}>${esc(p.title)}</option>`).join("")}</select><input placeholder="anchor text" value="${esc(l.anchor || "")}"></div>`;
+}
+function siteDialog(){
+  const s = (S.data && S.data.site) || {};
+  showDialog("Site: the map's anchor", `<p class="hint">The Koray method starts here. The <b>central entity</b> is what the whole site is about; the <b>source context</b> is who you are and why you publish (it decides which topics belong); the <b>central search intent</b> is the user's underlying purpose.</p>
+    <div class="tm-f"><label>Central entity</label><input id="tmCe" value="${esc(s.central_entity || "")}"></div>
+    <div class="tm-f"><label>Source context</label><textarea id="tmSc" rows="3">${esc(s.source_context || "")}</textarea></div>
+    <div class="tm-f"><label>Central search intent</label><textarea id="tmCi" rows="2">${esc(s.central_search_intent || "")}</textarea></div>`,
+    [["Save", async () => { try { await S.ctx.P("map_edit", {ops: [{op: "site", site: {central_entity: $("#tmCe").value, source_context: $("#tmSc").value, central_search_intent: $("#tmCi").value}}]}); dlg.close(); toast("Saved"); load() } catch(e) { toast(e.message) } }, "primary"]]);
+}
+window.SEO_MAP = {render, reload: force => load(force)};
+})();

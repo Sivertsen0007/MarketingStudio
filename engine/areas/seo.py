@@ -20,6 +20,7 @@ from . import _seo_checks as chk
 from . import _seo_common as c
 from . import _seo_google as g
 from . import _seo_wp as wp
+from . import _seo_map as tmap
 
 LABEL = "SEO"
 PKEY = "seo"  # progress key: GET /api/progress?key=seo
@@ -654,8 +655,39 @@ def overview(days="7"):
         "note": f"Search Console {s} to {e} (data lags 2 days) vs the {n} days before. Select Cabin: GA4 select_cabin events in organic search sessions."}
 
 
+# ---------- topical map (Koray) joined with Search Console + GA4 ----------
+
+def get_map(q):
+    """The topical map with live numbers, issues, coverage and unmapped demand (see _seo_map.report)."""
+    s_, e, ps, pe = g.date_range(q)
+    force = q.get("force") in ("1", "true")
+    errors = []
+    cur = _safe(lambda: g.gsc_pages(s_, e, force), errors, "Search Console")
+    prev = _safe(lambda: g.gsc_pages(ps, pe, force), errors, "Search Console (previous period)")
+    qp = _safe(lambda: g.gsc_query_page(s_, e, force), errors, "Search Console queries") or []
+    ga = _safe(lambda: g.ga4_landing(s_, e, force), errors, "GA4")
+    posts = []
+    try:
+        posts = wp.posts().get("posts", [])
+    except Exception as ex:  # noqa: BLE001 - the map still works without the link graph
+        errors.append(f"WordPress: {ex}")
+    r = tmap.report(cur or {}, prev or {}, qp if isinstance(qp, list) else [], ga or {}, posts, c.read_json("seo_inspect.json", {}),
+                    min_imps=_min_imps((dt.date.fromisoformat(e) - dt.date.fromisoformat(s_)).days + 1))
+    return {**r, "range": {"start": s_, "end": e, "prev_start": ps, "prev_end": pe}, "errors": errors}
+
+
+def map_edit(body):
+    return tmap.edit(body.get("ops") or [], by="you")
+
+
+def map_import(body):
+    return tmap.import_csv(body.get("csv") or "", as_proposal=bool(body.get("as_proposal")), by="you")
+
+
 GET = {"posts": get_posts, "post": get_post, "opportunities": get_opportunities, "draft": lambda q: list_drafts(),
-       "settings": get_settings, "history": history, "categories": get_categories, "sitemaps": get_sitemaps}
+       "settings": get_settings, "history": history, "categories": get_categories, "sitemaps": get_sitemaps,
+       "map": get_map, "map_history": lambda q: tmap.history()}
 POST = {"add": post_add, "remove": lambda b: remove_drafts(b.get("ids")), "clear": clear_drafts, "check": check_all,
         "inspect": do_inspect, "publish_preview": publish_preview, "publish": publish, "undo": undo, "settings": save_settings,
-        "connect": connect, "disconnect": disconnect, "refresh": refresh}
+        "connect": connect, "disconnect": disconnect, "refresh": refresh,
+        "map_edit": map_edit, "map_import": map_import, "map_accept": lambda b: tmap.accept(b["id"]), "map_reject": lambda b: tmap.reject(b["id"])}

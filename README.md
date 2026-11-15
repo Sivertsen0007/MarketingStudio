@@ -273,6 +273,25 @@ The SEO area combines the WordPress blog with **Search Console** and **GA4**.
 - **Draft → Publish:** edits are drafted first. **Publish** writes them to WordPress (with a dry run until a WordPress application
   password is set). Every publish can be undone.
 
+### Topical map
+
+The **Topical map** tab plans the site the Koray way and joins every page with Search Console and GA4, so you see what is
+missing and what needs work in one place.
+
+- **Site anchor:** the *central entity* (what the whole site is about), the *source context* (who you are and why you publish,
+  which decides what belongs) and the *central search intent* (the user's underlying purpose).
+- **Nodes:** each planned page sits in a tree (root, hubs, attribute pages, commercial pages), in the **core** section (what the
+  source context sells) or the **outer** section (the attributes that build authority). A node holds its entity and attribute,
+  macro context, target queries, intent, priority, URL and the pages it must link to.
+- **Numbers and issues per node:** clicks, impressions, CTR, position, change against the previous period, sessions and key
+  events, and what to do: *gap* (no page yet, or no page behind the URL), *update* (losing clicks, positions 8-20, low CTR,
+  not indexed, a target query landing on another page, missing internal links the map asks for).
+- **Coverage** per section and **Unmapped demand**: Search Console queries whose pages have no node yet.
+- **Import CSV** brings in an existing topical-map sheet (columns are matched loosely: title, parent, URL, keywords, type,
+  priority ...). **+ Node** and the side panel edit the map by hand.
+- **Claude builds it with you:** over MCP, Claude reads the map and the gaps and *proposes* changes. A proposal shows at the top
+  of the tab; nothing changes until you **Accept**.
+
 ---
 
 ## SoMe
@@ -494,6 +513,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Ads draft | `get_draft`, `add_to_draft`, `remove_from_draft`, `check_draft`, `preview_live_push`, `live_push_history`, `send_draft_to_editor` (only after you say so) |
 | Email | `email_list_campaigns`, `email_get_campaign`, `email_list_drafts`, `email_add_draft` |
 | SEO | `seo_list_posts`, `seo_get_post`, `seo_opportunities`, `seo_list_drafts`, `seo_add_draft` |
+| Topical map | `seo_map_get` (nodes, numbers, issues, coverage; filter by state), `seo_map_unmapped`, `seo_map_propose` (changes you accept in Studio) |
 | SoMe | `social_calendar`, `social_list_drafts`, `social_add_draft` |
 | Activity | `activity_summary`, `activity_rows` (who made each change is always left out) |
 

@@ -71,7 +71,9 @@ def cmd_init(args):
 def cmd_invite(args):
     store = open_store(args)
     token, expires = store.create_invite(args.email, args.role, args.name)
-    print_invite(store, args, token, expires, args.email.lower(), args.role)
+    existing = store.q1("SELECT role FROM members WHERE email=?", (args.email.strip().lower(),))
+    role = "new device for existing %s; role unchanged" % existing["role"] if existing else args.role
+    print_invite(store, args, token, expires, args.email.lower(), role)
     return 0
 
 

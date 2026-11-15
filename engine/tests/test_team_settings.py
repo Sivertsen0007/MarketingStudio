@@ -148,6 +148,60 @@ out = {"legacy": legacy, "n": len(ts.get("copy_rules")["rules"]), "social": soci
         self.assertEqual(r["limits"]["min_gap_hours"], 3)
         self.assertFalse(r["joined"])
 
+    def test_existing_install_enforces_exactly_what_it_did(self):
+        """Regression (review of ts-07): the copied built-in rules match the old hardcoded checks, message for message."""
+        h = self.home()
+        Path(h, "config.json").write_text("{}")
+        r = self.run_in(h, """
+import gae, meta_ads
+ts.first_run()
+EM = "\u2014"
+def meta(t):
+    return meta_ads.check({"type": "meta_new_campaign", "name": "Camp", "objective": "OUTCOME_TRAFFIC", "primary_text": t},
+                          d={"campaigns": [], "adsets": [], "ads": []}, items={})
+def seo(field, t):
+    return [i["msg"] for i in seochk.text_rules(field, t)]
+out = {
+  "g_glued": gae.lint([{"Headline 1": "VisitTheBahamas"}]), "g_digits": gae.lint([{"Description 1": "Bahamas2027"}]),
+  "g_url": gae.lint([{"Final URL": "https://example.com/bahamas_trips"}]),
+  "g_order": gae.lint([{"Headline 1": "Dive the reef " + EM + " now, it is far too long"}]),
+  "core_glued": core.check({"type": "callout", "campaign": "C", "text": "VisitTheBahamas"})[0],
+  "m_glued": meta("VisitTheBahamas")[0], "m_word": meta("Dive the Bahamas")[0], "m_em": meta("a " + EM + " b")[0],
+  "seo_attr": seo("content", '<p>ok</p><img alt="a ' + EM + ' b" src="https://x/y.jpg">'),
+  "seo_entity": seo("content", "<p>a &mdash; b</p>"),
+  "seo_emoji": {c: seo("title", "x " + c) for c in ("\u2934", "\u2935", "\u3030", "\u303d", "\u2b06", "\u200d", "\u2b50")},
+  "seo_bahamas": seo("title", "Dive the Bahamas"),
+  "g_own": core._warn([{"Headline 1": "We own the boats"}]), "m_own": meta("We own the boats")[1],
+  "social": social_probs("Off to the Bahamas \U0001F420 with expeditions"),
+  "email": em.copy_problems("Spring " + EM + " dates \U0001F420", "subject"),
+}""")
+        ban = "mentions Bahamas (ML ban)"
+        # M1: Google Ads blocks "bahamas" anywhere, Meta only as a word
+        self.assertEqual(r["g_glued"], [f"row 1 Headline 1: {ban}"])
+        self.assertEqual(r["g_digits"], [f"row 1 Description 1: {ban}"])
+        self.assertEqual(r["g_url"], [f"row 1 Final URL: {ban}"])
+        self.assertEqual(r["core_glued"], [ban])
+        self.assertEqual(r["m_glued"], [])
+        self.assertEqual(r["m_word"], ["primary_text: never mention the Bahamas"])
+        self.assertEqual(r["m_em"], ["primary_text: em dash - use a normal dash"])
+        self.assertEqual(r["g_order"][0], "row 1 Headline 1: contains an em dash")  # before the length limit, as before
+        self.assertIn("chars > 30", r["g_order"][1])
+        # M2: SEO em dash on the raw field (alt text counts), &mdash; does not
+        self.assertEqual(r["seo_attr"], ["Has an em dash. Use a regular dash or rewrite."])
+        self.assertEqual(r["seo_entity"], [])
+        # M3: the old SEO emoji class exactly
+        flagged = {c: bool(v) for c, v in r["seo_emoji"].items()}
+        self.assertEqual(flagged, {"\u2934": True, "\u2935": True, "\u3030": True, "\u303d": True, "\u2b06": False,
+                                   "\u200d": False, "\u2b50": True})
+        self.assertEqual(r["seo_emoji"]["\u2934"], ["Has an emoji. ML copy uses none."])
+        self.assertEqual(r["seo_bahamas"], ['Never use "Bahamas" in ML copy. Found: "Bahamas".'])
+        # LOW: the ownership warning stays Meta (and SoMe) only
+        self.assertEqual(r["g_own"], [])
+        self.assertEqual(r["m_own"], ["primary_text: no ownership claims about vessels"])
+        self.assertEqual(r["social"], [["caption: never mention the Bahamas", "caption: no emojis in ML posts"],
+                                       ['caption: no "Expeditions" in ML copy']])
+        self.assertEqual([p["message"] for p in r["email"]], ["No emojis (subject).", "No em dash; use a dash (-) or rewrite (subject)."])
+
     def test_settings_are_checked(self):
         h = self.home()
         r = self.run_in(h, """

@@ -1,9 +1,11 @@
 """Team settings and the shared library.
 
 Settings (one value per key, each a JSON object):
-  copy_rules            {"rules": [{id, level: block|warn, pattern (regex, case-insensitive), message, areas: [..]}]}
-                        areas: ads (Google + Meta), email, seo, social; empty = everywhere. "block" stops the action
-                        (Ads, SoMe) or is an error (Email, SEO); "warn" is shown only.
+  copy_rules            {"rules": [{id, level: block|warn, pattern (regex, case-insensitive), message, areas: [..],
+                        early?, raw?, quote?}]}  areas: google_ads, meta_ads ("ads" = both), email, seo, social; empty =
+                        everywhere. "block" stops the action (Ads, SoMe) or is an error (Email, SEO); "warn" is shown
+                        only. Rules run in list order. early: Google Ads, checked before the length limits. raw: SEO,
+                        the whole field with its markup instead of the visible text. quote false: SEO, no 'Found: "..."'.
   seo_sites             {"prod": url, "staging": url, "sites": [{id, name, on, note}]}  empty = Studio's built-in sites
   email_test_addresses  {"addresses": [..]}  empty = Setup > Email > Test email addresses
   social                {"slots": {channel: ["Tue 09:00"]}, "utm": {facebook, linkedin}, "utm_campaign", "late_minutes"}
@@ -19,8 +21,9 @@ Where a value comes from:
                         viewers ("Set by your team"); owners and admins change it for everyone (PUT /api/v1/settings/<key>).
                         The cache is refreshed on join, after every sync and on the server's SSE `settings` event.
 
-Copy rules on a new install are empty. An install that existed before copy rules were a setting gets the rules it
-had built in (_legacy_copy_rules.py), once, on its first start (first_run(), called by server.py and the MCP).
+Copy rules on a new install are empty. An install that already has a config.json when this version first starts
+(first_run(), called by server.py and the MCP) gets the rules it had built in (_legacy_copy_rules.py), once; the
+decision is saved and never made again.
 
 Library (draftstore collection "library", file library.json, synced with the team like any draft; viewers can't add):
   item {id: "lib_" + 10 hex, kind: headline|cta|image|utm|email_block, text, label, note, by, created}
@@ -40,7 +43,8 @@ import team
 KEYS = ("copy_rules", "seo_sites", "email_test_addresses", "social", "calendar_limits")
 LABELS = {"copy_rules": "Copy rules", "seo_sites": "SEO sites", "email_test_addresses": "Test email addresses",
           "social": "SoMe slots, UTM and late posting", "calendar_limits": "Calendar limits"}
-AREAS = ("ads", "email", "seo", "social")
+AREAS = ("google_ads", "meta_ads", "email", "seo", "social")
+AREA_ALIASES = {"ads": ("google_ads", "meta_ads")}
 LEVELS = ("block", "warn")
 CALENDAR_DEFAULTS = {"max_per_channel_day": 2, "min_gap_hours": 3, "same_link_days": 7, "same_image_days": 7,
                      "same_topic_days": 7, "email_audience_days": 3}
@@ -166,11 +170,18 @@ def clean_rule(r, n=0):
     areas = r.get("areas") or []
     if isinstance(areas, str):
         areas = [a.strip() for a in areas.split(",") if a.strip()]
-    if not isinstance(areas, list) or any(a not in AREAS for a in areas):
-        raise ValueError(f"areas must be some of {', '.join(AREAS)} (none = everywhere)")
+    if not isinstance(areas, list):
+        raise ValueError("areas must be a list")
+    areas = [x for a in areas for x in AREA_ALIASES.get(a, (a,))]
+    if any(a not in AREAS for a in areas):
+        raise ValueError(f"areas must be some of ads, {', '.join(AREAS)} (none = everywhere)")
     rid = _text(r.get("id"), "id", 50) or f"r{n + 1}_{uuid.uuid4().hex[:6]}"
-    return {"id": re.sub(r"[^A-Za-z0-9_.-]", "_", rid), "level": level, "pattern": pattern,
-            "message": _text(r.get("message"), "message", 300) or pattern, "areas": sorted(set(areas), key=AREAS.index)}
+    out = {"id": re.sub(r"[^A-Za-z0-9_.-]", "_", rid), "level": level, "pattern": pattern,
+           "message": _text(r.get("message"), "message", 300) or pattern, "areas": sorted(set(areas), key=AREAS.index)}
+    for flag, default in (("early", False), ("raw", False), ("quote", True)):
+        if bool(r.get(flag, default)) != default:
+            out[flag] = not default
+    return out
 
 
 def clean(key, value):
@@ -451,22 +462,29 @@ def check_local_edit(key, fields=None):
 
 # ---------- copy rules for the areas ----------
 
-def copy_rules(area):
-    """[(level "block"|"warn", compiled pattern, message)] for one area, in order."""
+def copy_rules_full(area):
+    """[{level, rx (compiled), message, early, raw, quote}] for one area ("ads" = Google or Meta), in order."""
     st = _stamp()
     hit = _memo.get(("rules", area))
     if hit and hit[0] == st:
         return hit[1]
+    want = set(AREA_ALIASES.get(area, (area,)))
     out = []
     for r in get("copy_rules")["rules"]:
-        if r["areas"] and area not in r["areas"]:
+        if r["areas"] and not want & set(r["areas"]):
             continue
         try:
-            out.append((r["level"], re.compile(r["pattern"], re.I), r["message"]))
+            out.append({"level": r["level"], "rx": re.compile(r["pattern"], re.I), "message": r["message"],
+                        "early": bool(r.get("early")), "raw": bool(r.get("raw")), "quote": r.get("quote", True) is not False})
         except re.error:
             continue
     _memo[("rules", area)] = (st, out)
     return out
+
+
+def copy_rules(area):
+    """[(level "block"|"warn", compiled pattern, message)] for one area, in order."""
+    return [(r["level"], r["rx"], r["message"]) for r in copy_rules_full(area)]
 
 
 def apply_rules(area, text):

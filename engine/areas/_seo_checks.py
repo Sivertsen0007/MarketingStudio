@@ -27,13 +27,14 @@ def text_rules(field, text):
     t = wp.text_of(text) if field in ("content", "excerpt") else str(text or "")
     try:
         import team_settings  # noqa: PLC0415
-        rules = team_settings.copy_rules("seo")
+        rules = team_settings.copy_rules_full("seo")
     except Exception:  # noqa: BLE001
         rules = []
-    for level, rx, msg in rules:
-        m = rx.search(t)
+    for r in rules:
+        m = r["rx"].search(str(text or "") if r["raw"] else t)  # raw: the whole field, markup included
         if m:
-            out.append(_issue("error" if level == "block" else "warn", field, f'{msg.rstrip(".")}. Found: "{m.group(0)[:60]}".'))
+            msg = f'{r["message"]} Found: "{m.group(0)[:60]}".' if r["quote"] else r["message"]
+            out.append(_issue("error" if r["level"] == "block" else "warn", field, msg))
     return out
 
 

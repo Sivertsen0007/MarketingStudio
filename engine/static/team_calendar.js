@@ -188,7 +188,7 @@ function card(x){
   let inner = "";
   if (k === "copy_rules"){
     const areas = T.set.areas;
-    inner = `<p class="tc-help">Regular expressions, not case sensitive. <b>Block</b> stops the action in Ads and SoMe and is an error in Email and SEO; <b>warn</b> is shown only. No area ticked = everywhere.</p>
+    inner = `<p class="tc-help">Regular expressions, not case sensitive. <b>Block</b> stops the action in Ads and SoMe and is an error in Email and SEO; <b>warn</b> is shown only. No area ticked = everywhere. Rules run in this order.</p>
       <table class="tc-rules" id="tcRules"><tr><th style="width:80px">Level</th><th>Pattern</th><th>Message</th><th>Areas</th><th></th></tr>
       ${(v.rules || []).map(r => ruleRow(r, areas, d)).join("")}</table>
       ${d ? "" : `<button class="link" id="tcAddRule">+ rule</button>`}`;
@@ -214,14 +214,14 @@ function card(x){
 }
 function ruleRow(r, areas, d){
   return `<tr data-rule><td><select data-f="level" ${d}>${T.set.levels.map(l => `<option ${l === r.level ? "selected" : ""}>${l}</option>`).join("")}</select></td>
-    <td><input type="text" data-f="pattern" value="${esc(r.pattern)}" ${d}><input type="hidden" data-f="id" value="${esc(r.id || "")}"></td>
+    <td><input type="text" data-f="pattern" value="${esc(r.pattern)}" ${d}><input type="hidden" data-f="id" value="${esc(r.id || "")}"><input type="hidden" data-f="extra" value="${esc(JSON.stringify({early:r.early, raw:r.raw, quote:r.quote}))}"></td>
     <td><input type="text" data-f="message" value="${esc(r.message)}" ${d}></td>
     <td class="ar">${areas.map(a => `<label><input type="checkbox" data-area="${a}" ${(r.areas || []).includes(a) ? "checked" : ""} ${d}> ${a}</label>`).join(" ")}</td>
     <td>${d ? "" : `<button class="link" data-rm>Remove</button>`}</td></tr>`;
 }
 function collect(k){
   const c = body().querySelector(`[data-card="${k}"]`), q = s => c.querySelector(s);
-  if (k === "copy_rules") return {rules: [...c.querySelectorAll("[data-rule]")].map(tr => ({id: tr.querySelector('[data-f="id"]').value,
+  if (k === "copy_rules") return {rules: [...c.querySelectorAll("[data-rule]")].map(tr => ({...JSON.parse(tr.querySelector('[data-f="extra"]').value || "{}"), id: tr.querySelector('[data-f="id"]').value,
     level: tr.querySelector('[data-f="level"]').value, pattern: tr.querySelector('[data-f="pattern"]').value, message: tr.querySelector('[data-f="message"]').value,
     areas: [...tr.querySelectorAll("[data-area]")].filter(x => x.checked).map(x => x.dataset.area)})).filter(r => r.pattern.trim())};
   if (k === "calendar_limits") return Object.fromEntries([...c.querySelectorAll("[data-lim]")].map(x => [x.dataset.lim, x.value === "" ? null : +x.value]));

@@ -366,27 +366,32 @@ LIMITS = {"Headline": 30, "Description": 90, "Path": 15, "Link Text": 25, "Descr
 
 
 def _block_rules():
-    """The Ads "block" copy rules from Studio's settings (team_settings, key copy_rules), [(pattern, message)]."""
+    """The Google Ads "block" copy rules from Studio's settings (team_settings, key copy_rules):
+    -> ([(pattern, message)] checked before the length limits, [...] after them)."""
     try:
         import team_settings  # noqa: PLC0415
-        return [(rx, msg) for lv, rx, msg in team_settings.copy_rules("ads") if lv == "block"]
+        rules = [r for r in team_settings.copy_rules_full("google_ads") if r["level"] == "block"]
     except Exception:  # noqa: BLE001 - gae on its own: length limits only
-        return []
+        return [], []
+    return ([(r["rx"], r["message"]) for r in rules if r["early"]], [(r["rx"], r["message"]) for r in rules if not r["early"]])
 
 
 def lint(rows):
-    problems, rules = [], _block_rules()
+    problems, (early, late) = [], _block_rules()
     for i, r in enumerate(rows, 1):
         for k, v in r.items():
             if not v:
                 continue
+            text = v if isinstance(v, str) else ""
+            for rx, msg in early:
+                if rx.search(text):
+                    problems.append(f"row {i} {k}: {msg}")
             for prefix, lim in LIMITS.items():
                 if k.startswith(prefix) and not k.endswith("position") and len(v) > lim:
                     problems.append(f"row {i} {k}: {len(v)} chars > {lim} ({v!r})")
-            if isinstance(v, str):
-                for rx, msg in rules:
-                    if rx.search(v):
-                        problems.append(f"row {i} {k}: {msg}")
+            for rx, msg in late:
+                if rx.search(text):
+                    problems.append(f"row {i} {k}: {msg}")
     return problems
 
 

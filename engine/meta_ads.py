@@ -999,8 +999,8 @@ def check(c, d=None, items=None):
         problems.append(f"invalid change: {ex}")
     texts = _texts(c)
     try:
-        import team_settings  # noqa: PLC0415 - copy rules (key copy_rules, area "ads")
-        rules = team_settings.copy_rules("ads")
+        import team_settings  # noqa: PLC0415 - copy rules (key copy_rules, area "meta_ads")
+        rules = team_settings.copy_rules("meta_ads")
     except Exception:  # noqa: BLE001
         rules = []
     for k, v in texts:

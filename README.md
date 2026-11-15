@@ -343,7 +343,7 @@ One calendar for every channel, plus the shared library and the copy rules. Work
 - **Team settings**: copy rules (a regular expression, *block* or *warn*, per area), SEO sites, test email addresses, SoMe
   slots / UTM / late posting and the calendar limits. Solo, these are this Mac's own. In a team, an owner or admin can
   share a value with everyone: it then shows as *Set by your team* and is read-only for the others.
-- A new install starts with **no copy rules**: add your own. An install from before this version keeps the rules it had.
+- A new install starts with **no copy rules**: add your own. An install that was set up before this version (it has a `config.json`) keeps exactly the rules it had.
 
 ---
 

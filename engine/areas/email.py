@@ -912,7 +912,8 @@ def copy_rules():
     out, team_set = [], False
     try:
         import team_settings  # noqa: PLC0415
-        out = [("error" if lv == "block" else "warn", rx, msg) for lv, rx, msg in team_settings.copy_rules("email")]
+        out = [("error" if lv == "block" else "warn", rx, msg if msg.endswith(".") else msg + ".")
+               for lv, rx, msg in team_settings.copy_rules("email")]
         team_set = team_settings.team_value("copy_rules") is not None
     except Exception:  # noqa: BLE001 - no settings: the extra file alone
         pass
@@ -1019,7 +1020,7 @@ def copy_problems(text, where):
     out = []
     for level, pat, msg in copy_rules():
         if pat.search(text or ""):
-            out.append({"level": level, "message": f"{msg.rstrip('.')} ({where})."})
+            out.append({"level": level, "message": f"{msg[:-1]} ({where})."})  # rules end with "."
     return out
 
 

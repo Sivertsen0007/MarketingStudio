@@ -199,6 +199,8 @@ def get_post(q):
             "inspection_link": g.inspection_link(p["url"]), "related": rel,
             "linked_from": [{"id": x["id"], "title": x["title"]} for x in all_posts if x["id"] in p.get("linked_from", [])],
             "draft": [x for x in _draft()["changes"] if x["post_id"] == p["id"]], "range": {"start": s, "end": e},
+            "map_nodes": [{"id": nid, "title": n["title"], "type": n.get("type"), "queries": n.get("queries", [])}
+                          for nid, n in tmap.load()["nodes"].items() if tmap._key(n.get("url")) == tmap._key(p["url"])],
             "errors": errors, "quota_left": g.quota_left()}
 
 
@@ -354,7 +356,8 @@ def list_drafts():
     """The SEO draft with quick checks per change (links are checked in Check and before Publish)."""
     d = _draft()
     return {"version": d["version"], "changes": [{**x, "label": wp.LABELS.get(x["field"], x["field"]),
-                                                   "issues": chk.check_change(x, link_check=lambda u: 200)} for x in d["changes"]]}
+                                                   "issues": chk.check_change(x, link_check=lambda u: 200)} for x in d["changes"]],
+            "new_posts": [{**x, "issues": _new_checks(x)} for x in d.get("new_posts", [])]}
 
 
 def remove_drafts(ids):
@@ -368,6 +371,7 @@ def remove_drafts(ids):
 def clear_drafts(body=None):
     with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
         d["changes"] = []
+        d["new_posts"] = []
         d["version"] += 1
     return list_drafts()
 
@@ -375,6 +379,74 @@ def clear_drafts(body=None):
 def post_add(body):
     out = [add_draft(ch, by="you") for ch in body.get("changes") or []]
     return {"results": out, "draft": list_drafts()}
+
+
+# ---------- new pages (written for a topical-map node, created in WordPress on Publish) ----------
+
+NEW_FIELDS = ("title", "slug", "seo_title", "meta_desc", "focus_kw", "excerpt", "categories", "content")
+
+
+def slugify(s):
+    import re  # noqa: PLC0415
+    import unicodedata  # noqa: PLC0415
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:80]
+
+
+def _new_checks(np_):
+    out = []
+    for f in NEW_FIELDS:
+        v = np_.get(f)
+        if f in ("title", "slug", "categories") or (v not in (None, "") and f != "focus_kw"):
+            out += chk.check_change({"field": f, "new": v if v is not None else "", "old": "", "kind": "edit"}, link_check=lambda u: 200)
+    if not wp.text_of(np_.get("content") or "").strip():
+        out.append({"level": "error", "field": "content", "msg": "The body is empty."})
+    return out
+
+
+def save_new_post(body, by="claude"):
+    """Create or update a NEW page in the draft (never in WordPress). body: {id?, node_id, fields...}.
+    One new page per node: saving for a node that already has one updates it."""
+    nodes = tmap.load()["nodes"]
+    nid = body.get("node_id") or ""
+    if nid and nid not in nodes:
+        raise ValueError("That topical-map node does not exist.")
+    vals = {f: body[f] for f in NEW_FIELDS if f in body}
+    if "categories" in vals:
+        vals["categories"] = sorted(int(x) for x in vals["categories"] or [])
+    status = body.get("status")
+    if status is not None and status not in ("publish", "draft"):
+        raise ValueError("status is publish or draft.")
+    with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+        lst = d.setdefault("new_posts", [])
+        row = next((x for x in lst if (body.get("id") and x["id"] == body["id"]) or (not body.get("id") and nid and x.get("node_id") == nid)), None)
+        if row is None:
+            if body.get("id"):
+                raise ValueError("That new page is no longer in the draft.")
+            if not (vals.get("title") or "").strip():
+                raise ValueError("A new page needs a title.")
+            row = {"id": "n" + uuid.uuid4().hex[:9], "node_id": nid, "status": "publish", "by": by, "at": _now(),
+                   **{f: ([] if f == "categories" else "") for f in NEW_FIELDS}}
+            lst.append(row)
+        row.update(vals)
+        if status:
+            row["status"] = status
+        if not row.get("slug"):
+            row["slug"] = slugify(row.get("title"))
+        row["node_title"] = nodes.get(row.get("node_id"), {}).get("title", "")
+        row["edited_by"], row["edited_at"] = by, _now()
+        if body.get("note") is not None:
+            row["note"] = (body.get("note") or "")[:600]
+        d["version"] += 1
+        out = dict(row)
+    return {"ok": True, "new_post": {**out, "issues": _new_checks(out)}}
+
+
+def remove_new_post(body):
+    with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+        d["new_posts"] = [x for x in d.get("new_posts", []) if x["id"] != body.get("id")]
+        d["version"] += 1
+    return list_drafts()
 
 
 def check_all(body=None, link_check=None):
@@ -385,16 +457,23 @@ def check_all(body=None, link_check=None):
 
 # ---------- publish (the user's button only) ----------
 
-def _token(edits, s, w):
-    blob = json.dumps([[x["id"], x["new"]] for x in edits] + [s["target"], w.name], sort_keys=True, default=str)
+def _token(edits, s, w, new_posts=()):
+    blob = json.dumps([[x["id"], x["new"]] for x in edits] + [[x["id"], {f: x.get(f) for f in NEW_FIELDS + ("status",)}] for x in new_posts]
+                      + [s["target"], w.name], sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def _new_fields(np_):
+    return {f: np_.get(f) for f in NEW_FIELDS if np_.get(f) not in (None, "", []) or f in ("title", "content", "slug")}
 
 
 def publish_preview(body=None, link_check=None):
     """The change set per post, with checks and a token the Publish call must send back."""
     s = settings()
     w = writer(s)
-    edits = [x for x in _draft()["changes"] if x.get("kind") != "todo"]
+    d = _draft()
+    edits = [x for x in d["changes"] if x.get("kind") != "todo"]
+    news = d.get("new_posts", [])
     by_post = {}
     for x in edits:
         by_post.setdefault(x["post_id"], {"post_id": x["post_id"], "title": x["post_title"], "url": x["url"], "fields": [], "issues": []})
@@ -402,10 +481,15 @@ def publish_preview(body=None, link_check=None):
         b["fields"].append({"id": x["id"], "field": x["field"], "label": wp.LABELS.get(x["field"], x["field"]), "old": x.get("old"), "new": x["new"]})
         b["issues"] += chk.check_change(x, link_check)
     posts_ = list(by_post.values())
+    for x in news:
+        posts_.append({"post_id": x["id"], "new": True, "status": x.get("status", "publish"), "node_title": x.get("node_title", ""),
+                       "title": x["title"], "url": f"{c.SITES[s['target']]}/{x.get('slug')}/",
+                       "fields": [{"id": x["id"], "field": f, "label": wp.LABELS.get(f, f), "old": "", "new": v} for f, v in _new_fields(x).items()],
+                       "issues": _new_checks(x)})
     errs = sum(chk.summarise(p["issues"])["errors"] for p in posts_)
-    return {"target": s["target"], "writer": w.name, "live": w.live, "posts": posts_, "errors": errs,
+    return {"target": s["target"], "writer": w.name, "live": w.live, "posts": posts_, "errors": errs, "new_pages": len(news),
             "warnings": sum(chk.summarise(p["issues"])["warnings"] for p in posts_), "blocked": errs > 0 or not posts_,
-            "todos": sum(1 for x in _draft()["changes"] if x.get("kind") == "todo"), "token": _token(edits, s, w)}
+            "todos": sum(1 for x in d["changes"] if x.get("kind") == "todo"), "token": _token(edits, s, w, news)}
 
 
 def _same(f, a, b):
@@ -433,21 +517,26 @@ def publish(body, link_check=None, w=None):
     Updating, Re-inspecting. Never called by Claude or the MCP."""
     s = settings()
     w = w or writer(s)
-    edits = [x for x in _draft()["changes"] if x.get("kind") != "todo"]
-    if not edits:
+    d = _draft()
+    edits = [x for x in d["changes"] if x.get("kind") != "todo"]
+    news = d.get("new_posts", [])
+    if not edits and not news:
         raise ValueError("Nothing to publish: the draft has no edits.")
-    if body.get("token") != _token(edits, s, w):
+    if body.get("token") != _token(edits, s, w, news):
         raise ValueError("The draft or target changed since the preview. Open Publish again.")
     by_post = {}
     for x in edits:
         by_post.setdefault(x["post_id"], []).append(x)
-    issues = [i for x in edits for i in chk.check_change(x, link_check)]
+    issues = [i for x in edits for i in chk.check_change(x, link_check)] + [i for x in news for i in _new_checks(x)]
     if chk.summarise(issues)["errors"]:
         raise ValueError("The draft has errors. Fix them before publishing.")
     push_id = uuid.uuid4().hex[:10]
-    progress.start(PKEY, "publish", [(pid, xs[0]["post_title"], len(STEPS)) for pid, xs in by_post.items()], phase="sending",
+    progress.start(PKEY, "publish", [(pid, xs[0]["post_title"], len(STEPS)) for pid, xs in by_post.items()]
+                   + [(x["id"], "New page: " + x["title"], len(STEPS)) for x in news], phase="sending",
                    message=f"Publishing to {s['target']} ({'dry run' if not w.live else 'WordPress'})")
     results, done_ids = [], []
+    new_done = _publish_new(news, s, w, push_id)
+    results += new_done
     for pid, xs in by_post.items():
         title, url = xs[0]["post_title"], xs[0]["url"]
         res = {"post_id": pid, "title": title, "url": url, "ok": False, "steps": []}
@@ -495,9 +584,56 @@ def publish(body, link_check=None, w=None):
         remove_drafts(done_ids)
     ok_n = sum(1 for r in results if r["ok"])
     ok = ok_n == len(results)
-    msg = f"{ok_n} of {len(results)} posts {'recorded (dry run, nothing sent)' if not w.live else 'updated'} on {s['target']}."
+    n_new = sum(1 for r in new_done if r["ok"])
+    msg = f"{ok_n} of {len(results)} posts {'recorded (dry run, nothing sent)' if not w.live else 'published'} on {s['target']}" \
+          + (f", {n_new} of them new" if new_done else "") + "."
     progress.finish(PKEY, ok, msg)
     return {"ok": ok, "message": msg, "push_id": push_id, "results": results, "live": w.live, "target": s["target"]}
+
+
+def _publish_new(news, s, w, push_id):
+    """Create each new page in WordPress, point its topical-map node at the new URL, log it so Undo can trash it."""
+    out, done = [], []
+    for x in news:
+        title = x["title"]
+        res = {"post_id": x["id"], "title": "New page: " + title, "url": "", "ok": False, "steps": [], "new": True}
+        try:
+            progress.mark(PKEY, x["id"], "checking")
+            progress.phase(PKEY, "sending", f"{title}: Checking")
+            if [i for i in _new_checks(x) if i["level"] == "error"]:
+                raise RuntimeError("Has errors: fix them first.")
+            progress.sent(PKEY, x["id"])
+            progress.sent(PKEY, x["id"])  # no revision to note for a page that does not exist yet
+            res["steps"] += ["Checking", "Nothing to note (new page)"]
+            progress.phase(PKEY, "sending", f"{title}: Creating")
+            made = w.create(_new_fields(x), x.get("status", "publish"))
+            progress.sent(PKEY, x["id"])
+            res["steps"].append("Created as " + ("published" if x.get("status", "publish") == "publish" else "WordPress draft"))
+            res["url"] = made.get("link") or ""
+            if made.get("warning"):
+                res["steps"].append(made["warning"])
+            if w.live and x.get("node_id") and res["url"]:
+                try:
+                    tmap.edit([{"op": "update", "id": x["node_id"], "node": {"url": res["url"]}}], by="studio")
+                    res["steps"].append("Map node points at the new URL")
+                except Exception as ex:  # noqa: BLE001 - the page exists; the map can be fixed by hand
+                    res["steps"].append(f"Map not updated: {c.scrub(ex)}")
+            progress.sent(PKEY, x["id"])
+            res.update(ok=True, post_id=made.get("id"), request_indexing=g.inspection_link(res["url"]) if res["url"] else "",
+                       inspection="Skipped: new page")
+            c.append_jsonl(HISTORY, {"push_id": push_id, "at": _now(), "action": "publish", "created": True, "target": s["target"], "writer": w.name,
+                                     "post_id": made.get("id"), "title": title, "url": res["url"], "node_id": x.get("node_id"),
+                                     "before": {}, "after": _new_fields(x), "modified": made.get("modified"), "ok": True})
+            done.append(x["id"])
+        except Exception as ex:  # noqa: BLE001
+            res["error"] = c.scrub(ex)
+            progress.mark(PKEY, x["id"], "failed")
+        out.append(res)
+    if done:
+        with c.locked_json(DRAFT, {"version": 0, "changes": []}) as d:
+            d["new_posts"] = [y for y in d.get("new_posts", []) if y["id"] not in done]
+            d["version"] += 1
+    return out
 
 
 def history(q=None):
@@ -509,12 +645,17 @@ def history(q=None):
             continue
         p = pushes.setdefault(r["push_id"], {"push_id": r["push_id"], "at": r["at"], "target": r["target"], "writer": r["writer"],
                                               "posts": [], "undone": r["push_id"] in undone})
-        p["posts"].append({"post_id": r["post_id"], "title": r["title"], "fields": sorted(r.get("after") or {})})
+        p["posts"].append({"post_id": r["post_id"], "title": r["title"], "fields": sorted(r.get("after") or {}), "new": bool(r.get("created"))})
     return sorted(pushes.values(), key=lambda p: p["at"], reverse=True)[:30]
 
 
 def _changed_since(r, w):
     """Why this post no longer looks like what Studio published, or "" when it is unchanged."""
+    if r.get("created"):  # a page Studio made: only WordPress's modified time can tell (a dry run made nothing)
+        if not w.live:
+            return ""
+        cur = w.current(r["post_id"])
+        return f"edited {cur['_modified']}" if r.get("modified") and cur.get("_modified") and cur["_modified"] != r["modified"] else ""
     cur = w.current(r["post_id"])
     if w.live and r.get("modified") and cur.get("_modified"):  # WordPress's own modified time is exact (it may tidy the HTML we sent)
         return f"edited {cur['_modified']}" if cur["_modified"] != r["modified"] else ""
@@ -547,8 +688,17 @@ def undo(body, w=None):
     bad, how = 0, []
     for r in rows:
         try:
-            out = w.restore(r["post_id"], r) or {}
-            how.append(out.get("from") or "saved values")
+            if r.get("created"):  # undo a new page = move it to the WordPress bin (restorable there) and clear the node's URL
+                w.trash(r["post_id"])
+                how.append("bin")
+                if r.get("node_id") and w.live:
+                    try:
+                        tmap.edit([{"op": "update", "id": r["node_id"], "node": {"url": ""}}], by="studio")
+                    except Exception:  # noqa: BLE001,S110 - node may be gone; the page is in the bin either way
+                        pass
+            else:
+                out = w.restore(r["post_id"], r) or {}
+                how.append(out.get("from") or "saved values")
             progress.sent(PKEY, r["post_id"])
             progress.mark(PKEY, r["post_id"], "reversed")
         except Exception as ex:  # noqa: BLE001
@@ -556,9 +706,13 @@ def undo(body, w=None):
             r["error"] = c.scrub(ex)
             progress.mark(PKEY, r["post_id"], "failed")
     c.append_jsonl(HISTORY, {"push_id": pid_, "at": _now(), "action": "undo", "target": target, "writer": wname, "failed": bad})
-    src = "the WordPress revision" if how and all(h == "revision" for h in how) else \
-        "the values Studio saved before publishing" if "revision" not in how else "revisions where WordPress had them, otherwise Studio's saved values"
-    msg = f"{len(rows) - bad} of {len(rows)} posts restored from {src}{' (dry run)' if wname != 'wp' else ''}."
+    edited = [h for h in how if h != "bin"]
+    src = "the WordPress revision" if edited and all(h == "revision" for h in edited) else \
+        "the values Studio saved before publishing" if "revision" not in edited else "revisions where WordPress had them, otherwise Studio's saved values"
+    binned = how.count("bin")
+    msg = (f"{len(rows) - bad} of {len(rows)} posts undone" + (f": {len(edited)} restored from {src}" if edited else "")
+           + (f"{',' if edited else ':'} {binned} new page{'s' if binned != 1 else ''} moved to the WordPress bin" if binned else "")
+           + f"{' (dry run)' if wname != 'wp' else ''}.")
     progress.finish(PKEY, bad == 0, msg)
     return {"ok": bad == 0, "message": msg}
 
@@ -673,6 +827,20 @@ def get_map(q):
         errors.append(f"WordPress: {ex}")
     r = tmap.report(cur or {}, prev or {}, qp if isinstance(qp, list) else [], ga or {}, posts, c.read_json("seo_inspect.json", {}),
                     min_imps=_min_imps((dt.date.fromisoformat(e) - dt.date.fromisoformat(s_)).days + 1))
+    by_key = {p["key"]: p for p in posts}
+    d = _draft()
+    edits = {}
+    for x in d["changes"]:
+        edits[x["post_id"]] = edits.get(x["post_id"], 0) + 1
+    news = {x["node_id"]: x for x in d.get("new_posts", []) if x.get("node_id")}
+    for n in r["nodes"]:  # connect each node to its WordPress post and to any page or edit waiting in the draft
+        p = by_key.get(tmap._key(n.get("url")) or "\0")
+        n["post_id"] = p["id"] if p else None
+        n["post_status"] = p.get("status") if p else None
+        n["in_draft"] = edits.get(p["id"], 0) if p else 0
+        np_ = news.get(n["id"])
+        n["new_post"] = {"id": np_["id"], "title": np_["title"], "by": np_.get("by"), "edited_by": np_.get("edited_by"),
+                         "words": wp.word_count(np_.get("content") or "")} if np_ else None
     return {**r, "range": {"start": s_, "end": e, "prev_start": ps, "prev_end": pe}, "errors": errors}
 
 
@@ -690,4 +858,5 @@ GET = {"posts": get_posts, "post": get_post, "opportunities": get_opportunities,
 POST = {"add": post_add, "remove": lambda b: remove_drafts(b.get("ids")), "clear": clear_drafts, "check": check_all,
         "inspect": do_inspect, "publish_preview": publish_preview, "publish": publish, "undo": undo, "settings": save_settings,
         "connect": connect, "disconnect": disconnect, "refresh": refresh,
-        "map_edit": map_edit, "map_import": map_import, "map_accept": lambda b: tmap.accept(b["id"]), "map_reject": lambda b: tmap.reject(b["id"])}
+        "map_edit": map_edit, "map_import": map_import, "map_accept": lambda b: tmap.accept(b["id"]),
+        "new_post_save": lambda b: save_new_post(b, by="you"), "new_post_remove": remove_new_post, "map_reject": lambda b: tmap.reject(b["id"])}

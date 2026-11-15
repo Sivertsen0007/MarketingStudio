@@ -327,6 +327,72 @@ class Conflicts(unittest.TestCase):
             seo.undo({"push_id": r["push_id"]}, w=Edited("staging", delay=0))
 
 
+class LiveMaker(LiveFake):
+    """Live-looking writer that can create and trash pages (records only)."""
+    made = []
+
+    def create(self, fields, status="publish"):
+        r = super().create(fields, status)
+        LiveMaker.made.append((fields, status))
+        return {**r, "id": 501, "link": f"https://staging.masterliveaboards.com/{fields['slug']}/", "modified": self.mod}
+
+    def current(self, post_id):
+        if post_id == 501:
+            return {"_modified": self.mod}
+        return super().current(post_id)
+
+
+class NewPages(unittest.TestCase):
+    def setUp(self):
+        reset()
+        from areas import _seo_map as tmap  # noqa: PLC0415
+        self.tmap = tmap
+        mp = Path(TMP) / tmap.FILE
+        if mp.exists():
+            mp.unlink()
+        tmap.edit([{"op": "add", "node": {"title": "Best time to dive Raja Ampat", "queries": ["raja ampat best time"]}}])
+        self.nid = next(iter(tmap.load()["nodes"]))
+
+    def test_claude_writes_user_edits_publish_creates_and_undo_bins(self):
+        r = seo.save_new_post({"node_id": self.nid, "title": "Best time to dive Raja Ampat", "content": "<h2>Seasons</h2><p>Oct to Apr.</p>",
+                               "meta_desc": "When to dive Raja Ampat: the seasons, currents and manta months, with the best months for a liveaboard trip."})
+        np_ = r["new_post"]
+        self.assertEqual(np_["slug"], "best-time-to-dive-raja-ampat")
+        self.assertEqual(np_["by"], "claude")
+        again = seo.save_new_post({"node_id": self.nid, "content": "<h2>Seasons</h2><p>October to April.</p>"}, by="you")  # same node = same page
+        self.assertEqual(again["new_post"]["id"], np_["id"])
+        self.assertEqual(len(seo.list_drafts()["new_posts"]), 1)
+        with self.assertRaises(ValueError):
+            seo.save_new_post({"node_id": "nope", "title": "x"})
+        pv = seo.publish_preview(link_check=lambda u: 200)
+        self.assertEqual(pv["new_pages"], 1)
+        self.assertTrue(pv["posts"][0]["new"])
+        self.assertFalse(pv["blocked"])
+        w = LiveMaker(modified="2026-11-15T10:00:00")
+        res = seo.publish({"token": pv["token"]}, link_check=lambda u: 200, w=w)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(LiveMaker.made[-1][1], "publish")
+        self.assertIn("October", LiveMaker.made[-1][0]["content"])
+        self.assertEqual(seo.list_drafts()["new_posts"], [])
+        self.assertTrue(self.tmap.load()["nodes"][self.nid]["url"].endswith("/best-time-to-dive-raja-ampat/"))  # node points at the page
+        self.assertTrue(seo.history()[0]["posts"][0]["new"])
+        u = seo.undo({"push_id": res["push_id"]}, w=w)
+        self.assertTrue(u["ok"], u)
+        self.assertIn("bin", u["message"])
+        self.assertEqual(c.read_jsonl("seo_dryrun.jsonl")[-1]["action"], "trash")
+        self.assertEqual(self.tmap.load()["nodes"][self.nid]["url"], "")
+
+    def test_empty_body_blocks_and_dry_run_leaves_map(self):
+        seo.save_new_post({"node_id": self.nid, "title": "Draft only"}, by="you")
+        self.assertTrue(seo.publish_preview(link_check=lambda u: 200)["blocked"])
+        seo.save_new_post({"node_id": self.nid, "content": "<p>Body.</p>", "status": "draft"}, by="you")
+        pv = seo.publish_preview(link_check=lambda u: 200)
+        res = seo.publish({"token": pv["token"]}, link_check=lambda u: 200, w=wp.DryRunWriter("staging", delay=0))
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(c.read_jsonl("seo_dryrun.jsonl")[-1]["payload"]["status"], "draft")
+        self.assertFalse(self.tmap.load()["nodes"][self.nid].get("url"))  # dry run: nothing made, node untouched
+
+
 class Connect(unittest.TestCase):
     def setUp(self):
         reset()

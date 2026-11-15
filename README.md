@@ -291,6 +291,12 @@ missing and what needs work in one place.
   priority ...). **+ Node** and the side panel edit the map by hand.
 - **Claude builds it with you:** over MCP, Claude reads the map and the gaps and *proposes* changes. A proposal shows at the top
   of the tab; nothing changes until you **Accept**.
+- **Pages, straight from the map:** every node is connected to its WordPress post. Open a node and press **Edit text** to edit
+  the post (title, SEO title, meta description, body with live preview). A node with no page gets **Write page**: write it
+  yourself, or ask Claude to (MCP `seo_write_page`). New pages save to the SEO draft as you type, the **In draft** filter shows
+  what is waiting, and your **Publish** button creates them in WordPress (live or as a WordPress draft, your choice per page) and
+  points the node at the new URL. **Undo** moves a new page to the WordPress bin. Studio edits blog posts; WordPress pages and
+  custom post types are opened in wp-admin.
 
 ---
 
@@ -513,7 +519,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Ads draft | `get_draft`, `add_to_draft`, `remove_from_draft`, `check_draft`, `preview_live_push`, `live_push_history`, `send_draft_to_editor` (only after you say so) |
 | Email | `email_list_campaigns`, `email_get_campaign`, `email_list_drafts`, `email_add_draft` |
 | SEO | `seo_list_posts`, `seo_get_post`, `seo_opportunities`, `seo_list_drafts`, `seo_add_draft` |
-| Topical map | `seo_map_get` (nodes, numbers, issues, coverage; filter by state), `seo_map_unmapped`, `seo_map_propose` (changes you accept in Studio) |
+| Topical map | `seo_map_get` (nodes, numbers, issues, coverage; filter by state), `seo_map_unmapped`, `seo_map_propose` (changes you accept in Studio), `seo_write_page` (a new page for a node, into the draft) |
 | SoMe | `social_calendar`, `social_list_drafts`, `social_add_draft` |
 | Activity | `activity_summary`, `activity_rows` (who made each change is always left out) |
 

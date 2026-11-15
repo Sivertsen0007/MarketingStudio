@@ -49,7 +49,7 @@ dialog.seo-wide{width:min(1180px,96vw)}
 if (!document.getElementById("seo-css")){ const st = document.createElement("style"); st.id = "seo-css"; st.textContent = CSS; document.head.appendChild(st) }
 
 const STEPS = ["Checking", "Saving revision note", "Updating", "Re-inspecting"];
-const T = {tab: localGet("seo.tab") || "posts", view: localGet("seo.view") || "data", filter: "all", range: localGet("seo.range") || "28",
+const T = {tab: localGet("seo.tab") || "map", view: localGet("seo.view") || "data", filter: "all", range: localGet("seo.range") || "28",
            start: "", end: "", search: "", sort: {key: "clicks", dir: -1}, data: null, draft: null, settings: null, cats: null, opp: null, el: null};
 const A = (k, q) => api("/api/area/seo/" + k + (q ? "?" + qs(q) : ""));
 const P = (k, body) => api("/api/area/seo/" + k, body || {});
@@ -82,8 +82,8 @@ function render(el){
   loadSettings().then(() => { loadDraft(); show() });
 }
 function tabs(){
-  const n = T.draft ? T.draft.changes.length : 0;
-  $("#seoTabs").innerHTML = [["posts", "Posts"], ["opps", "Opportunities"], ["map", `Topical map${T.mapProps ? `<span class="n">${T.mapProps}</span>` : ""}`], ["draft", `Draft<span class="n">${n}</span>`], ["settings", "Settings"]]
+  const n = T.draft ? T.draft.changes.length + (T.draft.new_posts || []).length : 0;
+  $("#seoTabs").innerHTML = [["map", `Topical map${T.mapProps ? `<span class="n">${T.mapProps}</span>` : ""}`], ["posts", "Posts"], ["opps", "Opportunities"], ["draft", `Draft<span class="n">${n}</span>`], ["settings", "Settings"]]
     .map(([k, l]) => `<button data-t="${k}" class="${k === T.tab ? "on" : ""}">${l}</button>`).join("");
 }
 function targetChip(){
@@ -109,7 +109,7 @@ function show(){
   else if (T.tab === "opps"){ b.innerHTML = `<div class="seo-scroll" id="seoOpp"><p class="hint">Loading opportunities ...</p></div>`; loadOpps() }
   else if (T.tab === "draft"){ b.innerHTML = `<div class="seo-scroll" id="seoDraft"></div>`; drawDraft(); loadHistory() }
   else if (T.tab === "map"){ b.innerHTML = `<div id="seoMap" style="flex:1;min-height:0;display:flex;flex-direction:column"></div>`;
-    mapScript().then(() => window.SEO_MAP.render($("#seoMap"), {A, P, rq, badge: n => { if (T.mapProps !== n){ T.mapProps = n; tabs() } }})).catch(e => { b.innerHTML = `<p class="hint" style="padding:16px">${esc(e.message)}</p>` }) }
+    mapScript().then(() => window.SEO_MAP.render($("#seoMap"), {A, P, rq, openPost, openNewPage, badge: n => { if (T.mapProps !== n){ T.mapProps = n; tabs() } }})).catch(e => { b.innerHTML = `<p class="hint" style="padding:16px">${esc(e.message)}</p>` }) }
   else { b.innerHTML = `<div class="seo-scroll" id="seoSet"></div>`; drawSettings() }
 }
 
@@ -243,7 +243,9 @@ async function openPost(id, startPane){
     <div class="seo-box"><h3>Related posts that do not link here yet</h3>${d.related.map(x => `<div class="seo-ch" style="grid-template-columns:1fr auto"><div>${esc(x.title)} <span class="hint">shared: ${esc(x.shared.join(", "))}</span></div>
       <button data-rel="${x.id}">Suggest a link</button></div>`).join("") || `<p class="hint">No close matches.</p>`}</div>`;
   const errs = d.errors.length ? `<p class="seo-errs">${d.errors.map(esc).join("<br>")}</p>` : "";
-  showDialog(p.title, `${errs}<div class="fpills seo-dtabs" id="sp_tabs"><button data-p="edit">Edit</button><button data-p="gsc">Search Console</button><button data-p="links">Internal links</button>
+  const inMap = (d.map_nodes || []).length ? `<p class="hint" style="margin:0 0 8px">In the topical map: ${d.map_nodes.map(n => `<b>${esc(n.title)}</b>${n.queries.length ? ` <span class="hint">(${esc(n.queries.slice(0, 4).join(", "))})</span>` : ""}`).join(" · ")}</p>`
+    : `<p class="hint" style="margin:0 0 8px">Not in the topical map yet.</p>`;
+  showDialog(p.title, `${errs}${inMap}<div class="fpills seo-dtabs" id="sp_tabs"><button data-p="edit">Edit</button><button data-p="gsc">Search Console</button><button data-p="links">Internal links</button>
       <a class="hint" style="margin:4px 0 0 8px" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a></div>
     <div data-pane="edit">${edit}</div><div data-pane="gsc" style="display:none">${gsc}</div><div data-pane="links" style="display:none">${links}</div>`,
     [["Close", () => dlg.close()], ["Add changes to draft", () => savePost(p, init), "primary"]]);
@@ -287,6 +289,67 @@ async function savePost(p, init){
   } catch(e) { toast(e.message) }
 }
 
+// ---- new page editor (a page for a topical-map node; Claude writes it with seo_write_page, you edit it here) ----
+async function openNewPage(o){
+  // o: {id} for one in the draft, or {node} to start one from a map node
+  if (!T.cats){ try { T.cats = await A("categories") } catch(e) { T.cats = [] } }
+  let np = null;
+  if (o.id){ try { T.draft = await A("draft") } catch(e) {} np = ((T.draft || {}).new_posts || []).find(x => x.id === o.id); if (!np) return toast("That new page is no longer in the draft") }
+  const n = o.node || {};
+  const v = np || {node_id: n.id || "", title: n.title || "", slug: ((n.url || "").replace(/^https?:\/\/[^/]+/, "").split("/").filter(Boolean).pop() || ""), seo_title: "", meta_desc: "", focus_kw: ((n.queries || [])[0] || {}).query || "", excerpt: "", categories: [], content: "", status: "publish"};
+  wide(true);
+  const cats = (T.cats || []).map(c => `<label><input type="checkbox" value="${c.id}" ${(v.categories || []).includes(c.id) ? "checked" : ""}>${esc(c.name)}</label>`).join("");
+  const qs_ = (n.queries || []).map(q => q.query || q);
+  showDialog(np ? "New page" : "Write a new page", `<div id="np_wrap"><p class="hint" style="margin:0 0 8px">${v.node_id ? `For the map node <b>${esc(np ? np.node_title : n.title)}</b>. ` : ""}Saved to the SEO draft as you type. Nothing goes to WordPress until you press Publish.${np ? ` Written by ${esc(np.by)}.` : ""}${np && np.note ? `<br>Note: ${esc(np.note)}` : ""}</p>
+    ${qs_.length ? `<p class="hint" style="margin:0 0 8px">Target queries: ${esc(qs_.join(", "))}</p>` : ""}
+    <div class="seo-grid2"><div>
+      <div class="seo-f"><label>Title</label><input id="np_title" value="${esc(v.title)}"></div>
+      <div class="seo-f"><label>Slug <span class="hint" style="margin:0">masterliveaboards.com/<b>slug</b>/ (empty = from the title)</span></label><input id="np_slug" value="${esc(v.slug)}"></div>
+      <div class="seo-f"><label>SEO title <span class="cnt" id="np_tn"></span></label><input id="np_seo_title" value="${esc(v.seo_title)}"></div>
+      <div class="seo-f"><label>Meta description <span class="cnt" id="np_mn"></span></label><textarea id="np_meta_desc" rows="3">${esc(v.meta_desc)}</textarea></div>
+      <div class="seo-f"><label>Focus keyphrase</label><input id="np_focus_kw" value="${esc(v.focus_kw)}"></div>
+    </div><div>
+      <div class="seo-f"><label>Google preview</label><div class="seo-snip"><div class="u">masterliveaboards.com › <span id="np_su"></span></div><div class="t" id="np_st"></div><div class="d" id="np_sd"></div></div></div>
+      <div class="seo-f"><label>Excerpt</label><textarea id="np_excerpt" rows="2">${esc(v.excerpt)}</textarea></div>
+      <div class="seo-f"><label>Categories</label><div class="seo-cats" id="np_cats">${cats || `<span class="hint">Categories could not be read.</span>`}</div></div>
+      <div class="seo-f"><label>On Publish</label><select id="np_status"><option value="publish" ${v.status !== "draft" ? "selected" : ""}>Publish it live</option><option value="draft" ${v.status === "draft" ? "selected" : ""}>Save as a WordPress draft</option></select></div>
+    </div></div>
+    <div class="seo-f"><label>Body (HTML) <span class="hint" style="margin:0" id="np_wc"></span></label>
+      <div class="seo-grid2"><textarea id="np_content" class="code">${esc(v.content)}</textarea><iframe id="np_prev" class="seo-prev" sandbox="" title="Body preview"></iframe></div></div>
+    <div id="np_iss"></div><span class="hint" id="np_saved"></span></div>`,
+    [["Close", async () => { await save(); dlg.close() }], ...(np ? [["Remove", async () => { if (!confirm("Remove this new page from the draft?")) return; T.draft = await P("new_post_remove", {id: np.id}); dlg.close(); tabs(); if (T.tab === "draft") drawDraft(); if (window.SEO_MAP) window.SEO_MAP.reload() }, "danger"]] : []),
+     ["Done", async () => { await save(true); dlg.close() }, "primary"]]);
+  let id = np && np.id, timer = null, last = "";
+  const vals = () => ({node_id: v.node_id, title: $("#np_title").value, slug: $("#np_slug").value.trim(), seo_title: $("#np_seo_title").value, meta_desc: $("#np_meta_desc").value,
+    focus_kw: $("#np_focus_kw").value, excerpt: $("#np_excerpt").value, content: $("#np_content").value, status: $("#np_status").value,
+    categories: [...document.querySelectorAll("#np_cats input:checked")].map(i => +i.value)});
+  async function save(final){
+    clearTimeout(timer);
+    const b = vals(), key = JSON.stringify(b);
+    if (key === last) return;
+    if (!id && !b.content.trim() && !final) return; // nothing worth keeping yet
+    if (!b.title.trim()){ $("#np_saved").textContent = "Needs a title before it can be saved."; return }
+    try { const r = await P("new_post_save", id ? {...b, id} : b); id = r.new_post.id; last = key;
+      $("#np_saved").textContent = "Saved to the draft " + new Date().toLocaleTimeString("en-GB", {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+      $("#np_iss").innerHTML = issHTML(r.new_post.issues); loadDraft(); if (window.SEO_MAP && final) window.SEO_MAP.reload() }
+    catch(e) { $("#np_saved").textContent = e.message }
+  }
+  const upd = () => {
+    const t = $("#np_seo_title").value, m = $("#np_meta_desc").value;
+    $("#np_tn").textContent = `${t.length} / 30-60`; $("#np_tn").classList.toggle("over", t.length < 30 || t.length > 60);
+    $("#np_mn").textContent = `${m.length} / 70-160`; $("#np_mn").classList.toggle("over", m.length < 70 || m.length > 160);
+    $("#np_st").textContent = t ? (t.length > 60 ? t.slice(0, 58) + " ..." : t) : $("#np_title").value;
+    $("#np_sd").textContent = m || "No meta description: Google picks text from the page.";
+    $("#np_su").textContent = $("#np_slug").value || slugOf($("#np_title").value);
+    const words = ($("#np_content").value.replace(/<[^>]+>/g, " ").match(/\S+/g) || []).length; $("#np_wc").textContent = `${N(words)} words`;
+  };
+  let pt; const prev = () => { $("#np_prev").srcdoc = `<base target="_blank"><style>body{font:15px/1.6 Arial,sans-serif;margin:14px;color:#222}img{max-width:100%;height:auto}</style>` + $("#np_content").value };
+  $("#np_wrap").addEventListener("input", e => { upd(); if (e.target.id === "np_content"){ clearTimeout(pt); pt = setTimeout(prev, 400) } clearTimeout(timer); timer = setTimeout(save, 900) });
+  $("#np_wrap").addEventListener("change", () => { clearTimeout(timer); timer = setTimeout(save, 300) });
+  upd(); prev(); if (np){ last = JSON.stringify(vals()); $("#np_iss").innerHTML = issHTML(np.issues) }
+}
+const slugOf = s => (s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
+
 // ---- opportunities ----
 async function loadOpps(){
   const box = $("#seoOpp"); if (!box) return;
@@ -325,17 +388,24 @@ function drawDraft(){
   const box = $("#seoDraft"); if (!box) return;
   const ch = (T.draft || {}).changes || [];
   const by = {}; ch.forEach(x => (by[x.post_id] = by[x.post_id] || []).push(x));
-  box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b>${ch.length} change${ch.length === 1 ? "" : "s"} in the SEO draft</b><span class="spacer"></span>
+  const nps = (T.draft || {}).new_posts || [];
+  const newHTML = nps.length ? `<div class="seo-sec" style="margin:10px 0 18px"><h2>New pages (${nps.length})</h2>${nps.map(x => `<div class="seo-ch" style="grid-template-columns:1fr auto"><div><b>${esc(x.title)}</b> <span class="chip draft">${x.status === "draft" ? "WordPress draft" : "Publishes live"}</span>
+      <div class="hint" style="margin:2px 0 0">/${esc(x.slug)}/ · ${x.node_title ? "map: " + esc(x.node_title) + " · " : ""}written by ${esc(x.by)}${x.edited_by && x.edited_by !== x.by ? ", edited by " + esc(x.edited_by) : ""} · ${esc(x.edited_at || x.at)}</div>${x.note ? `<div class="hint">${esc(x.note)}</div>` : ""}${issHTML(x.issues)}</div>
+      <div><button data-np="${x.id}" class="primary">Edit</button> <button class="link" data-nprm="${x.id}">Remove</button></div></div>`).join("")}</div>` : "";
+  box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b>${ch.length} change${ch.length === 1 ? "" : "s"}${nps.length ? ` and ${nps.length} new page${nps.length === 1 ? "" : "s"}` : ""} in the SEO draft</b><span class="spacer"></span>
       <button id="sdClear" class="danger">Clear</button><button id="sdCheck">Check</button><button id="sdPub" class="primary">Publish ...</button></div>
     <p class="hint">Nothing here is in WordPress. Suggestions (notes) stay in the draft until you write the text in the post editor. Only your Publish button sends edits.</p>
-    ${Object.values(by).map(xs => `<div class="seo-post-h">${esc(xs[0].post_title)} <button class="link" data-open="${xs[0].post_id}">Open post</button></div>
+    ${newHTML}${Object.values(by).map(xs => `<div class="seo-post-h">${esc(xs[0].post_title)} <button class="link" data-open="${xs[0].post_id}">Open post</button></div>
       ${xs.map(x => `<div class="seo-ch"><div>${esc(x.label || LBL[x.field] || x.field)}${x.kind === "todo" ? ` <span class="chip warn">Suggestion</span>` : ""}<div class="hint" style="margin:2px 0 0">by ${esc(x.by)} · ${esc(x.at)}</div></div>
         <div>${x.kind === "todo" ? esc(x.note) : `<span class="old">${esc(short(x.old, 300))}</span><br><span class="new">${esc(short(x.new, 300))}</span>`}${x.note && x.kind !== "todo" ? `<div class="hint">${esc(x.note)}</div>` : ""}${issHTML(x.issues)}</div>
-        <button class="link" data-rm="${x.id}" title="Remove from the draft">Remove</button></div>`).join("")}`).join("") || `<p class="hint">The draft is empty. Open a post and edit it, or add suggestions from Opportunities.</p>`}
+        <button class="link" data-rm="${x.id}" title="Remove from the draft">Remove</button></div>`).join("")}`).join("") || `${nps.length ? "" : `<p class="hint">The draft is empty. Open a post or a topical-map node and edit it, or ask Claude to write a page (MCP: seo_write_page).</p>`}`}
     <div class="seo-sec" style="margin-top:26px"><h2>Published from Studio</h2><div id="sdHist"><p class="hint">Loading ...</p></div></div>`;
   box.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => { T.draft = await P("remove", {ids: [b.dataset.rm]}); drawDraft(); tabs(); loadHistory() });
   box.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openPost(+b.dataset.open));
-  $("#sdClear").onclick = () => showDialog("Clear the SEO draft?", `<p>This removes all ${ch.length} changes and suggestions. WordPress is not touched.</p>`,
+  box.querySelectorAll("[data-np]").forEach(b => b.onclick = () => openNewPage({id: b.dataset.np}));
+  box.querySelectorAll("[data-nprm]").forEach(b => b.onclick = () => { const x = nps.find(y => y.id === b.dataset.nprm);
+    showDialog("Remove this new page?", `<p>"${esc(x.title)}" is removed from the draft. It was never in WordPress.</p>`, [["Cancel", () => dlg.close()], ["Remove", async () => { T.draft = await P("new_post_remove", {id: x.id}); dlg.close(); drawDraft(); tabs() }, "danger"]]) });
+  $("#sdClear").onclick = () => showDialog("Clear the SEO draft?", `<p>This removes all ${ch.length} changes and suggestions${nps.length ? ` and ${nps.length} new page${nps.length === 1 ? "" : "s"}` : ""}. WordPress is not touched.</p>`,
     [["Cancel", () => dlg.close()], ["Clear", async () => { T.draft = await P("clear"); dlg.close(); drawDraft(); tabs(); loadHistory() }, "danger"]]);
   $("#sdCheck").onclick = async () => { $("#sdCheck").disabled = true; $("#sdCheck").textContent = "Checking links ...";
     try { const r = await P("check"); T.draft = {...T.draft, changes: r.changes}; drawDraft(); loadHistory(); toast("Checked, links included") } catch(e) { toast(e.message) } };
@@ -345,7 +415,7 @@ async function loadHistory(){
   const box = $("#sdHist"); if (!box) return;
   let h = []; try { h = await A("history") } catch(e) {}
   box.innerHTML = h.length ? h.map(p => `<div class="seo-ch" style="grid-template-columns:160px 1fr auto"><div>${esc(p.at)}<div class="hint" style="margin:0">${p.writer === "wp" ? "WordPress" : "Dry run"} · ${esc(p.target)}</div></div>
-      <div>${p.posts.map(x => `${esc(x.title)} <span class="hint">(${esc(x.fields.map(f => LBL[f] || f).join(", "))})</span>`).join("<br>")}</div>
+      <div>${p.posts.map(x => `${x.new ? `<span class="chip draft">New</span> ` : ""}${esc(x.title)} <span class="hint">(${esc(x.fields.map(f => LBL[f] || f).join(", "))})</span>`).join("<br>")}</div>
       <div>${p.undone ? `<span class="chip">Undone</span>` : `<button class="danger" data-undo="${esc(p.push_id)}">Undo</button>`}</div></div>`).join("") : `<p class="hint">Nothing published yet.</p>`;
   box.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => undoFlow(b.dataset.undo));
 }
@@ -381,11 +451,11 @@ async function publishFlow(){
   const prod = pv.target === "prod" && pv.live;
   const where = pv.live ? `<span class="seo-target ${prod ? "prod" : ""}">${prod ? "PROD: live WordPress" : "Staging WordPress"}</span>`
     : `<span class="seo-target dry">Dry run</span> Nothing is sent to WordPress: Studio records what it would send (${esc(pv.target)}). Connect WordPress in Settings to publish for real.`;
-  const body = pv.posts.map(p => `<div class="seo-post-h">${esc(p.title)} <a class="hint" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a></div>
+  const body = pv.posts.map(p => `<div class="seo-post-h">${p.new ? `<span class="chip draft">New page${p.status === "draft" ? ", WordPress draft" : ""}</span> ` : ""}${esc(p.title)} <a class="hint" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a></div>
     ${p.fields.map(f => `<div class="seo-ch" style="grid-template-columns:150px 1fr"><div>${esc(f.label)}</div><div><span class="old">${esc(short(f.old, 400))}</span><br><span class="new">${esc(short(f.new, 400))}</span></div></div>`).join("")}
     ${issHTML(p.issues)}`).join("");
   showDialog("Publish the SEO draft", `<p>${where}</p>
-    <p class="hint">${pv.posts.length} post${pv.posts.length === 1 ? "" : "s"} · ${pv.errors} error${pv.errors === 1 ? "" : "s"} · ${pv.warnings} to check${pv.todos ? ` · ${pv.todos} suggestion${pv.todos === 1 ? "" : "s"} stay in the draft` : ""}. Per post: ${STEPS.join(", ")}.</p>
+    <p class="hint">${pv.posts.length} post${pv.posts.length === 1 ? "" : "s"}${pv.new_pages ? ` (${pv.new_pages} new)` : ""} · ${pv.errors} error${pv.errors === 1 ? "" : "s"} · ${pv.warnings} to check${pv.todos ? ` · ${pv.todos} suggestion${pv.todos === 1 ? "" : "s"} stay in the draft` : ""}. Per post: ${STEPS.join(", ")}.</p>
     ${body || `<p class="hint">No edits to publish. Suggestions need text first.</p>`}${pv.errors ? `<p class="prob">Fix the errors before publishing.</p>` : ""}`,
     [["Cancel", () => dlg.close()], [pv.live ? (prod ? "Publish to prod" : "Publish to staging") : "Publish (dry run)", () => runPublish(pv), prod ? "live" : "primary"]]);
   const btn = [...document.querySelectorAll("#dlgF button")].pop(); btn.disabled = pv.blocked;
@@ -395,14 +465,14 @@ async function runPublish(pv){
     const r = await seoProgress(pv.live ? "Publishing to WordPress " + pv.target : "Publishing (dry run)", "publish", {token: pv.token});
     const list = await finalProgress();
     const res = r.results.map(x => `<div class="seo-ch" style="grid-template-columns:1fr auto"><div>${esc(x.title)}${x.error ? `<span class="seo-iss error">${esc(x.error)}</span>` : `<span class="seo-steps"><br>${esc(x.steps.join(" · "))} · ${esc(x.inspection || "")}</span>`}</div>
-      <div>${x.ok ? `<a href="${esc(x.request_indexing)}" target="_blank" rel="noopener">Request indexing in Search Console</a>` : ""}</div></div>`).join("");
+      <div>${x.ok ? `${x.new && x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">Open the new page</a> · ` : ""}${x.request_indexing ? `<a href="${esc(x.request_indexing)}" target="_blank" rel="noopener">Request indexing in Search Console</a>` : ""}` : ""}</div></div>`).join("");
     showDialog(r.ok ? (r.live ? "Published" : "Dry run done") : "Not all published", `${list}<p>${esc(r.message)}</p>${res}`,
       [["Close", () => dlg.close()], ["Undo this publish", () => undoFlow(r.push_id), "danger"]]);
   } catch(e) { toast(e.message) }
-  loadDraft(); if (T.tab === "posts") loadPosts(); if (T.tab === "draft") loadHistory();
+  loadDraft(); if (T.tab === "posts") loadPosts(); if (T.tab === "draft") loadHistory(); if (T.tab === "map" && window.SEO_MAP) window.SEO_MAP.reload();
 }
 function undoFlow(pushId){
-  showDialog("Undo this publish?", `<p>Studio puts back what each post had before this publish: the WordPress revision it noted, or, if WordPress keeps no revisions, the values Studio saved. If a post was edited in WordPress since, undo stops and changes nothing.</p>`,
+  showDialog("Undo this publish?", `<p>Studio puts back what each post had before this publish: the WordPress revision it noted, or, if WordPress keeps no revisions, the values Studio saved. New pages Studio created go to the WordPress bin (restorable there). If a post was edited in WordPress since, undo stops and changes nothing.</p>`,
     [["Cancel", () => dlg.close()], ["Undo", async () => { try { const r = await seoProgress("Undoing", "undo", {push_id: pushId}); const list = await finalProgress();
       showDialog(r.ok ? "Undone" : "Undo stopped", `${list}<p>${esc(r.message)}</p>`, []) } catch(e) { toast(e.message) } if (T.tab === "draft") loadHistory() }, "danger"]]);
 }

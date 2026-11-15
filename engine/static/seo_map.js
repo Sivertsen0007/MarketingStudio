@@ -30,6 +30,9 @@ const CSS = `
 .tm-empty{padding:40px 20px;text-align:center;color:var(--muted)}
 .tm-site{font-size:12px;color:var(--text2);padding:6px 14px 0}
 .tm-site b{font-weight:500}
+.tm-page{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0 12px;background:var(--panel)}
+.tm-page .h{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
+.tm-dr{font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;background:var(--draft-bg,#e8f0fe);color:var(--text)}
 `;
 if (!document.getElementById("tm-css")){ const st = document.createElement("style"); st.id = "tm-css"; st.textContent = CSS; document.head.appendChild(st) }
 
@@ -69,8 +72,8 @@ function draw(){
   const $ = s => S.el.querySelector(s);
   const cov = d.coverage || {};
   $("#tmCov").innerHTML = ["core", "outer"].map(s => cov[s] && cov[s].nodes ? `<span class="tm-cov" title="Live = the node has a page with impressions or a WordPress post"><span class="tm-sec">${s}</span><b>${cov[s].pct}%</b> live · ${cov[s].gaps} gaps · ${cov[s].update} to update</span>` : "").join(" ");
-  const cnt = k => d.nodes.filter(n => k === "all" || n.state === k).length;
-  $("#tmPills").innerHTML = [["all", "All"], ["gap", "Gaps"], ["update", "Needs update"], ["ok", "OK"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l} <span class="n">${cnt(k)}</span></button>`).join("")
+  const cnt = k => d.nodes.filter(n => k === "all" || (k === "draft" ? n.new_post || n.in_draft : n.state === k)).length;
+  $("#tmPills").innerHTML = [["all", "All"], ["gap", "Gaps"], ["update", "Needs update"], ["ok", "OK"], ["draft", "In draft"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l} <span class="n">${cnt(k)}</span></button>`).join("")
     + `<button data-f="unmapped" class="${S.filter === "unmapped" ? "on" : ""}" title="Search Console demand with no node in the map">Unmapped demand <span class="n">${(d.unmapped || []).length}</span></button>`;
   const site = d.site || {};
   $("#tmSiteLine").innerHTML = site.central_entity || site.source_context ? `<b>Central entity:</b> ${esc(site.central_entity || "-")} · <b>Source context:</b> ${esc(site.source_context || "-")} · <b>Central search intent:</b> ${esc(site.central_search_intent || "-")}${(site.exclude || []).length ? ` · <span title="${esc(site.exclude.map(x => x.path + (x.why ? " - " + x.why : "")).join("\n"))}">${site.exclude.length} left out on purpose</span>` : ""}`
@@ -98,7 +101,7 @@ function drawProps(){
 }
 function visible(){
   const d = S.data, byId = Object.fromEntries(d.nodes.map(n => [n.id, n]));
-  const hit = n => (S.filter === "all" || n.state === S.filter) && (!S.search || [n.title, n.url, n.entity, n.attribute, ...(n.queries || []).map(q => q.query)].join(" ").toLowerCase().includes(S.search));
+  const hit = n => (S.filter === "all" || (S.filter === "draft" ? n.new_post || n.in_draft : n.state === S.filter)) && (!S.search || [n.title, n.url, n.entity, n.attribute, ...(n.queries || []).map(q => q.query)].join(" ").toLowerCase().includes(S.search));
   const show = new Set(), strong = new Set();
   d.nodes.forEach(n => { if (hit(n)){ strong.add(n.id); let p = n; while (p){ show.add(p.id); p = byId[p.parent] } } });
   return {show, strong, byId};
@@ -117,7 +120,7 @@ function drawMain(){
   const dc = v => v ? `<span class="${v > 0 ? "seo-up" : "seo-down"}">${v > 0 ? "+" : ""}${N(v)}</span>` : "";
   main.innerHTML = rows.length ? `<table><thead><tr><th>Node</th><th>Section</th><th class="num">Clicks</th><th class="num">vs prev</th><th class="num">Impr.</th><th class="num">Pos.</th><th class="num">Sessions</th><th>State</th><th>Issues</th></tr></thead><tbody>
     ${rows.map(([n, depth]) => `<tr class="tm-row ${strong.has(n.id) ? "" : "dim"} ${S.sel === n.id ? "sel" : ""}" data-id="${n.id}">
-      <td><span class="tm-t" style="padding-left:${depth * 18}px"><span class="tm-type ${n.type}" title="${esc(n.type)}">${TY[n.type] || "?"}</span>${esc(n.title)}${n.children ? ` <span class="hint">(${n.children})</span>` : ""}</span></td>
+      <td><span class="tm-t" style="padding-left:${depth * 18}px"><span class="tm-type ${n.type}" title="${esc(n.type)}">${TY[n.type] || "?"}</span>${esc(n.title)}${n.children ? ` <span class="hint">(${n.children})</span>` : ""}${n.new_post ? ` <span class="tm-dr" title="A new page is waiting in the SEO draft">new page in draft</span>` : n.in_draft ? ` <span class="tm-dr" title="Edits waiting in the SEO draft">${n.in_draft} in draft</span>` : ""}</span></td>
       <td><span class="tm-sec">${esc(n.section)}</span></td><td class="num">${N(n.clicks)}</td><td class="num">${dc(n.delta_clicks)}</td><td class="num">${N(n.impressions)}</td>
       <td class="num">${n.position ? n.position.toFixed(1) : ""}</td><td class="num">${N(n.sessions)}</td>
       <td><span class="tm-st ${n.state}">${STATE[n.state]}</span></td><td class="wrap" style="font-size:12px;color:var(--text2)">${esc((n.issues || []).map(i => i.text).join(" ").slice(0, 140))}</td></tr>`).join("")}</tbody></table>`
@@ -142,6 +145,7 @@ function openNode(id, parent, preset){
   const opts = (sel, list) => list.map(v => `<option ${v === sel ? "selected" : ""}>${v}</option>`).join("");
   const parents = d.nodes.filter(x => x.id !== n.id).sort((a, b) => a.title.localeCompare(b.title));
   side.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><b>${id ? "Node" : "New node"}</b><button class="link" id="tmClose">Close</button></div>
+    ${id ? pageBox(n) : ""}
     ${(n.issues || []).map(i => `<div class="tm-iss ${i.level}">${esc(i.text)}</div>`).join("")}
     ${id && n.url ? `<p class="hint" style="margin:8px 0">${N(n.clicks)} clicks · ${N(n.impressions)} impressions · CTR ${((n.ctr || 0) * 100).toFixed(1)}% · position ${n.position ? n.position.toFixed(1) : "-"} · ${N(n.sessions)} sessions · ${N(n.key_events)} key events</p>` : ""}
     <div class="tm-f"><label>Title</label><input id="tmTitle" value="${esc(n.title)}"></div>
@@ -159,6 +163,12 @@ function openNode(id, parent, preset){
     <div class="tm-f"><label>Note</label><textarea id="tmNote" rows="2">${esc(n.note || "")}</textarea></div>
     <div class="tm-acts"><button class="primary" id="tmSave">${id ? "Save" : "Add node"}</button>${id ? `<button id="tmChild">Add child</button><button class="danger" id="tmDel">Remove</button>` : ""}</div>`;
   const $ = s => side.querySelector(s);
+  side.querySelectorAll("[data-pg]").forEach(b => b.onclick = () => {
+    const k = b.dataset.pg;
+    if (k === "post") S.ctx.openPost(n.post_id);
+    if (k === "new") S.ctx.openNewPage({id: n.new_post.id});
+    if (k === "write") S.ctx.openNewPage({node: n});
+  });
   $("#tmClose").onclick = () => { S.sel = null; S.el.querySelector("#tmWrap").classList.add("nopanel"); drawMain() };
   $("#tmAddLink").onclick = () => $("#tmLinks").insertAdjacentHTML("beforeend", linkRow(parents, {to: "", anchor: ""}, Date.now()));
   $("#tmSave").onclick = async () => {
@@ -172,6 +182,17 @@ function openNode(id, parent, preset){
   if ($("#tmChild")) $("#tmChild").onclick = () => openNode(null, id);
   if ($("#tmDel")) $("#tmDel").onclick = async () => { if (!confirm(`Remove "${n.title}" from the map? Its children move up one level. The page itself is not touched.`)) return;
     try { await S.ctx.P("map_edit", {ops: [{op: "remove", id}]}); S.sel = null; toast("Removed from the map"); load() } catch(e) { toast(e.message) } };
+}
+function pageBox(n){
+  const ask = `<div class="hint" style="margin-top:6px">Or ask Claude in Terminal: <i>write the page for "${esc(n.title)}"</i> (MCP: seo_write_page). It lands here for you to edit.</div>`;
+  if (n.post_id) return `<div class="tm-page"><div class="h"><span><b>Page</b> · WordPress post${n.post_status && n.post_status !== "publish" ? ` (${esc(n.post_status)})` : ""}${n.in_draft ? ` · <span class="tm-dr">${n.in_draft} in draft</span>` : ""}</span>
+    <button class="primary" data-pg="post">Edit text</button></div><div class="hint" style="margin-top:4px"><a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.url)}</a></div>
+    <div class="hint" style="margin-top:6px">Ask Claude to rewrite or update it (MCP: seo_add_draft): the change shows in the editor and in Draft.</div></div>`;
+  if (n.new_post) return `<div class="tm-page"><div class="h"><span><b>New page in the draft</b> · ${esc(n.new_post.title)} · ${Number(n.new_post.words || 0).toLocaleString("en-GB")} words · by ${esc(n.new_post.by)}</span>
+    <button class="primary" data-pg="new">Edit text</button></div><div class="hint" style="margin-top:4px">Publish creates it in WordPress and points this node at its URL.</div></div>`;
+  if (!n.url || n.state === "gap" && !n.live) return `<div class="tm-page"><div class="h"><span><b>No page yet</b></span><button class="primary" data-pg="write">Write page</button></div>${ask}</div>`;
+  return `<div class="tm-page"><div class="h"><span><b>Page</b> · not a blog post (a WordPress page, trip or destination page)</span><a href="${esc(n.url)}" target="_blank" rel="noopener">Open</a></div>
+    <div class="hint" style="margin-top:4px">Studio edits blog posts only. Edit this one in wp-admin.</div></div>`;
 }
 function linkRow(nodes, l, i){
   return `<div class="tm-link tm-2" style="margin-bottom:4px"><select><option value="">(node)</option>${nodes.map(p => `<option value="${p.id}" ${p.id === l.to ? "selected" : ""}>${esc(p.title)}</option>`).join("")}</select><input placeholder="anchor text" value="${esc(l.anchor || "")}"></div>`;

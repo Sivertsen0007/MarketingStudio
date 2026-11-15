@@ -98,7 +98,7 @@ AREA_TOOLS = [
      "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}, "days": DAYS}, "required": ["id"]}},
     {"name": "seo_opportunities", "description": "SEO opportunities from Search Console: losing posts, low CTR, striking distance queries, not indexed.",
      "inputSchema": {"type": "object", "properties": {"days": DAYS}}},
-    {"name": "seo_list_drafts", "description": "The SEO draft (edits and to-dos not yet published to WordPress), with quick checks per change.",
+    {"name": "seo_list_drafts", "description": "The SEO draft (edits, to-dos and new pages not yet published to WordPress), with quick checks per change.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "seo_add_draft",
      "description": "Add one change to the SEO draft (never to WordPress). Edit: {post_id, field, new, note}. Suggestion without text: "
@@ -108,6 +108,20 @@ AREA_TOOLS = [
                                                       "new": {},
                                                       "note": {"type": "string"}, "kind": {"type": "string", "enum": ["edit", "todo"]}},
                      "required": ["post_id", "field"]}},
+    {"name": "seo_write_page",
+     "description": "Write a NEW page for a topical-map node that has no page yet (state gap). It goes into the SEO draft only, never to "
+                    "WordPress: the user reads and edits it in Studio (SEO > Topical map > the node, or Draft) and publishes it with their "
+                    "own Publish button, which creates the post and points the node at its URL. One page per node: calling again for the "
+                    "same node (or with id) updates it. Fields: title, slug (made from the title if empty), seo_title (30-60 chars), "
+                    "meta_desc (70-160), focus_kw, excerpt, categories [ids], content (WordPress HTML: h2/h3, p, ul, a; no h1). "
+                    "Follow the node's entity, attribute, macro context and target queries, link to the parent and the nodes in its "
+                    "links list, and use only facts you can source. To change an EXISTING post use seo_add_draft (field content etc.).",
+     "inputSchema": {"type": "object", "properties": {
+         "node_id": {"type": "string"}, "id": {"type": "string", "description": "the new page's draft id, to update it"},
+         "title": {"type": "string"}, "slug": {"type": "string"}, "seo_title": {"type": "string"}, "meta_desc": {"type": "string"},
+         "focus_kw": {"type": "string"}, "excerpt": {"type": "string"}, "categories": {"type": "array", "items": {"type": "integer"}},
+         "content": {"type": "string"}, "note": {"type": "string", "description": "what you did and what to check - shown to the user"}},
+         "required": ["node_id"]}},
     # SoMe (organic Facebook, Instagram, LinkedIn). Posting and scheduling are the user's buttons.
     {"name": "seo_map_get",
      "description": "The SEO topical map (Koray method) joined with Search Console + GA4: site (central entity, source context, "
@@ -238,6 +252,9 @@ def call_area(name, a):
         return seo.get_opportunities(_date_q(a))
     if name == "seo_list_drafts":
         return seo.list_drafts()
+    if name == "seo_write_page":
+        keys = ("node_id", "id", "title", "slug", "seo_title", "meta_desc", "focus_kw", "excerpt", "categories", "content", "note")
+        return seo.save_new_post({k: a[k] for k in keys if k in a}, by="claude")
     if name == "seo_add_draft":
         return seo.add_draft({k: a[k] for k in ("post_id", "field", "new", "note", "kind") if k in a}, by="claude")
     if name in ("seo_map_get", "seo_map_unmapped"):

@@ -250,6 +250,17 @@ class DryRunWriter:
         self._log("update", post_id, payload, url=f"{c.SITES[self.target]}/wp-json/wp/v2/posts/{post_id}")
         return {"ok": True, "sent": payload}
 
+    def create(self, fields, status="publish"):
+        self._wait()
+        payload = {**rest_payload(fields), "status": status}
+        self._log("create", None, payload, url=f"{c.SITES[self.target]}/wp-json/wp/v2/posts")
+        return {"ok": True, "id": None, "link": f"{c.SITES[self.target]}/{fields.get('slug', '')}/", "modified": None, "sent": payload}
+
+    def trash(self, post_id):
+        self._wait()
+        self._log("trash", post_id)
+        return {"ok": True}
+
     def revisions(self, post_id):
         return [r for r in c.read_jsonl("seo_dryrun.jsonl", 2000) if r.get("post_id") == post_id and r.get("action") == "revision"]
 
@@ -304,6 +315,19 @@ class WpRestWriter:
                 raise RuntimeError("Yoast fields are not writable over REST yet: install wp-snippets/yoast-rest-fields.php (the README).")
         res = self._call(f"posts/{int(post_id)}", "POST", payload)
         return {"ok": True, "modified": res.get("modified_gmt")}
+
+    def create(self, fields, status="publish"):
+        """A new post. WordPress ignores meta keys it does not know, so a missing Yoast snippet shows as a warning, not a failure."""
+        payload = {**rest_payload(fields), "status": "draft" if status == "draft" else "publish"}
+        res = self._call("posts?context=edit", "POST", payload)
+        lost = [m for m in (payload.get("meta") or {}) if m not in (res.get("meta") or {})]
+        return {"ok": True, "id": res.get("id"), "link": res.get("link", ""), "modified": res.get("modified_gmt"),
+                "warning": "Yoast fields were not saved: install wp-snippets/yoast-rest-fields.php (the README)." if lost else ""}
+
+    def trash(self, post_id):
+        """Undo of a created page: move it to the WordPress bin (restorable from wp-admin for 30 days)."""
+        self._call(f"posts/{int(post_id)}", "DELETE")
+        return {"ok": True}
 
     def revisions(self, post_id):
         return self._call(f"posts/{int(post_id)}/revisions?per_page=20&_fields=id,date,author")

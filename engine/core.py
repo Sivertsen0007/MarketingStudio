@@ -3,7 +3,7 @@ of changes that both the Studio UI and Claude (via MCP) edit. The draft is pushe
 `gae apply --restart`; Editor is then only the place where changes are reviewed and Posted.
 
 Read side: Editor's database, read-only (immutable=1), re-opened per call so it is always current.
-Draft: one JSON file per account under editor-changes/studio/, guarded by a file lock.
+Draft: one JSON file per account under editor-changes/studio/ (draftstore collection ads:<acct>), guarded by a file lock.
 """
 import contextlib, datetime as dt, fcntl, json, os, re, shutil, sqlite3, subprocess, sys, tempfile, uuid
 from collections import Counter
@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import appconfig  # noqa: E402,F401
+import draftstore  # noqa: E402
 import gae  # noqa: E402
 
 STUDIO_DIR = gae.OUT_DIR / "studio"
@@ -337,23 +338,22 @@ def _draft_path(acct):
     return STUDIO_DIR / f"draft_{acct}.json"
 
 
+def _coll(acct):
+    return f"ads:{acct}"
+
+
 @contextlib.contextmanager
 def _locked(acct, write=True):
-    path = _draft_path(acct)
-    with open(STUDIO_DIR / f".draft_{acct}.lock", "w") as lk:
-        fcntl.flock(lk, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
-        d = json.loads(path.read_text()) if path.exists() else {"version": 0, "items": []}
+    """The draft {version, items} under its lock (draftstore collection ads:<acct>). write: saved and version + 1."""
+    if not write:
+        yield draftstore.read(_coll(acct), STUDIO_DIR)
+        return
+    with draftstore.doc(_coll(acct), STUDIO_DIR, bump=True) as d:
         yield d
-        if write:
-            d["version"] += 1
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1))
-            os.replace(tmp, path)
 
 
 def draft(acct):
-    with _locked(acct, write=False) as d:
-        return d
+    return draftstore.read(_coll(acct), STUDIO_DIR)
 
 
 # ML copy rules from memory (feedback_*): hard blocks are in gae.lint (em dash, lengths, Bahamas); these are warnings
@@ -446,8 +446,9 @@ def add(acct, changes, by="you", note=None):
         items.append({"id": uuid.uuid4().hex[:8], "change": c, "by": by, "note": note or "",
                       "ts": dt.datetime.now().isoformat(timespec="seconds"), "summary": _summary(c),
                       "problems": problems, "warnings": warnings})
-    with _locked(acct) as d:
-        d["items"].extend(items)
+    with draftstore.tx(_coll(acct), STUDIO_DIR, by=by) as t:
+        for it in items:
+            t.put(it["id"], it, by)
     return items
 
 
@@ -470,17 +471,13 @@ def _summary(c):
 
 
 def remove(acct, ids):
-    with _locked(acct) as d:
-        before = len(d["items"])
-        d["items"] = [i for i in d["items"] if i["id"] not in set(ids)]
-        return before - len(d["items"])
+    with draftstore.tx(_coll(acct), STUDIO_DIR) as t:
+        return sum(1 for i in set(ids) if t.delete(i))
 
 
 def clear(acct):
-    with _locked(acct) as d:
-        n = len(d["items"])
-        d["items"] = []
-        return n
+    with draftstore.tx(_coll(acct), STUDIO_DIR) as t:
+        return sum(1 for i in t.ids() if t.delete(i))
 
 
 def validate(acct):

@@ -1,4 +1,4 @@
-"""SoMe storage: posts (social_draft.json), the scheduling queue (social_queue.json) and SoMe settings
+"""SoMe storage: posts (social_draft.json, draftstore collection "social"), the scheduling queue (social_queue.json) and SoMe settings
 (social_settings.json), all in Studio's gitignored data folder, each guarded by a file lock.
 
 The data folder is core.STUDIO_DIR, or the SOCIAL_DIR environment variable (tests, the test server and the
@@ -83,6 +83,22 @@ def _locked(name, default):
         tmp.replace(path)
 
 
+def _ds():
+    """draftstore (posts are its collection "social"), imported on first use so the queue-only VPS job needs nothing more."""
+    try:
+        import draftstore  # noqa: PLC0415
+    except ImportError:
+        import sys  # noqa: PLC0415
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import draftstore  # noqa: PLC0415
+    return draftstore
+
+
+def _posts_locked(by=None):
+    """social_draft.json {posts} under its lock, saved on exit."""
+    return _ds().doc("social", data_dir(), by=by, default={"posts": []})
+
+
 def _read(name, default):
     try:
         return json.loads((data_dir() / name).read_text())
@@ -106,7 +122,7 @@ def save_settings(changes):
 # ---------- posts ----------
 
 def posts():
-    return _read("social_draft.json", {"posts": []})["posts"]
+    return _ds().read("social", data_dir(), {"posts": []})["posts"]
 
 
 def get(post_id):
@@ -163,7 +179,7 @@ def edit_block(p):
 def save(fields, by="you"):
     """Create (no id) or update a post. Published channels are history: editing never changes them on the channel.
     Second guard: a post that isn't editable (see edit_block) is refused here too, whichever caller."""
-    with _locked("social_draft.json", {"posts": []}) as d:
+    with _posts_locked(by) as d:
         pid = fields.get("id")
         p = next((x for x in d["posts"] if x["id"] == pid), None) if pid else None
         if p and edit_block(p):
@@ -178,7 +194,7 @@ def save(fields, by="you"):
 
 def update(post_id, fn):
     """fn(post) changes the post in place under the lock. -> the post."""
-    with _locked("social_draft.json", {"posts": []}) as d:
+    with _posts_locked() as d:
         p = next((x for x in d["posts"] if x["id"] == post_id), None)
         if not p:
             raise ValueError("post not found")
@@ -188,7 +204,7 @@ def update(post_id, fn):
 
 
 def remove(post_id):
-    with _locked("social_draft.json", {"posts": []}) as d:
+    with _posts_locked() as d:
         p = next((x for x in d["posts"] if x["id"] == post_id), None)
         if not p:
             raise ValueError("post not found")

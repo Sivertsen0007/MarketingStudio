@@ -24,6 +24,8 @@ import io
 import re
 import uuid
 
+import draftstore
+
 try:
     from . import _seo_common as c
 except ImportError:  # tests import it flat
@@ -46,8 +48,13 @@ def _empty():
     return {"site": {**{k: "" for k in SITE_FIELDS}, "exclude": []}, "nodes": {}, "proposals": [], "version": 0}
 
 
+def _locked(by=None):
+    """The map file under its lock (draftstore collections seo:map_nodes, seo:map_site, seo:map_proposals)."""
+    return draftstore.doc("seo:map_nodes", c.data_dir(), by=by, default=_empty())
+
+
 def load():
-    m = c.read_json(FILE, None) or _empty()
+    m = draftstore.read("seo:map_nodes", c.data_dir(), {}) or _empty()
     for k, v in _empty().items():
         m.setdefault(k, v)
     return m
@@ -173,7 +180,7 @@ def _apply(m, ops, by):
 
 def edit(ops, by="you"):
     """The user's own edit in Studio: applied straight away."""
-    with c.locked_json(FILE, _empty()) as m:
+    with _locked(by) as m:
         for k, v in _empty().items():
             m.setdefault(k, v)
         done = _apply(m, ops, by)
@@ -187,7 +194,7 @@ def propose(ops, note="", by="claude"):
     m = load()
     preview = _apply(copy.deepcopy(m), ops, by)  # raises on a bad op, so a broken proposal never lands
     p = {"id": "p_" + uuid.uuid4().hex[:8], "at": _now(), "by": by, "note": str(note or "")[:500], "ops": ops, "summary": preview}
-    with c.locked_json(FILE, _empty()) as mm:
+    with _locked(by) as mm:
         for k, v in _empty().items():
             mm.setdefault(k, v)
         mm["proposals"].append(p)
@@ -196,7 +203,7 @@ def propose(ops, note="", by="claude"):
 
 
 def accept(pid, by="you"):
-    with c.locked_json(FILE, _empty()) as m:
+    with _locked(by) as m:
         p = next((x for x in m.get("proposals", []) if x["id"] == pid), None)
         if not p:
             raise ValueError("that proposal is gone")
@@ -207,7 +214,7 @@ def accept(pid, by="you"):
 
 
 def reject(pid, by="you"):
-    with c.locked_json(FILE, _empty()) as m:
+    with _locked(by) as m:
         before = len(m.get("proposals", []))
         m["proposals"] = [x for x in m.get("proposals", []) if x["id"] != pid]
         m["version"] = m.get("version", 0) + 1

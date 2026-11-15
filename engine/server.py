@@ -34,6 +34,7 @@ import progress
 import areas
 import setup_routes  # keys (Keychain), Sign in with Google, .env import
 import team  # team sync: join a team server, sync drafts (team.py)
+import team_live  # team presence, claims, comments, mentions, activity (team_live.py)
 import updater  # [mac-app updater] in-app updates (GitHub Releases), see updater.py
 
 HERE = Path(__file__).resolve().parent
@@ -228,9 +229,12 @@ class H(BaseHTTPRequestHandler):
         page = page.replace("<head>", f'<head>\n<meta name="studio-press" content="{html.escape(PRESS)}">', 1)
         return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
 
-    def _run(self, fn):
+    def _run(self, fn, body=None):
         try:
-            self._send(200, fn())
+            res = fn()
+            self._send(200, res)
+            if self.command == "POST":
+                team_live.after_post(self.path, body, res)  # [team live] tell the team about pushes / publishes
         except Exception as ex:  # noqa: BLE001 - surface every error in the UI
             traceback.print_exc()
             self._send(400, {"error": str(ex)})
@@ -264,7 +268,7 @@ class H(BaseHTTPRequestHandler):
         fn = getattr(areas.AREAS[parts[0]], method, {}).get(parts[1])
         if not fn:
             return self._send(404, {"error": "not found"})
-        return self._run(lambda: fn(args))
+        return self._run(lambda: fn(args), args)
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -296,6 +300,8 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/app/update/check":
             return self._run(lambda: updater.status(force=q.get("force") == "1"))
         # [mac-app updater] end
+        if u.path.startswith("/api/team/live/"):  # [team live]
+            return self._run(lambda: team_live.get(u.path, q))
         if u.path == "/api/team/status":
             return self._run(team.status)
         if u.path == "/api/team/conflicts":
@@ -412,10 +418,12 @@ class H(BaseHTTPRequestHandler):
             "/api/push": push,
         }
         if self.path in routes:
-            return self._run(routes[self.path])
+            return self._run(routes[self.path], body)
         self._send(404, {"error": "not found"})
 
     def _team_post(self, body):
+        if self.path.startswith("/api/team/live/"):  # [team live]
+            return self._run(lambda: team_live.post(self.path, body))
         def changeset():
             act = body.get("action") or "set"
             if act == "rename":
@@ -501,7 +509,7 @@ class H(BaseHTTPRequestHandler):
             "/api/push": no_editor,
         }
         if self.path in routes:
-            return self._run(routes[self.path])
+            return self._run(routes[self.path], body)
         self._send(404, {"error": "not found"})
 
 

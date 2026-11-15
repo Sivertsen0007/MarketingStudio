@@ -345,7 +345,7 @@ function drawEditor(){
   const txt = SO.tab === "all" ? p.caption : ((p.captions || {})[SO.tab] ?? "");
   const res = Object.entries(p.results || {});
   const whenVal = p.when ? localISO(new Date(p.when)) : "";
-  side.innerHTML = `<div class="so-ed">
+  side.innerHTML = `<div class="so-ed" ${p.id ? `data-team-coll="social" data-team-id="${esc(p.id)}" data-team-label="${esc(p.title || (p.caption || "").slice(0, 60))}"` : ""}>
     <div style="display:flex;justify-content:space-between;align-items:center"><h3>${p.id ? "Post" : "New post"} ${stChip(p.status || "draft")}</h3><button id="soClose" title="Close">Close</button></div>
     ${ro ? `<div class="so-warn">Scheduled: cancel it to edit. You can still move it in the calendar.</div>` : ""}
     ${res.length ? `<div class="so-res">${res.map(([c, r]) => `<div class="${r.error ? "so-prob" : "so-okk"}"><b>${esc(CH[c])}</b>: ${esc(r.status)}${r.scheduled_for && r.status === "scheduled" ? " for " + esc(fmtDate(r.scheduled_for)) + (r.via === "vps" ? " (VPS job)" : r.via === "local" ? " (Studio on this Mac)" : " (Meta)") : ""}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">open</a>` : ""}${r.error ? " · " + esc(r.error) : ""}${r.warning ? " · " + esc(r.warning) : ""}${r.status === "missed" ? " · use Post now if you still want it" : ""}${r.status === "needs_checking" ? ` <button data-checkagain="${esc(c)}">Check again</button>` : ""}</div>`).join("")}</div>` : ""}
@@ -694,5 +694,5 @@ async function loadLibrary(){
 }
 
 window.AREAS = window.AREAS || {};
-window.AREAS.social = {label: "SoMe", render};
+window.AREAS.social = {label: "SoMe", render, open: (coll, id) => openPost(id)};  // [team live] open: jump to a post
 })();

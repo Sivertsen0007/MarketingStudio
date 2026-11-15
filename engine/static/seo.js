@@ -60,6 +60,13 @@ const day = s => s ? s.slice(0, 10) : "";
 const LBL = {title: "Title", slug: "Slug", seo_title: "SEO title", meta_desc: "Meta description", focus_kw: "Focus keyphrase", excerpt: "Excerpt", categories: "Categories", content: "Body"};
 const short = (v, n = 140) => { const s = Array.isArray(v) ? v.join(", ") : String(v ?? ""); return s.length > n ? s.slice(0, n) + " ..." : s };
 
+// [team live] jump from the Team tab / a mention to an item
+async function openItem(coll, id){
+  if (coll === "seo:posts") return openPost(+id);
+  if (coll === "seo:new_posts") return openNewPage({id});
+  if (coll === "seo:changes"){ if (!T.draft) await loadDraft(); const x = ((T.draft || {}).changes || []).find(c => c.id === id); return x ? openPost(+x.post_id) : toast("That change is no longer in the draft") }
+  if (coll === "seo:map_nodes"){ T.tab = "map"; localSet("seo.tab", "map"); show(); await mapScript(); if (window.SEO_MAP.open) window.SEO_MAP.open(id) }
+}
 // ---- shell ----
 function render(el){
   T.el = el;
@@ -247,7 +254,7 @@ async function openPost(id, startPane){
     : `<p class="hint" style="margin:0 0 8px">Not in the topical map yet.</p>`;
   showDialog(p.title, `${errs}${inMap}<div class="fpills seo-dtabs" id="sp_tabs"><button data-p="edit">Edit</button><button data-p="gsc">Search Console</button><button data-p="links">Internal links</button>
       <a class="hint" style="margin:4px 0 0 8px" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a></div>
-    <div data-pane="edit">${edit}</div><div data-pane="gsc" style="display:none">${gsc}</div><div data-pane="links" style="display:none">${links}</div>`,
+    <div data-pane="edit" data-team-coll="seo:posts" data-team-id="${esc(p.id)}" data-team-label="${esc(p.title)}">${edit}</div><div data-pane="gsc" style="display:none">${gsc}</div><div data-pane="links" style="display:none">${links}</div>`,
     [["Close", () => dlg.close()], ["Add changes to draft", () => savePost(p, init), "primary"]]);
   const pane = k => { document.querySelectorAll("#sp_tabs [data-p]").forEach(b => b.classList.toggle("on", b.dataset.p === k)); document.querySelectorAll("#dlgB [data-pane]").forEach(x => x.style.display = x.dataset.pane === k ? "" : "none") };
   $("#sp_tabs").onclick = e => { const b = e.target.closest("[data-p]"); if (b) pane(b.dataset.p) }; pane(startPane || "edit");
@@ -300,7 +307,7 @@ async function openNewPage(o){
   wide(true);
   const cats = (T.cats || []).map(c => `<label><input type="checkbox" value="${c.id}" ${(v.categories || []).includes(c.id) ? "checked" : ""}>${esc(c.name)}</label>`).join("");
   const qs_ = (n.queries || []).map(q => q.query || q);
-  showDialog(np ? "New page" : "Write a new page", `<div id="np_wrap"><p class="hint" style="margin:0 0 8px">${v.node_id ? `For the map node <b>${esc(np ? np.node_title : n.title)}</b>. ` : ""}Saved to the SEO draft as you type. Nothing goes to WordPress until you press Publish.${np ? ` Written by ${esc(np.by)}.` : ""}${np && np.note ? `<br>Note: ${esc(np.note)}` : ""}</p>
+  showDialog(np ? "New page" : "Write a new page", `<div id="np_wrap" data-team-coll="seo:new_posts" data-team-id="${np ? esc(np.id) : ""}" data-team-label="${esc(v.title)}"><p class="hint" style="margin:0 0 8px">${v.node_id ? `For the map node <b>${esc(np ? np.node_title : n.title)}</b>. ` : ""}Saved to the SEO draft as you type. Nothing goes to WordPress until you press Publish.${np ? ` Written by ${esc(np.by)}.` : ""}${np && np.note ? `<br>Note: ${esc(np.note)}` : ""}</p>
     ${qs_.length ? `<p class="hint" style="margin:0 0 8px">Target queries: ${esc(qs_.join(", "))}</p>` : ""}
     <div class="seo-grid2"><div>
       <div class="seo-f"><label>Title</label><input id="np_title" value="${esc(v.title)}"></div>
@@ -521,5 +528,5 @@ function connectDialog(){
 }
 
 window.AREAS = window.AREAS || {};
-window.AREAS.seo = {label: "SEO", render};
+window.AREAS.seo = {label: "SEO", render, open: openItem};  // [team live] open: jump to a post, new page or map node
 })();

@@ -69,6 +69,21 @@ ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 COLOUR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
+# [team live] hooks for team_live.py (presence, comments, tints): EVENT_HOOKS get every stream event (kind, data);
+# RECEIVE_HOOKS get, at the end of each sync, what arrived from teammates [{coll, id, before, item}] (before = the local
+# data it replaced, so a hover can say what changed).
+EVENT_HOOKS = []
+RECEIVE_HOOKS = []
+
+
+def _run_hooks(hooks, *args):
+    for fn in list(hooks):
+        try:
+            fn(*args)
+        except Exception:  # noqa: BLE001 - a hook must never break sync or the listener
+            pass
+
+
 class TeamError(Exception):
     def __init__(self, message, status=0):
         super().__init__(message)
@@ -557,6 +572,7 @@ def _incoming_ok(ctx, S):
         if draftstore.apply_remote(coll, item, root, expect=h):
             synced[key] = new_s
             ctx["tally"]["received"] += 1
+            ctx["received"].append({"coll": coll, "id": iid, "before": mine, "item": S})  # [team live]
             return
         mine, h = draftstore.peek(coll, iid, root)  # edited just now: merge instead
     old = ctx["conflicts"].pop(key, None)
@@ -609,6 +625,7 @@ def _merge_in(ctx, key, coll, iid, S, item, new_s, s, mine, h):
         return
     synced[key] = new_s
     ctx["tally"]["received"] += 1
+    ctx["received"].append({"coll": coll, "id": iid, "before": mine, "item": S})  # [team live]
     if not same(merged, theirs):
         ctx["tally"]["merged"] += 1
         ctx["repush"] = True
@@ -767,7 +784,7 @@ def _pull(ctx):
 
 def _ctx():
     return {"synced": _load("synced.json", {}), "conflicts": _load("conflicts.json", {}), "failed": _failed(),
-            "cursor": int(_state().get("cursor") or 0), "errors": [], "notes": [], "skipped": [], "repush": False,
+            "cursor": int(_state().get("cursor") or 0), "errors": [], "notes": [], "skipped": [], "repush": False, "received": [],
             "tally": {"sent": 0, "received": 0, "merged": 0, "conflicts": 0}}
 
 
@@ -779,6 +796,8 @@ def _save_ctx(ctx):
     st = _state()
     skipped = (st.get("skipped") or []) + ctx["skipped"]
     _update_state(cursor=ctx["cursor"], skipped=skipped[-50:])
+    if ctx.get("received"):
+        _run_hooks(RECEIVE_HOOKS, ctx["received"])  # [team live]
 
 
 _sync_lock = threading.Lock()
@@ -1049,6 +1068,7 @@ def remote_waiting():
 
 
 def _on_event(kind, data):
+    _run_hooks(EVENT_HOOKS, kind, data)  # [team live] presence, comments, mentions, activity
     if kind == "items":
         try:
             cur = int(json.loads(data or "{}").get("cursor") or 0)

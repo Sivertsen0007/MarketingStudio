@@ -204,6 +204,17 @@ TEAM_TOOLS = [
                                          "(field-level merge; clashing edits become conflicts the user resolves in Studio). Draft level only: "
                                          "nothing goes live anywhere.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "reviews_list", "description": "Team reviews (approvals): ones waiting for the user (to_me), the user's own requests "
+                                            "(mine) or all, with status (open, approved, changes requested, withdrawn) and which "
+                                            "items went stale (changed after approval). Read-only.",
+     "inputSchema": {"type": "object", "properties": {"filter": {"type": "string", "enum": ["to_me", "mine", "all"]}}}},
+    {"name": "review_request", "description": "Send the user's own changeset (the active one, or changeset_id) for approval to "
+                                              "named reviewers (member ids or names; approvers, admins or owners). Syncs first. "
+                                              "Only when the user asks. You can't approve or decide reviews: reviewers do that "
+                                              "in Studio.",
+     "inputSchema": {"type": "object", "properties": {
+         "reviewers": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "member ids or names"},
+         "note": {"type": "string"}, "changeset_id": {"type": "string"}}, "required": ["reviewers"]}},
 ]
 TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS
 
@@ -217,6 +228,21 @@ def call_team(name):
     r = team.sync()
     r.get("status", {}).pop("members", None)
     return r
+
+
+def call_reviews(name, a):
+    """Reviews for Claude: list, and ask for a review of the user's own changeset. No tool decides a review."""
+    import team_reviews  # noqa: PLC0415
+    if name == "reviews_list":
+        return team_reviews.list_reviews({"filter": a.get("filter") or "to_me"})
+    people = team_reviews.reviewers()["reviewers"]
+    ids = []
+    for r in a.get("reviewers") or []:
+        hit = [p for p in people if p["id"] == r or (isinstance(r, str) and str(p["name"]).lower() == r.strip().lower())]
+        if not hit:
+            raise ValueError(f"{r} is not someone who can approve. Can approve: " + ", ".join(p["name"] for p in people))
+        ids.append(hit[0]["id"])
+    return team_reviews.request({"changeset": a.get("changeset_id") or True, "reviewers": ids, "note": a.get("note") or ""})
 
 
 def _scope(acct, campaign, ad_group, tree=None):
@@ -313,6 +339,8 @@ def call(name, a):
         return call_area(name, a)
     if name in ("team_status", "team_sync"):
         return call_team(name)
+    if name in ("reviews_list", "review_request"):
+        return call_reviews(name, a)
     if name == "setup_status":
         st = appconfig.status()
         return {"keys": {k["name"]: k["set"] for k in st["keys"]}, "google_signed_in": st["google_signed_in"],

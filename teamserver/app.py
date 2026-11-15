@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import PROTOCOL, __version__
+from . import reviews
 from .store import ApiError, MANAGERS, Store, iso
 
 MAX_BODY_BYTES = 4 * 1024 * 1024
@@ -317,6 +318,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self.dispatch("DELETE")
 
+    def do_PUT(self):
+        self.dispatch("PUT")
+
     def dispatch(self, method):
         try:
             if self.team.trust_proxy:  # behind a proxy every socket is the proxy; cap by forwarded IP instead
@@ -325,7 +329,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.close_connection = True
                     raise ApiError(429, "too many open connections from your address")
                 self._ip_slot = ip
-            if method not in ("POST", "PATCH", "DELETE") and (
+            if method not in ("POST", "PATCH", "DELETE", "PUT") and (
                     self.headers.get("Content-Length", "0") not in ("", "0") or self.headers.get("Transfer-Encoding")):
                 self.close_connection = True  # a body we will not read: never reuse the connection
             u = urlparse(self.path)
@@ -334,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
             for m, pattern, fn in ROUTES:
                 match = pattern.fullmatch(path)
                 if match and m == method:
-                    if method in ("POST", "PATCH", "DELETE"):
+                    if method in ("POST", "PATCH", "DELETE", "PUT"):
                         body = self.read_json()
                     else:
                         body = {}
@@ -617,6 +621,7 @@ ROUTES = [
     _r("DELETE", r"/api/v1/claims", Handler.r_claims_delete),
     _r("GET", r"/api/v1/stream", Handler.r_stream),
 ]
+ROUTES += [_r(m, p, fn) for m, p, fn in reviews.ROUTES]  # reviews, approval policy, owners (reviews.py)
 
 
 _BUSY = (b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 34\r\n"
@@ -686,6 +691,7 @@ class TeamServer:
         self.store = Store(os.path.join(data_dir, "team.db"), clock=self.clock)
         self.broker = Broker()
         self.store.on_emit = self.broker.publish
+        reviews.install(self.store)
         self.public_url = public_url
         self.ping_interval = ping_interval
         self.verbose = verbose

@@ -1467,17 +1467,23 @@ def _schedule(a, body, when, now_send):
     return {"ok": True, "message": "Still sending. The grid shows the latest count."}
 
 
+def _team(body, what, fn):
+    """[team reviews] In a team: an approval when the team requires one for Email, a why note, a feed event."""
+    import team_reviews  # noqa: PLC0415
+    return team_reviews.single_action("email", "email", str(body["id"]), body, what, fn)
+
+
 @_guard
 def p_schedule(body):
     when = to_utc(body.get("when"), body.get("tz") or "Europe/London")
     if when < _now() + dt.timedelta(minutes=2):
         raise ValueError("pick a time at least a few minutes from now (or use Send now)")
-    return _schedule(adapter(), body, when, False)
+    return _team(body, "Scheduled an email", lambda: _schedule(adapter(), body, when, False))
 
 
 @_guard
 def p_send_now(body):
-    return _schedule(adapter(), body, _now(), True)
+    return _team(body, "Sent an email", lambda: _schedule(adapter(), body, _now(), True))
 
 
 def p_delete(body):

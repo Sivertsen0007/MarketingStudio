@@ -1611,8 +1611,14 @@ def _check_step(s):
         return f"Meta: {ex}"
 
 
-def plan(tick=False):
+def _only(only):
+    """The draft items in this push: all, or (team approvals / push by person) only the ids in `only`."""
     items = core.draft(acct())["items"]
+    return items if only is None else [i for i in items if i["id"] in only]
+
+
+def plan(tick=False, only=None):
+    items = _only(only)
     pool = {it["id"]: it for it in items}
     steps, per_item, touched = [], [], {}
     for it in items:
@@ -1631,7 +1637,7 @@ def plan(tick=False):
                         touched[key] = it["summary"]
                     for ref in list((s.get("refs") or {}).values()) + ([s["adset_ref"]] if s.get("adset_ref") else []):
                         if ref not in pool:
-                            raise ValueError("it belongs to a new campaign / ad set that is no longer in the draft")
+                            raise ValueError("it belongs to a new campaign / ad set that is no longer in the draft (or not in this push)")
                     err = _check_step(s)
                     if err:
                         entry["problems"].append(err)
@@ -1650,8 +1656,8 @@ def plan(tick=False):
             "spend": any(e["spend"] for e in per_item), "permanent": False, "channel": "meta"}
 
 
-def preview(enable_new=False):
-    p = plan()
+def preview(enable_new=False, only=None):
+    p = plan(only=only)
     return {k: v for k, v in p.items() if k != "steps"}
 
 
@@ -1709,19 +1715,19 @@ def _reverse(done, tick=None):
     return errors
 
 
-def push(enable_new=False, accept_spend=False, accept_permanent=False):
+def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None):
     a = acct()
-    progress.start(a, "push", [(i["id"], i["summary"], 1) for i in core.draft(a)["items"]], "checking", "Meta is checking each change")
+    progress.start(a, "push", [(i["id"], i["summary"], 1) for i in _only(only)], "checking", "Meta is checking each change")
     res = None
     try:
-        res = _push(enable_new, accept_spend, accept_permanent)
+        res = _push(enable_new, accept_spend, accept_permanent, only)
         return res
     finally:
         progress.finish(a, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
 
 
-def _push(enable_new=False, accept_spend=False, accept_permanent=False):
-    p = plan(tick=True)
+def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=None):
+    p = plan(tick=True, only=only)
     for e in p["items"]:
         if e["problems"]:
             progress.mark(acct(), e["id"], "failed")

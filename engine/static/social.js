@@ -336,6 +336,7 @@ async function openPost(id, pre){
   if (!id){ SO.post = {id: null, title: "", channels: ["facebook", "instagram"], when: "", caption: "", captions: {}, first_comment: "", hashtags: "", link: "", alt_text: "", location: "", media: [], format: "text", guest_photos: false, consent_confirmed: false, approval: "", note: "", utm: true, results: {}, status: "draft", check: null, final_links: {}, ...(pre || {})}; SO.tab = "all"; SO.quick = null; return drawEditor() }
   side.innerHTML = `<div class="empty">Loading ...</div>`;
   try { SO.post = await sapi("post?" + qs({id})) } catch(e) { side.innerHTML = `<div class="so-prob">${esc(e.message)}</div>`; return }
+  if (window.TeamReviews) TeamReviews.ownerNote([`social/${id}`, "social"]); // [team reviews] "Owned by ..."
   SO.tab = "all"; SO.quick = null; drawEditor();
 }
 const locked = p => Object.values(p.results || {}).some(r => ["scheduled", "publishing"].includes(r.status));
@@ -511,15 +512,27 @@ function resultDialog(title, r, list){
 async function confirmThen(title, html, label, fn){
   showDialog(title, html, [["Back", () => dlg.close()], [label, fn, "live"]]);
 }
+// [team reviews] in a team: what needs approval, and the one-line why, in the Post now / Schedule dialogs
+const teamGate = id => window.TeamReviews ? TeamReviews.gate("social", "social", id) : Promise.resolve(null);
+const teamSection = t => window.TeamReviews ? TeamReviews.section(t) : "";
+const teamExtra = () => window.TeamReviews ? TeamReviews.extra() : {};
+function teamWire(t){
+  if (!window.TeamReviews) return;
+  const bs = [...document.querySelectorAll("#dlgF .live")];
+  const upd = () => bs.forEach(b => { b.disabled = !TeamReviews.ready(t) || !!(t && t.required && !t.count) });
+  TeamReviews.wire(document.getElementById("dlgB"), null, upd); upd();
+}
 async function postNow(){
   const p = await saveDraft(false); if (!p) return;
   if (!p.check.ok) return resultDialog("", {ok: false, message: "Fix the problems first.", problems: p.check.problems});
   const chs = p.channels.filter(c => !["published", "scheduled"].includes((p.results[c] || {}).status));
+  const t = await teamGate(p.id);
   confirmThen("Post now?", `<p>This posts to <b>${esc(chs.map(c => CH[c]).join(", "))}</b> straight away${SO.state.test_mode ? " (test mode: nothing leaves the Mac)" : ""}.</p>
     ${chs.includes("instagram") ? `<p class="hint">Instagram fetches the files from a public address: Studio first puts them on media.mlmediahub.com.</p>` : ""}
-    ${p.check.warnings.length ? `<p class="hint">Warnings:</p>${p.check.warnings.map(x => `<div class="so-warn">${esc(x)}</div>`).join("")}` : ""}`, "Post now", async () => {
+    ${p.check.warnings.length ? `<p class="hint">Warnings:</p>${p.check.warnings.map(x => `<div class="so-warn">${esc(x)}</div>`).join("")}` : ""}${teamSection(t)}`, "Post now", async () => {
     sendNow(p.id, false);
   });
+  teamWire(t);
 }
 function approvalDialog(r, then){
   showDialog("Needs approval", `<p>${esc(r.message)}</p>${r.note ? `<div class="so-consent"><b>Note:</b> ${esc(r.note)}</div>` : ""}`,
@@ -527,7 +540,7 @@ function approvalDialog(r, then){
 }
 async function sendNow(id, again){
   try {
-    const r = await withProgress("Posting", A + "post_now", {id, pressed: "user", confirm_repost: again}, PROG);
+    const r = await withProgress("Posting", A + "post_now", {id, pressed: "user", confirm_repost: again, ...teamExtra()}, PROG);
     if (r.post){ SO.post = r.post; drawEditor() }
     if (r.needs_approval) return approvalDialog(r, () => sendNow(id, again));
     if (r.needs_confirm){
@@ -553,7 +566,7 @@ async function scheduleIt(){
     q.length && mode === "local" ? `${q.map(c => CH[c]).join(" and ")}: Studio on this Mac publishes ${q.length > 1 ? "them" : "it"} at that time. The Mac must be on and Studio open; if it is not, the post shows as Missed and is not posted late.` : "",
     q.length && mode === "vps" ? `${q.map(c => CH[c]).join(" and ")}: the VPS publisher job publishes ${q.length > 1 ? "them" : "it"} at that time.` : ""].filter(Boolean);
   const go = chans => async () => {
-    try { const r = await withProgress("Scheduling", A + "schedule", {id: p.id, pressed: "user", channels: chans}, PROG);
+    try { const r = await withProgress("Scheduling", A + "schedule", {id: p.id, pressed: "user", channels: chans, ...teamExtra()}, PROG);
       if (r.needs_approval) return approvalDialog(r, scheduleIt);
       resultDialog("Scheduled", r, await lastProgress(PROG)); if (r.post){ SO.post = r.post; drawEditor() } }
     catch(e) { toast(e.message) }
@@ -562,8 +575,10 @@ async function scheduleIt(){
   const btns = [["Back", () => dlg.close()]];
   if (!blocked.length) btns.push(["Schedule", go(chs), "live"]);
   if (fbOnly) btns.push(["Schedule Facebook only", go(["facebook"]), "live"]);
-  showDialog("Schedule?", `<p>For <b>${esc(fmtDate(p.when))}</b> on ${esc(chs.map(c => CH[c]).join(", "))}.</p>${msg}${how.map(x => `<p class="hint">${esc(x)}</p>`).join("")}`, btns);
+  const t = await teamGate(p.id);
+  showDialog("Schedule?", `<p>For <b>${esc(fmtDate(p.when))}</b> on ${esc(chs.map(c => CH[c]).join(", "))}.</p>${msg}${how.map(x => `<p class="hint">${esc(x)}</p>`).join("")}${teamSection(t)}`, btns);
   const os = document.getElementById("soOpenSet"); if (os) os.onclick = settingsDialog;
+  teamWire(t);
 }
 function cancelIt(){
   const p = SO.post, chs = Object.entries(p.results || {}).filter(([, r]) => r.status === "scheduled").map(([c]) => c);

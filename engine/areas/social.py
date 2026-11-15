@@ -505,6 +505,12 @@ def retry_lookup(p, chs):
     return found, unsure
 
 
+def _team(body, what, fn):
+    """[team reviews] In a team: an approval when the team requires one for SoMe, a why note, a feed event."""
+    import team_reviews  # noqa: PLC0415
+    return team_reviews.single_action("social", "social", str(body["id"]), body, what, fn)
+
+
 def post_now(body):
     """Publish now on the post's ticked channels (minus ones already published). User's button only."""
     _pressed(body)
@@ -549,7 +555,7 @@ def post_now(body):
         p = _save_results(p["id"], res, lambda x: x.__setitem__("when", x.get("when") or stamp))  # shows on the calendar when it went out
         res = {**found, **res}
         return {"ok": ok, "message": _message(res, "Published"), "results": res, "post": _view(p)}
-    return _guard(go)
+    return _team(body, "Posted", lambda: _guard(go))
 
 
 def schedule(body):
@@ -605,7 +611,7 @@ def schedule(body):
             _finish(ok, _message(res, "Scheduled") if res else "Stopped with an error")
         p = _save_results(p["id"], res)
         return {"ok": ok, "message": _message(res, "Scheduled"), "results": res, "post": _view(p)}
-    return _guard(go)
+    return _team(body, "Scheduled a post", lambda: _guard(go))
 
 
 def cancel(body):

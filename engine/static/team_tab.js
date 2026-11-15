@@ -61,13 +61,14 @@
       <select id="ttPerson" title="Show one person's activity"></select><select id="ttArea" title="Show one area"></select>
       <span class="spacer" style="flex:1"></span><button id="ttRefresh">Refresh</button></div>
       <div class="tt-body"><section class="tt-feed"><h3>Activity</h3><div id="ttFeed"><div class="tt-empty">Loading ...</div></div></section>
-      <aside class="tt-side"><section id="ttWho"></section><section id="ttMent"></section><section id="ttMembers"></section></aside></div></div>`;
+      <aside class="tt-side"><section id="ttWho"></section><section id="ttMent"></section><section id="ttNotify"></section><section id="ttMembers"></section></aside></div></div>`;
     const $ = s => el.querySelector(s);
     $("#ttPerson").onchange = e => { T.person = e.target.value; lset("person", T.person); loadFeed() };
     $("#ttArea").onchange = e => { T.area = e.target.value; lset("area", T.area); loadFeed() };
     $("#ttRefresh").onclick = () => { TM.loadState(); loadFeed(); loadMentions() };
     el.onclick = onClick;
     drawFilters(); drawWho(); drawMembers(); loadFeed(); loadMentions();
+    if (window.TeamNotify) window.TeamNotify.card($("#ttNotify"));  // [team notify] what pings me, Focus, Away
   }
   const live = () => T.el && document.body.contains(T.el) && T.el.querySelector(".tt-root");
 
@@ -162,7 +163,7 @@
   window.AREAS.team = {label:"Team", render};
   window.TeamTab = {show(section){
     if (typeof setArea === "function") setArea("team");
-    setTimeout(() => { const s = T.el && T.el.querySelector(section === "mentions" ? "#ttMent" : "#ttFeed"); if (s) s.scrollIntoView({block:"start"}) }, 200);
+    setTimeout(() => { const s = T.el && T.el.querySelector(section === "mentions" ? "#ttMent" : section === "notifications" ? "#ttNotify" : "#ttFeed"); if (s) s.scrollIntoView({block:"start"}) }, 200);
   }};
   TM.on(kind => {
     tabButton();

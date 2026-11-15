@@ -52,6 +52,30 @@ can also invite, change roles and revoke devices from the app.
 | `--trust-proxy` | `TEAMSERVER_TRUST_PROXY=1` | off: use X-Forwarded-For for rate limits only behind your own proxy |
 | `--public-url` | `TEAMSERVER_URL` | saved from the last time it was given, else the request's Host |
 
+## Notifications (email and webhooks)
+
+Every member gets notifications on the bell in the app. To also send email, give the server an SMTP account:
+
+| Flag | Environment | Default |
+|---|---|---|
+| `--smtp-host` | `TEAMSERVER_SMTP_HOST` | none: email is not offered |
+| `--smtp-port` | `TEAMSERVER_SMTP_PORT` | `587` |
+| `--smtp-user` | `TEAMSERVER_SMTP_USER` | none (no login) |
+| (password) | `TEAMSERVER_SMTP_PASSWORD` | only from the environment, never a flag |
+| `--smtp-from` | `TEAMSERVER_SMTP_FROM` | required with a host |
+| `--smtp-starttls` / `--no-smtp-starttls` | `TEAMSERVER_SMTP_STARTTLS=1/0` | STARTTLS on |
+| `--allow-private-webhooks` | `TEAMSERVER_ALLOW_PRIVATE_WEBHOOKS=1` | off: webhooks must be public `https://` URLs |
+
+```sh
+TEAMSERVER_SMTP_PASSWORD='...' python3 -m teamserver serve --data ./teamdata \
+    --smtp-host smtp.example.com --smtp-user team@example.com --smtp-from team@example.com
+```
+
+Members choose what pings them, email on or off, a webhook (Slack-compatible, or a Telegram bot URL), instant or
+hourly / daily digests, Focus and Away in the app (Team tab > Notifications). Messages are plain text with a
+`marketingstudio://open` link and never contain tokens or webhook URLs. Leave `--allow-private-webhooks` off on a
+server people reach over the internet: it lets members point webhooks at your private network.
+
 ## Back up
 
 Everything lives in `<data>/team.db` (SQLite in WAL mode). Back it up with `sqlite3 team.db ".backup copy.db"`.

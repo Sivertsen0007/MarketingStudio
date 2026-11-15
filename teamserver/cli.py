@@ -9,6 +9,7 @@ import sys
 
 from . import __version__
 from .app import TeamServer, invite_links
+from . import notify
 from .store import ApiError, Store, iso
 
 
@@ -42,7 +43,8 @@ def print_invite(store, args, inv):
 
 def cmd_serve(args):
     srv = TeamServer(data_dir(args), host=args.host, port=args.port, verbose=args.verbose,
-                     trust_proxy=args.trust_proxy)
+                     trust_proxy=args.trust_proxy, smtp=notify.smtp_from_env_and_args(args),
+                     allow_private_webhooks=args.allow_private_webhooks)
     url = args.public_url or os.environ.get("TEAMSERVER_URL")
     if url:
         srv.store.set_meta("public_url", url.rstrip("/"))
@@ -119,6 +121,7 @@ def main(argv=None):
     sp.add_argument("--trust-proxy", action="store_true",
                     default=os.environ.get("TEAMSERVER_TRUST_PROXY", "") in ("1", "true", "yes"),
                     help="use X-Forwarded-For for the client IP (only behind your own reverse proxy)")
+    notify.add_cli_args(sp)  # SMTP for notification email, --allow-private-webhooks
 
     sp = add("init", cmd_init, "create the team and the first owner invite")
     sp.add_argument("--email", required=True)

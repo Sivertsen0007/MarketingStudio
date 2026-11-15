@@ -235,6 +235,6 @@
   const ready = t => !t || !t.joined || !t.why_required || !!WHY.trim();
   async function gate(area, coll, id){ if (!ST.joined) return null; try { return await get("gate", {area, coll, id, scope:SCOPE}) } catch(e) { return {joined:true, why_required:true, error:e.message, needs:[], people:[]} } }
 
-  window.TeamReviews = {section, wire, extra, ready, gate, ownerNote, requestDialog, open:showList, setWhy:w => { WHY = String(w || "") },
+  window.TeamReviews = {section, wire, extra, ready, gate, ownerNote, requestDialog, open:showList, review:showReview, setWhy:w => { WHY = String(w || "") },
                         get joined(){ return !!ST.joined }, refresh};
 })();

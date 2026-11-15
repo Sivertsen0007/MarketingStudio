@@ -269,7 +269,15 @@ TEAM_LIVE_TOOLS = [
     {"name": "mentions_list", "description": "Comments that mention the user (unread first).",
      "inputSchema": {"type": "object", "properties": {"unread_only": {"type": "boolean"}}}},
 ]
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS
+# [team notify] the user's notification bell (team_notify.py), read-only: nothing here marks, sends or changes settings
+NOTIFY_TOOLS = [
+    {"name": "notifications_list", "description": "The user's team notifications (their bell in Studio), unread first: "
+                                                  "reviews addressed to them, @mentions, their own requests approved or "
+                                                  "sent back, items they have pending changed by a teammate, claims on "
+                                                  "what they own and pushes in areas they follow. Read-only.",
+     "inputSchema": {"type": "object", "properties": {"unread_only": {"type": "boolean"}, "limit": {"type": "integer"}}}},
+]
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS
 TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
 
 
@@ -409,6 +417,9 @@ def call(name, a):
         return call_reviews(name, a)
     if name in TEAM_LIVE_NAMES:
         return call_team_live(name, a)
+    if name == "notifications_list":
+        import team_notify  # noqa: PLC0415
+        return team_notify.notifications(bool(a.get("unread_only")), min(int(a.get("limit") or 50), 200))
     if name in ("team_settings_get", "calendar_list", "library_list"):
         return call_shared(name, a)
     if name == "setup_status":

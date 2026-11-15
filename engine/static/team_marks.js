@@ -7,7 +7,7 @@
 //   claims  Claim / Release (topical-map nodes, email campaigns, SoMe posts, ad campaigns): "Alex is writing this".
 //   comments an icon with the open-thread count on every item, a thread panel (replies, Resolve, edit own, @mentions).
 //   presence each area reports where you are and what you have open (every 30 s while the window is visible).
-//   bell    unread @mentions in the top bar.
+//   bell    unread notifications in the top bar (team_notify.js lists them; unread @mentions on an older server).
 // Areas mark an open editor with data-team-coll / data-team-id (data-team-label, data-team-bar="before"); lists and
 // trees are found by the attributes the areas already use. Everything from the server is escaped before it is shown.
 (function(){
@@ -549,7 +549,7 @@
   async function loadMarks(){ try { const r = await get("marks"); TM.marks = r.marks || {}; decorate() } catch(e) {} }
   async function loadClaims(){ try { TM.claims = (await get("claims")).claims || []; decorate(); if (P.coll) drawPanelClaim() } catch(e) {} }
   async function loadPresence(){ try { TM.presence = (await get("presence")).presence || []; decorate(); emit("presence") } catch(e) {} }
-  async function loadUnread(){ try { const r = await get("mentions", {unread:1}); TM.unread = r.unread || 0; drawBell(); emit("mention") } catch(e) {} }
+  async function loadUnread(){ try { TM.unread = TM.countUnread ? await TM.countUnread() : ((await get("mentions", {unread:1})).unread || 0); drawBell(); emit("mention") } catch(e) {} }
   TM.loadCounts = loadCounts; TM.loadClaims = loadClaims; TM.loadUnread = loadUnread;
   function emit(kind){ TM.listeners.forEach(fn => { try { fn(kind) } catch(e) {} }) }
   TM.on = fn => TM.listeners.push(fn);
@@ -576,7 +576,8 @@
     TM.kinds = k;
     if (k.presence !== old.presence) loadPresence();
     if (k.comment !== old.comment){ loadCounts(); if (P.coll) loadThread() }
-    if (k.mention !== old.mention) loadUnread();
+    if (k.mention !== old.mention || k.notify !== old.notify) loadUnread();
+    if (k.notify !== old.notify) emit("notify");
     if (k.event !== old.event){ loadClaims(); emit("event") }
     if (k.items !== old.items) loadMarks();
   }
@@ -595,16 +596,16 @@
 
   // ---------- the bell ----------
   const bell = document.createElement("button");
-  bell.id = "tmkBell"; bell.className = "tb"; bell.title = "Mentions";
+  bell.id = "tmkBell"; bell.className = "tb"; bell.title = "Notifications";
   bell.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a6 6 0 0 0-5-5.91V4a1 1 0 0 0-2 0v1.09A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z"/></svg><span class="n"></span>`;
   function placeBell(){ const a = document.getElementById("teamSync") || document.getElementById("setupBtn"); if (a && a.parentNode && bell.nextSibling !== a) a.parentNode.insertBefore(bell, a) }
   function drawBell(){
     placeBell();
     bell.classList.toggle("on", !!(TM.st.joined && !TM.st.removed));
     const n = bell.querySelector(".n"); n.textContent = TM.unread || ""; n.classList.toggle("on", !!TM.unread);
-    bell.title = TM.unread ? `${TM.unread} unread mention${TM.unread > 1 ? "s" : ""}` : "Mentions";
+    bell.title = TM.unread ? `${TM.unread} unread notification${TM.unread > 1 ? "s" : ""}` : "Notifications";
   }
-  bell.onclick = () => { if (window.TeamTab) window.TeamTab.show("mentions") };
+  bell.onclick = () => { if (window.TeamNotify) return window.TeamNotify.toggle(bell); if (window.TeamTab) window.TeamTab.show("mentions") };
 
   // area changes: counts for what is now on screen
   let lastArea = "";

@@ -36,6 +36,7 @@ import setup_routes  # keys (Keychain), Sign in with Google, .env import
 import team  # team sync: join a team server, sync drafts (team.py)
 import team_reviews  # team approvals, push gating, why note, owners (team_reviews.py)
 import team_live  # team presence, claims, comments, mentions, activity (team_live.py)
+import team_notify  # team notifications: the bell, rules, Focus and Away (team_notify.py)
 import updater  # [mac-app updater] in-app updates (GitHub Releases), see updater.py
 
 HERE = Path(__file__).resolve().parent
@@ -306,6 +307,8 @@ class H(BaseHTTPRequestHandler):
         # [mac-app updater] end
         if u.path.startswith("/api/team/live/"):  # [team live]
             return self._run(lambda: team_live.get(u.path, q))
+        if u.path.startswith("/api/team/notify/"):  # [team notify]
+            return self._run(lambda: team_notify.get(u.path, q))
         if u.path == "/api/team/status":
             return self._run(team.status)
         if u.path == "/api/team/conflicts":
@@ -437,6 +440,8 @@ class H(BaseHTTPRequestHandler):
             return self._run(lambda: team_reviews.post_route(self.path, body))
         if self.path.startswith("/api/team/live/"):  # [team live]
             return self._run(lambda: team_live.post(self.path, body))
+        if self.path.startswith("/api/team/notify/"):  # [team notify]
+            return self._run(lambda: team_notify.post(self.path, body))
         def changeset():
             act = body.get("action") or "set"
             if act == "rename":

@@ -15,8 +15,8 @@ Sync (sync()): push, then pull, then push again when the pull merged something.
         changed again since). conflict -> the server copy goes through the three-way merge below and the op is retried
         with the new base_version.
   pull  GET /items?since=cursor until more is false. An item with no pending local edit is written with
-        draftstore.apply_remote (only if the local copy is still what was checked, so a pending edit is never lost).
-        An item with a pending local edit is merged.
+        draftstore.apply_remote_many, one write per collection per page (only if the local copy is still what was
+        checked, so a pending edit is never lost). An item with a pending local edit is merged.
   merge three-way on the item's data keys (dicts one level down too, e.g. an email draft's "fields"): base = last
         synced copy, theirs = server, mine = local. Keys changed on one side only are taken; the same key changed
         differently on both sides is a conflict (recorded, neither side overwritten, the local item stays as mine and
@@ -333,11 +333,17 @@ def members():
 def _who(mid, ctx=None):
     if mid is None or mid == "":
         return ""
-    m = members().get(str(mid))
+    ms = ctx.get("members") if ctx is not None else None
+    if ms is None:
+        ms = members()  # read once per sync (ctx), not once per item
+        if ctx is not None:
+            ctx["members"] = ms
+    m = ms.get(str(mid))
     if not m and ctx is not None and not ctx.get("members_refreshed"):
         ctx["members_refreshed"] = True
         with contextlib.suppress(TeamError):
-            m = _refresh_members().get(str(mid))
+            ctx["members"] = _refresh_members()
+            m = ctx["members"].get(str(mid))
     return m["name"] if m else f"member {mid}"
 
 
@@ -395,8 +401,9 @@ def changeset_rename(cs_id, name):
         return changeset_get()
 
 
-def _cs_for(cs_id):
-    c = _changesets()
+def _cs_for(cs_id, c=None):
+    """The changeset an op names. c: _changesets() when the caller already read it (a push reads it once)."""
+    c = c or _changesets()
     cs = next((x for x in c["list"] if x["id"] == cs_id), None) if cs_id else None
     cs = cs or c["active"]
     return {"id": str(cs["id"]), "name": cs.get("name") or ""}
@@ -559,23 +566,26 @@ def _skip(ctx, S, why):
     ctx["skipped"].append({"coll": str(c)[:200], "id": str(i)[:200], "reason": str(why)[:300], "at": _now()})
 
 
-def _incoming(ctx, S):
-    """One item from the server, checked first; a bad one is skipped and listed (status "skipped"), never fatal."""
+def _incoming(ctx, S, batch=None):
+    """One item from the server, checked first; a bad one is skipped and listed (status "skipped"), never fatal.
+    batch: a _Batch (pull), so plain applies are written per collection per page instead of one file write each."""
     why = check_item(S)
     if why:
         return _skip(ctx, S, why)
     try:
-        _incoming_ok(ctx, S)
+        _incoming_ok(ctx, S, batch)
     except TeamError:
         raise
     except Exception as e:  # noqa: BLE001 - one broken item must not stop the sync
         _skip(ctx, S, f"could not store it: {e}")
 
 
-def _incoming_ok(ctx, S):
+def _incoming_ok(ctx, S, batch=None):
     """One valid item from the server (pull, or the server copy in a push conflict)."""
     coll, iid = S["coll"], S["id"]
     key, root, synced = _key(coll, iid), _root(), ctx["synced"]
+    if batch is not None and key in batch.keys:
+        batch.flush()  # the same item twice in a page: the first is written before the second is looked at
     s = synced.get(key)
     if s and int(s.get("v", 0)) >= int(S["version"]):
         return  # what we sent, or older
@@ -584,17 +594,31 @@ def _incoming_ok(ctx, S):
             "updated_by": _who(S.get("updated_by"), ctx), "updated_at": S.get("updated_at") or "",
             "deleted": bool(S.get("deleted")), "changeset": S.get("changeset")}
     new_s = {"v": int(S["version"]), "base": theirs, "deleted": theirs is None}
-    mine, h = draftstore.peek(coll, iid, root)
+    mine, h = batch.peek(coll, iid) if batch is not None else draftstore.peek(coll, iid, root)
     if key not in ctx["conflicts"] and mine == theirs and (theirs is not None or s):
         synced[key] = new_s  # already the same here (e.g. read again after a reset)
         return
     if key not in ctx["conflicts"] and not _local_changed(s, mine):
+        if batch is not None:
+            batch.add(key, coll, iid, S, item, new_s, s, mine, h)  # written (or merged) at the next flush
+            return
         if draftstore.apply_remote(coll, item, root, expect=h):
-            synced[key] = new_s
-            ctx["tally"]["received"] += 1
-            ctx["received"].append({"coll": coll, "id": iid, "before": mine, "item": S})  # [team live]
+            _applied(ctx, key, coll, iid, S, new_s, mine)
             return
         mine, h = draftstore.peek(coll, iid, root)  # edited just now: merge instead
+    elif batch is not None:
+        batch.flush()  # keep the page's order: everything before this item is written first
+        mine, h = draftstore.peek(coll, iid, root)
+    _merge_step(ctx, key, coll, iid, S, item, new_s, s, mine, h)
+
+
+def _applied(ctx, key, coll, iid, S, new_s, mine):
+    ctx["synced"][key] = new_s
+    ctx["tally"]["received"] += 1
+    ctx["received"].append({"coll": coll, "id": iid, "before": mine, "item": S})  # [team live]
+
+
+def _merge_step(ctx, key, coll, iid, S, item, new_s, s, mine, h):
     old = ctx["conflicts"].pop(key, None)
     _merge_in(ctx, key, coll, iid, S, item, new_s, s, mine, h)
     c = ctx["conflicts"].get(key)
@@ -602,6 +626,51 @@ def _incoming_ok(ctx, S):
         _carry_answers(old, c)
         if all(f.get("choice") for f in c["fields"]) and _finalise(ctx, key, c):
             ctx["repush"] = True
+
+
+class _Batch:
+    """The plain applies of one pull page (no pending local edit, no conflict), written with one
+    draftstore.apply_remote_many per collection: one lock, one read and one atomic write instead of one per item.
+    Each write still carries the hash the item had when it was checked, so an edit made meanwhile (by this Studio,
+    the MCP server or an older writer) is never overwritten: that item goes through the merge, as one by one."""
+
+    def __init__(self, ctx):
+        self.ctx, self.root = ctx, _root()
+        self.pending, self.keys, self.snap = {}, set(), {}
+
+    def peek(self, coll, iid):
+        """(data or None, hash) as on disk when the collection was last read (once per flush)."""
+        if coll not in self.snap:
+            self.snap[coll] = {r["id"]: (r["data"], draftstore.item_hash(r["data"])) for r in draftstore.items(coll, self.root)}
+        return self.snap[coll].get(str(iid), (None, ""))
+
+    def add(self, key, coll, iid, S, item, new_s, s, mine, h):
+        self.pending.setdefault(coll, []).append((key, iid, S, item, new_s, s, mine, h))
+        self.keys.add(key)
+
+    def flush(self):
+        pending, self.pending, self.keys, self.snap = self.pending, {}, set(), {}
+        ctx = self.ctx
+        for coll, rows in pending.items():
+            try:
+                done = draftstore.apply_remote_many(coll, [(r[3], r[7]) for r in rows], self.root)
+            except Exception:  # noqa: BLE001 - the whole write failed: go one by one, so each item is applied or skipped alone
+                done = None
+            for n, (key, iid, S, item, new_s, s, mine, h) in enumerate(rows):
+                try:
+                    if done is None:
+                        if draftstore.apply_remote(coll, item, self.root, expect=h):
+                            _applied(ctx, key, coll, iid, S, new_s, mine)
+                            continue
+                    elif done[n]:
+                        _applied(ctx, key, coll, iid, S, new_s, mine)
+                        continue
+                    mine2, h2 = draftstore.peek(coll, iid, self.root)  # edited just now: merge instead
+                    _merge_step(ctx, key, coll, iid, S, item, new_s, s, mine2, h2)
+                except TeamError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - one broken item must not stop the sync
+                    _skip(ctx, S, f"could not store it: {e}")
 
 
 def _carry_answers(old, new):
@@ -705,7 +774,7 @@ def _push(ctx):
         ctx["notes"].append("Viewers can't send changes")
         return
     for _ in range(4):
-        ops, sent, acks, peek = [], [], {}, _snapshot()
+        ops, sent, acks, peek, css = [], [], {}, _snapshot(), _changesets()
         for e in draftstore.outbox(root):
             coll, iid = e["coll"], str(e["id"])
             key = _key(coll, iid)
@@ -742,7 +811,7 @@ def _push(ctx):
                     _mark_failed(ctx, coll, iid, h, "too large to share (over 512 KB)")
                     continue
                 op = {"op": "put", "coll": coll, "id": iid, "base_version": int(s["v"]) if s else 0, "data": data}
-            op["changeset"] = _cs_for(e.get("cs"))
+            op["changeset"] = _cs_for(e.get("cs"), css)
             ops.append(op)
             sent.append((coll, iid, data, h))
         retry = False
@@ -793,8 +862,10 @@ def _pull(ctx):
             for v in ctx["synced"].values():
                 v["v"] = 0
             continue
+        batch = _Batch(ctx)
         for S in r.get("items") or []:
-            _incoming(ctx, S)
+            _incoming(ctx, S, batch)
+        batch.flush()
         c = r.get("cursor")
         cursor = c if isinstance(c, int) and not isinstance(c, bool) and c >= 0 else cursor
         ctx["cursor"] = cursor

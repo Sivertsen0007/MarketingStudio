@@ -556,7 +556,7 @@ def post_now(body):
                                "Check the channel. Post again anyway?"}
         if not chs:
             return {"ok": True, "message": _message(found, "Already live (found after the earlier error, not posted again)"),
-                    "results": found, "post": _view(p)}
+                    "results": found, "post": _view(p), "test_mode": bool(test_mode())}
         _start("Posting" + (" (test mode: nothing leaves the Mac)" if test_mode() else ""), chs, "Uploading media, Creating post, Published")
         res = {}
         try:

@@ -28,7 +28,7 @@ and save with an atomic replace. On commit the store diffs every collection in t
 gets version + 1 and its meta, each removed one becomes a tombstone, and each of those is added to the outbox
 ({coll, id, op, at}; one pending entry per item, the newest). The file's own "version" (what the UI watches) bumps
 by one per tx when bump is on, as the areas did before. apply_remote() writes an item from the team server without
-touching the outbox.
+touching the outbox; apply_remote_many() does the same for a batch of items under one lock with one write.
 """
 import contextlib
 import copy
@@ -203,10 +203,16 @@ def _reconcile(d, meta, lay, by=None, by_item=None, at=None, record=True, cs=Non
 
 
 def _outbox_add(meta, entries):
+    """Add entries to the outbox: one entry per item, the newest, at the end (the item's older entry goes)."""
     box = meta.setdefault("outbox", [])
-    for e in entries:
-        box[:] = [x for x in box if (x["coll"], x["id"]) != (e["coll"], e["id"])]
-        box.append(e)
+    seen, new = set(), []
+    for e in reversed(entries):
+        k = (e["coll"], e["id"])
+        if k not in seen:
+            seen.add(k)
+            new.append(e)
+    if new:
+        box[:] = [x for x in box if (x["coll"], x["id"]) not in seen] + new[::-1]
 
 
 TEAM_DIR = "team"  # inside the data folder; engine/team.py keeps its sync state there
@@ -387,37 +393,114 @@ def apply_remote(coll, item, root=None, expect=None):
     expect: None writes whatever is there. Otherwise the local item must still be what the caller saw (its hash from
     peek(), or "" for no live item); when it changed meanwhile nothing is written and the result is False, so a
     pending local edit is never overwritten. When written, the item's outbox entry goes (local now equals the server)."""
+    return apply_remote_many(coll, [(item, expect)], root)[0]
+
+
+_GONE = object()  # no live item / a removed list slot
+
+
+class _Items:
+    """Fast item access to one collection of a loaded doc for a batch of writes (Tx is a linear scan per call).
+    Same results as Tx.get / put / delete, applied in order."""
+
+    def __init__(self, d, key, kind):
+        self.d, self.key, self.kind = d, key, kind
+        self.pos = {}  # list kind: id -> positions in the list (a broken file can hold an id twice)
+        if kind == "list" and isinstance(d.get(key), list):
+            for n, x in enumerate(d[key]):
+                if isinstance(x, dict) and x.get("id") is not None:
+                    self.pos.setdefault(str(x["id"]), []).append(n)
+        self.gone = False
+
+    def get(self, iid):
+        """The item's data, or _GONE when there is no live item."""
+        v = self.d.get(self.key)
+        if self.kind == "single":
+            return v if iid == SINGLE_ID and isinstance(v, dict) else _GONE
+        if self.kind == "dict":
+            return v.get(iid, _GONE) if isinstance(v, dict) else _GONE
+        p = self.pos.get(iid)
+        return v[p[0]] if p else _GONE
+
+    def put(self, iid, data):
+        if self.kind == "single":
+            self.d[self.key] = data
+        elif self.kind == "dict":
+            self.d.setdefault(self.key, {})[iid] = data
+        else:
+            lst = self.d.setdefault(self.key, [])
+            data = data if str(data.get("id")) == iid else {**data, "id": data.get("id", iid)}
+            p = self.pos.get(iid)
+            if p:
+                lst[p[0]] = data
+            else:
+                lst.append(data)
+                self.pos[iid] = [len(lst) - 1]
+        return data
+
+    def delete(self, iid):
+        if self.get(iid) is _GONE:
+            return
+        if self.kind == "single":
+            self.d.pop(self.key, None)
+        elif self.kind == "dict":
+            self.d[self.key].pop(iid, None)
+        else:
+            lst = self.d[self.key]
+            for n in self.pos.pop(iid):
+                lst[n] = _GONE
+            self.gone = True
+
+    def done(self):
+        if self.gone:
+            self.d[self.key] = [x for x in self.d[self.key] if x is not _GONE]
+
+
+def apply_remote_many(coll, entries, root=None):
+    """apply_remote() for many items of one collection: one lock, one read and one atomic write for the lot.
+    entries: [(item, expect)], applied in order with exactly apply_remote's rules (each expect is checked against the
+    item as it is on disk under the lock, after the earlier entries). -> [True when written, False when not]."""
     lay = layout(coll)
-    iid = str(item["id"])
+    entries = list(entries)
+    if not entries:
+        return []
     with _open(lay, root) as (path, d, meta):
         _reconcile(d, meta, lay, cs=_active_cs(path.parent))
-        t = Tx(coll, lay, d, meta, None)
-        if expect is not None:
-            cur = t.get(iid)
-            if (_hash(cur["data"]) if cur else "") != expect:
-                d[META] = meta
-                _save(path, d)  # keep what reconcile recorded
-                return False
-            box = meta.setdefault("outbox", [])
-            box[:] = [x for x in box if (x["coll"], x["id"]) != (coll, iid)]
-        if item.get("deleted"):
-            t.delete(iid)
-        else:
-            t.put(iid, item.get("data") or {})
+        key, kind = lay.colls[coll]
+        its = _Items(d, key, kind)
         cm = meta["colls"].setdefault(coll, {"version": 0, "items": {}})
-        m = {"version": int(item.get("version") or 0), "author": item.get("author") or "", "updated_by": item.get("updated_by") or "",
-             "updated_at": item.get("updated_at") or now()}
-        if item.get("deleted"):
-            m["deleted"] = True
-        else:
-            m["h"] = _hash(t.get(iid)["data"])
-        cm["items"][iid] = m
-        cm["version"] = cm.get("version", 0) + 1
-        if lay.version_key:
-            d[lay.version_key] = d.get(lay.version_key, 0) + 1
+        acked, out, applied = set(), [], 0
+        for item, expect in entries:
+            iid = str(item["id"])
+            if expect is not None:
+                cur = its.get(iid)
+                if (_hash(cur) if cur is not _GONE else "") != expect:
+                    out.append(False)
+                    continue
+                acked.add(iid)
+            if item.get("deleted"):
+                its.delete(iid)
+            else:
+                stored = its.put(iid, item.get("data") or {})
+            m = {"version": int(item.get("version") or 0), "author": item.get("author") or "", "updated_by": item.get("updated_by") or "",
+                 "updated_at": item.get("updated_at") or now()}
+            if item.get("deleted"):
+                m["deleted"] = True
+            else:
+                m["h"] = _hash(stored)
+            cm["items"][iid] = m
+            applied += 1
+            out.append(True)
+        its.done()
+        if acked:
+            box = meta.setdefault("outbox", [])
+            box[:] = [x for x in box if not (x["coll"] == coll and x["id"] in acked)]
+        cm["version"] = cm.get("version", 0) + applied
+        if lay.version_key and applied:
+            d[lay.version_key] = d.get(lay.version_key, 0) + applied
         d[META] = meta
-        _save(path, d)
-    return True
+        _save(path, d)  # also when nothing was written: keep what reconcile recorded
+    return out
 
 
 def peek(coll, iid, root=None):

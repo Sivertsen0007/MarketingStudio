@@ -37,6 +37,7 @@ MAX_NOTE = 500
 MAX_AREA = 50
 MAX_DATA_BYTES = 64 * 1024   # event data
 SESSION_ITEMS_SHOWN = 200
+MAX_DEVICES = 10       # active devices per member
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+$")
 MENTION_RE = re.compile(r"(?<![\w.+-])@([A-Za-z0-9][A-Za-z0-9._+-]*)")
@@ -100,6 +101,29 @@ def need_int(v, key, minimum=0):
     return v
 
 
+COLL_RE = re.compile(r"[a-z_]+(:[A-Za-z0-9_.-]+)?")
+ITEM_ID_RE = re.compile(r"[A-Za-z0-9_.:-]{1,200}")
+
+
+def need_coll(d, key="coll", required=True):
+    """A collection name such as 'email' or 'ads:4387091070' (max 200)."""
+    v = need_str(d, key, MAX_KEY, required=required)
+    if v is not None and not COLL_RE.fullmatch(v):
+        raise ApiError(400, "%s must look like 'area' or 'area:key' (letters, digits, _ . -)" % key)
+    return v
+
+
+def need_item_id(d, key="id", required=True):
+    """An item id: 1-200 of letters, digits, _ . : - (integers are accepted and turned into strings)."""
+    v = d.get(key)
+    if isinstance(v, int) and not isinstance(v, bool):
+        v = str(v)
+    v = need_str({key: v}, key, MAX_KEY, required=required)
+    if v is not None and not ITEM_ID_RE.fullmatch(v):
+        raise ApiError(400, "%s may only use letters, digits and _ . : -" % key)
+    return v
+
+
 def need_bool(v, key):
     if not isinstance(v, bool):
         raise ApiError(400, "%s must be true or false" % key)
@@ -122,6 +146,20 @@ def need_role(d, key="role"):
 
 def json_size(obj):
     return len(json.dumps(obj, separators=(",", ":")).encode("utf-8"))
+
+
+def _bad_op(op, message):
+    """Result for an op that failed validation: {ok:false, error} plus coll/id echoed when they are short strings."""
+    res = {}
+    if isinstance(op, dict):
+        for k in ("coll", "id"):
+            v = op.get(k)
+            if isinstance(v, int) and not isinstance(v, bool):
+                v = str(v)
+            if isinstance(v, str) and len(v) <= MAX_KEY:
+                res[k] = v
+    res.update(ok=False, error=message)
+    return res
 
 
 class Store:
@@ -309,12 +347,19 @@ class Store:
                         raise ApiError(403, "only an owner can invite an owner")
             if existing is not None:
                 role = existing["role"]  # a device invite never changes the member's role
+                self._check_device_room(db, existing["id"])
             cur = db.execute("INSERT INTO invites(token_hash, email, name, role, created_by, created_at, expires_at,"
                              " member_id) VALUES(?,?,?,?,?,?,?,?)",
                              (hash_token(token), email, name, role, by["id"] if by else None, now, now + INVITE_TTL,
                               existing["id"] if existing is not None else None))
         return {"id": cur.lastrowid, "token": token, "expires_at": now + INVITE_TTL, "email": email, "role": role,
                 "member_id": existing["id"] if existing is not None else None}
+
+    @staticmethod
+    def _check_device_room(db, mid):
+        n = db.execute("SELECT COUNT(*) n FROM devices WHERE member_id=? AND revoked_at IS NULL", (mid,)).fetchone()["n"]
+        if n >= MAX_DEVICES:
+            raise ApiError(409, "this member already has %d active devices; revoke one first" % MAX_DEVICES)
 
     def delete_invite(self, actor, iid):
         """Withdraw a pending invite: its creator or an admin/owner; invites for owners only by an owner."""
@@ -389,6 +434,7 @@ class Store:
                 mid = cur.lastrowid
             else:
                 mid = m["id"]
+                self._check_device_room(db, mid)
             cur = db.execute("INSERT INTO devices(member_id, token_hash, name, created_at, last_seen) VALUES(?,?,?,?,?)",
                              (mid, hash_token(token), device_name, now, now))
             db.execute("UPDATE invites SET used_at=?, used_by_device=? WHERE id=?", (now, cur.lastrowid, inv["id"]))
@@ -516,8 +562,10 @@ class Store:
             rows = self.db.execute("SELECT * FROM items WHERE seq>? ORDER BY seq LIMIT ?", (since, limit + 1)).fetchall()
             more = len(rows) > limit
             rows = rows[:limit]
-            cursor = rows[-1]["seq"] if more else max(self.item_cursor(), since)
-        return {"items": [self.item_out(r) for r in rows], "cursor": cursor, "more": more}
+            current = self.item_cursor()
+            cursor = rows[-1]["seq"] if more else current
+        # A cursor ahead of the server (restored backup, other server): tell the client to resync from 0.
+        return {"items": [self.item_out(r) for r in rows], "cursor": cursor, "more": more, "reset": since > current}
 
     def _check_op(self, op):
         if not isinstance(op, dict):
@@ -525,11 +573,8 @@ class Store:
         kind = op.get("op")
         if kind not in ("put", "delete"):
             raise ApiError(400, "op must be put or delete")
-        coll = need_str(op, "coll", MAX_KEY)
-        iid = op.get("id")
-        if isinstance(iid, int) and not isinstance(iid, bool):
-            iid = str(iid)
-        iid = need_str({"id": iid}, "id", MAX_KEY)
+        coll = need_coll(op)
+        iid = need_item_id(op)
         base = need_int(op.get("base_version", None), "base_version", 0)
         data = None
         if kind == "put":
@@ -557,12 +602,21 @@ class Store:
             raise ApiError(400, "ops must be a non-empty list")
         if len(ops) > MAX_OPS:
             raise ApiError(400, "too many ops in one request (max %d)" % MAX_OPS)
-        checked = [self._check_op(op) for op in ops]
+        checked = []
+        for op in ops:
+            try:
+                checked.append(self._check_op(op))
+            except ApiError as e:  # one bad op does not sink the others
+                checked.append(_bad_op(op, e.message))
         now = self.now()
         results, touched = [], []
         session_seq = None
         with self.tx() as db:
-            for kind, coll, iid, base, data, cs in checked:
+            for entry in checked:
+                if isinstance(entry, dict):
+                    results.append(entry)
+                    continue
+                kind, coll, iid, base, data, cs = entry
                 row = db.execute("SELECT * FROM items WHERE coll=? AND id=?", (coll, iid)).fetchone()
                 cur = row["version"] if row else 0
                 res = {"coll": coll, "id": iid}
@@ -681,8 +735,9 @@ class Store:
         """Events after `since`, newest last; `seq` is where the next call should start."""
         with self.lock:
             rows = self.db.execute("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?", (since, limit)).fetchall()
-            seq = rows[-1]["seq"] if len(rows) == limit else max(self.event_seq(), since)
-        return {"events": [self.event_out(r) for r in rows], "seq": seq}
+            current = self.event_seq()
+            seq = rows[-1]["seq"] if len(rows) == limit else current
+        return {"events": [self.event_out(r) for r in rows], "seq": seq, "reset": since > current}
 
     def post_event(self, actor, body):
         """A client-reported event (push / publish / undo / custom)."""
@@ -692,11 +747,8 @@ class Store:
         if kind not in CLIENT_EVENT_KINDS:
             raise ApiError(400, "kind must be one of %s" % ", ".join(CLIENT_EVENT_KINDS))
         area = need_str(body, "area", MAX_AREA)
-        coll = need_str(body, "coll", MAX_KEY, required=False)
-        iid = body.get("id")
-        if isinstance(iid, int) and not isinstance(iid, bool):
-            iid = str(iid)
-        iid = need_str({"id": iid}, "id", MAX_KEY, required=False)
+        coll = need_coll(body, required=False)
+        iid = need_item_id(body, required=False)
         summary = need_str(body, "summary", MAX_SUMMARY)
         data = body.get("data") or {}
         if not isinstance(data, dict):
@@ -754,14 +806,14 @@ class Store:
         return out
 
     def comments_for(self, coll, iid):
-        coll = need_str({"coll": coll}, "coll", MAX_KEY)
-        iid = need_str({"id": iid}, "id", MAX_KEY)
+        coll = need_coll({"coll": coll})
+        iid = need_item_id({"id": iid})
         return [self.comment_out(r) for r in
                 self.q("SELECT * FROM comments WHERE coll=? AND item_id=? ORDER BY id", (coll, iid))]
 
     def comment_counts(self, coll):
         """{item_id: {open, total, latest}}: open = unresolved threads (top-level comments), total = all comments."""
-        coll = need_str({"coll": coll}, "coll", MAX_KEY)
+        coll = need_coll({"coll": coll})
         out = {}
         for r in self.q("SELECT item_id, COUNT(*) total,"
                         " SUM(CASE WHEN parent IS NULL AND resolved=0 THEN 1 ELSE 0 END) open_, MAX(at) latest"
@@ -771,11 +823,8 @@ class Store:
 
     def add_comment(self, actor, body):
         """New comment or reply. Any active member (viewers too) may comment."""
-        coll = need_str(body, "coll", MAX_KEY)
-        iid = body.get("id")
-        if isinstance(iid, int) and not isinstance(iid, bool):
-            iid = str(iid)
-        iid = need_str({"id": iid}, "id", MAX_KEY)
+        coll = need_coll(body)
+        iid = need_item_id(body)
         text = need_str(body, "body", MAX_BODY)
         parent = body.get("parent")
         now = self.now()
@@ -867,11 +916,8 @@ class Store:
 
     def presence_beat(self, actor, body):
         area = need_str(body, "area", MAX_AREA)
-        coll = need_str(body, "coll", MAX_KEY, required=False)
-        iid = body.get("id")
-        if isinstance(iid, int) and not isinstance(iid, bool):
-            iid = str(iid)
-        iid = need_str({"id": iid}, "id", MAX_KEY, required=False)
+        coll = need_coll(body, required=False)
+        iid = need_item_id(body, required=False)
         editing = body.get("editing", False)
         editing = need_bool(editing, "editing")
         now = self.now()
@@ -910,11 +956,7 @@ class Store:
         return {"coll": r["coll"], "id": r["id"], "member": r["member"], "note": r["note"], "at": iso(r["at"])}
 
     def _claim_key(self, body):
-        coll = need_str(body, "coll", MAX_KEY)
-        iid = body.get("id")
-        if isinstance(iid, int) and not isinstance(iid, bool):
-            iid = str(iid)
-        return coll, need_str({"id": iid}, "id", MAX_KEY)
+        return need_coll(body), need_item_id(body)
 
     def claim(self, actor, body):
         if actor["role"] == "viewer":

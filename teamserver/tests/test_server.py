@@ -1,5 +1,7 @@
 """End-to-end tests: a real server on a free port with a temp data dir and an injected clock."""
+import contextlib
 import http.client
+import io
 import json
 import os
 import queue
@@ -240,7 +242,9 @@ class TestInput(Base):
         self.assertIn("error", out)
         status, out = self.call("POST", "/api/v1/items", {"ops": [{"op": "put", "coll": "x" * 500, "id": "1",
                                                                     "base_version": 0, "data": {}}]}, t)
-        self.assertEqual(status, 400)
+        self.assertEqual(status, 200)
+        self.assertFalse(out["results"][0]["ok"])
+        self.assertIn("too long", out["results"][0]["error"])
         status, out = self.call("POST", "/api/v1/items", raw=b"x", token=t,
                                 headers={"Content-Length": str(50 * 1024 * 1024)})
         self.assertEqual(status, 413)
@@ -625,7 +629,9 @@ class TestReview(Base):
         for base in (0.0, 1.5, True, "0"):
             status, out = self.call("POST", "/api/v1/items", {"ops": [{"op": "put", "coll": "e", "id": "a",
                                                                        "base_version": base, "data": {}}]}, t)
-            self.assertEqual(status, 400, (base, out))
+            self.assertEqual(status, 200, (base, out))  # a bad op fails alone
+            self.assertEqual((out["results"][0]["ok"], out["results"][0]["id"]), (False, "a"))
+            self.assertIn("base_version", out["results"][0]["error"])
 
     def test_owner_cannot_impersonate_co_owner(self):
         co = self.join_new("co@example.com", "owner", "Co")
@@ -823,6 +829,137 @@ class TestReview2(Base):
                b"GET /api/v1/health HTTP/1.1\r\nHost: x\r\n\r\n")  # a smuggled second request
         out = self.raw(self.port, req)
         self.assertEqual(out.count(b"HTTP/1.1 200"), 1, out)
+
+
+class TestReview3(Base):
+    """Regression tests for the third review."""
+
+    def test_huge_integer_is_rejected_fast(self):
+        big = b"9" * 100000
+        results = {}
+
+        def health_loop():
+            worst = 0.0
+            for _ in range(10):
+                t0 = time.time()
+                self.call("GET", "/api/v1/health")
+                worst = max(worst, time.time() - t0)
+                time.sleep(0.05)
+            results["health"] = worst
+
+        th = threading.Thread(target=health_loop)
+        th.start()
+        t0 = time.time()
+        status, out = self.call("POST", "/api/v1/join", raw=b'{"invite":' + big + b'}')
+        took = time.time() - t0
+        th.join()
+        self.assertEqual(status, 400, out)
+        self.assertIn("digits", out["error"])
+        self.assertLess(took, 1.0)
+        self.assertLess(results["health"], 1.0)
+        status, out = self.call("POST", "/api/v1/items", raw=b'{"ops":[{"op":"put","coll":"e","id":"a",'
+                                b'"base_version":0,"data":{"n":-' + big + b'}}]}', token=self.owner["token"])
+        self.assertEqual(status, 400, out)
+        # 20 digits still fine
+        self.ok("POST", "/api/v1/items", {"ops": [{"op": "put", "coll": "e", "id": "a", "base_version": 0,
+                                                   "data": {"n": 10 ** 19}}]}, self.owner["token"])
+
+    def test_cursor_ahead_of_server_resets(self):
+        t = self.owner["token"]
+        self.put(self.owner, "email", "a", 0, {})
+        out = self.ok("GET", "/api/v1/items?since=500", token=t)
+        self.assertEqual((out["cursor"], out["reset"], out["items"]), (1, True, []))
+        self.assertFalse(self.ok("GET", "/api/v1/items?since=1", token=t)["reset"])
+        ev = self.ok("GET", "/api/v1/events?since=500", token=t)
+        self.assertTrue(ev["reset"])
+        self.assertLess(ev["seq"], 500)
+        self.assertFalse(self.ok("GET", "/api/v1/events?since=0", token=t)["reset"])
+
+    def test_verbose_log_redacts_token(self):
+        srv = self.extra_server(verbose=True)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            sk = socket.create_connection(("127.0.0.1", srv.port))
+            sk.sendall(b"GET /api/v1/stream?token=SECRETTOKEN HTTP/1.1 extra\r\n\r\n")
+            sk.settimeout(3)
+            try:
+                while sk.recv(4096):
+                    pass
+            except OSError:
+                pass
+            sk.close()
+            self.call_on(srv, "GET", "/api/v1/stream?token=SECRETTOKEN2")
+            time.sleep(0.2)
+        log = buf.getvalue()
+        self.assertIn("[redacted]", log)
+        self.assertNotIn("SECRETTOKEN", log)
+
+    def test_device_cap(self):
+        st = self.srv.store
+        spare = st.create_invite("owner@example.com", "owner")["token"]  # made while there was room
+        for _ in range(9):  # owner already has one device
+            st.join(st.create_invite("owner@example.com", "owner")["token"], "Mac")  # no HTTP: join rate limit
+        with self.assertRaises(store_mod.ApiError) as cm:
+            st.create_invite("owner@example.com", "owner")
+        self.assertEqual(cm.exception.status, 409)
+        status, out = self.call("POST", "/api/v1/join", {"invite": spare})
+        self.assertEqual(status, 409, out)
+
+
+class TestItemRules(Base):
+    """Per-op errors and coll / id shapes on POST /items."""
+
+    def test_bad_ops_fail_alone(self):
+        t = self.owner["token"]
+        big = {"blob": "x" * (600 * 1024)}
+        ops = [
+            {"op": "put", "coll": "email", "id": "good1", "base_version": 0, "data": {"a": 1}},
+            {"op": "put", "coll": "email", "id": "big", "base_version": 0, "data": big},
+            {"op": "put", "coll": "Email", "id": "x", "base_version": 0, "data": {}},
+            {"op": "put", "coll": "email", "id": "has space", "base_version": 0, "data": {}},
+            {"op": "put", "coll": "email", "id": "v", "base_version": "1", "data": {}},
+            {"op": "put", "coll": "email", "id": "nodata", "base_version": 0},
+            {"op": "rename", "coll": "email", "id": "r", "base_version": 0},
+            "not an op",
+            {"op": "put", "coll": "ads:meta_644981006414114", "id": "kw:1.a-b_c", "base_version": 0, "data": {}},
+        ]
+        out = self.ok("POST", "/api/v1/items", {"ops": ops}, t)
+        r = out["results"]
+        self.assertEqual(len(r), len(ops))
+        self.assertEqual([x["ok"] for x in r], [True, False, False, False, False, False, False, False, True])
+        for x in r[1:8]:
+            self.assertIsInstance(x["error"], str)
+        self.assertIn("too large", r[1]["error"])
+        self.assertEqual((r[2]["coll"], r[2]["id"]), ("Email", "x"))
+        self.assertNotIn("coll", r[7])
+        ids = sorted(i["id"] for i in self.ok("GET", "/api/v1/items?since=0", token=t)["items"])
+        self.assertEqual(ids, ["good1", "kw:1.a-b_c"])
+
+    def test_whole_request_errors_stay(self):
+        v = self.join_new("v@example.com", "viewer", "Vee")
+        bad = {"ops": [{"op": "put", "coll": "BAD", "id": "a", "base_version": 0, "data": {}}]}
+        self.assertEqual(self.call("POST", "/api/v1/items", bad, v["token"])[0], 403)
+        status, _ = self.call("POST", "/api/v1/items", raw=b"x", token=self.owner["token"],
+                              headers={"Content-Length": str(50 * 1024 * 1024)})
+        self.assertEqual(status, 413)
+        self.assertEqual(self.call("POST", "/api/v1/items", {"ops": []}, self.owner["token"])[0], 400)
+
+    def test_shapes(self):
+        st = store_mod
+        for good in ("email", "seo:map_site", "ads:4387091070", "ads:meta_644981006414114", "social", "a_b:A.b-9"):
+            self.assertEqual(st.need_coll({"coll": good}), good)
+        for bad in ("Email", "ads:", ":x", "ads:x:y", "ads 1", "ads:x/y", "1ads", "ads:" + "9" * 200):
+            with self.assertRaises(st.ApiError, msg=bad):
+                st.need_coll({"coll": bad})
+        for good in ("a", "kw:1", "A.b-c_d", "9" * 200, 42):
+            self.assertEqual(st.need_item_id({"id": good}), str(good))
+        for bad in ("", "a b", "a/b", "é", "9" * 201, True, 1.5):
+            with self.assertRaises(st.ApiError, msg=repr(bad)):
+                st.need_item_id({"id": bad})
+        # the same shapes apply to comments and claims
+        t = self.owner["token"]
+        self.assertEqual(self.call("POST", "/api/v1/comments", {"coll": "email", "id": "a b", "body": "x"}, t)[0], 400)
+        self.assertEqual(self.call("POST", "/api/v1/claims", {"coll": "Email", "id": "a"}, t)[0], 400)
 
 
 if __name__ == "__main__":

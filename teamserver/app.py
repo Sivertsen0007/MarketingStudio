@@ -219,12 +219,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         if self.team.verbose:
-            sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
+            sys.stderr.write("%s %s\n" % (self.address_string(), _redact(fmt % args)))
 
     def log_request(self, code="-", size="-"):
         if self.team.verbose:
-            path = self.path.split("?", 1)[0]  # never log ?token=
-            sys.stderr.write("%s %s %s %s\n" % (self.address_string(), self.command, path, code))
+            # self.path is missing when the request line could not be parsed; tokens are always redacted
+            path = getattr(self, "path", None) or getattr(self, "requestline", "") or "-"
+            sys.stderr.write("%s %s %s %s\n" % (self.address_string(), getattr(self, "command", None) or "-",
+                                                _redact(path), code))
 
     def send_json(self, status, obj):
         body = json.dumps(obj, separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -262,7 +264,10 @@ class Handler(BaseHTTPRequestHandler):
         if not raw:
             return {}
         try:
-            obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float)
+            obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float,
+                              parse_int=_short_int)
+        except _NumberTooLong:
+            raise ApiError(400, "numbers may have at most %d digits" % MAX_INT_DIGITS)
         except (ValueError, UnicodeDecodeError):
             raise ApiError(400, "body must be JSON (no NaN or Infinity)")
         except RecursionError:
@@ -524,6 +529,20 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
 
+MAX_INT_DIGITS = 20
+
+
+class _NumberTooLong(ValueError):
+    pass
+
+
+def _short_int(text):
+    """int() of a JSON integer, refusing long digit runs: Python 3.9 converts them in quadratic time."""
+    if len(text.lstrip("-")) > MAX_INT_DIGITS:
+        raise _NumberTooLong(text[:10])
+    return int(text)
+
+
 def _reject_constant(name):
     raise ValueError("%s is not allowed" % name)
 
@@ -539,6 +558,11 @@ def _js_string(s):
     """A JSON string literal that is safe inside a <script> element."""
     return (json.dumps(s).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
             .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+
+
+def _redact(text):
+    """Hide ?token= values (and invite codes after #) from log lines."""
+    return re.sub(r"(token=)[^&\s\"]*", r"\1[redacted]", text)
 
 
 def _html(s):

@@ -149,6 +149,7 @@ class Backup(base.Base):
         info = backup.restore(fresh, out)
         self.assertIsNone(info["kept"])
         self.assertEqual(info["members"], 1)
+        self.assertEqual(info["team"], "Team")  # no name set: the same default the server shows
 
     def test_cli(self):
         self.put(self.owner, "seo:changes", "c1", 0, {"title": "c1"})

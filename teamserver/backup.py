@@ -3,15 +3,12 @@
 `python3 -m teamserver backup --out FILE` copies <data>/team.db with SQLite's backup API in one step, so the copy is a
 consistent snapshot even while the server writes (WAL mode: the server keeps serving during the copy). The copy is a
 single self-contained file (rollback journal mode, no -wal / -shm next to it), checked with `PRAGMA integrity_check`,
-written under a temporary name and renamed into place, mode 0600 (it holds hashed device tokens and, with server
-publishing, encrypted secrets).
+written under a temporary name and renamed into place, mode 0600 (it holds the team's drafts and hashed device
+tokens).
 
 `python3 -m teamserver restore FILE` checks FILE the same way and copies it over <data>/team.db. Stop the server first:
 the restore refuses while another process has the database open. The current database is kept next to it as
 team.db.before-restore-<time> (itself a consistent backup).
-
-What a backup does NOT contain: TEAMSERVER_MASTER_KEY (never stored in the database). Without that key, the encrypted
-publishing secrets in a backup cannot be opened; keep the key in a password manager, apart from the backups.
 """
 import os
 import sqlite3
@@ -52,7 +49,7 @@ def check(path):
         if missing:
             raise BackupError("%s is not a team server database (no %s table)" % (path, ", ".join(missing)))
         row = con.execute("SELECT value FROM meta WHERE key = 'team_name'").fetchone()
-        return {"team": row[0] if row else "",
+        return {"team": (row[0] if row else "") or "Team",
                 "members": con.execute("SELECT COUNT(*) FROM members").fetchone()[0],
                 "items": con.execute("SELECT COUNT(*) FROM items").fetchone()[0],
                 "events": con.execute("SELECT COALESCE(MAX(rowid), 0) FROM events").fetchone()[0]}
@@ -127,7 +124,7 @@ def restore(data_dir, src, yes=False, now=None):
             except sqlite3.OperationalError:
                 mode = "busy"
             if str(mode).lower() != "delete":
-                raise BackupError("The team database is in use: stop the server (and the runner) first, then restore")
+                raise BackupError("The team database is in use: stop the server first, then restore")
         finally:
             dst.close()
         kept = "%s.before-restore-%s" % (dst_path, time.strftime("%Y%m%d-%H%M%S", time.localtime(now)))

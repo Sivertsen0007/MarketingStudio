@@ -17,10 +17,9 @@ This guide runs it with Docker Compose behind Caddy, which gets and renews the H
 6. [Roles](#6-roles)
 7. [Approvals](#7-approvals)
 8. [Notifications and email](#8-notifications-and-email)
-9. [Server publishing and the master key](#9-server-publishing-and-the-master-key) (optional, off by default)
-10. [Backups and restore](#10-backups-and-restore)
-11. [Upgrades](#11-upgrades)
-12. [Security notes](#12-security-notes)
+9. [Backups and restore](#9-backups-and-restore)
+10. [Upgrades](#10-upgrades)
+11. [Security notes](#11-security-notes)
 
 Also: [Settings reference](#settings-reference) · [Without Docker](#without-docker) · [Tests](#tests)
 
@@ -96,7 +95,7 @@ On the Mac with Marketing Studio:
 Studio checks that the server speaks its protocol version, joins, and keeps the device token in the macOS Keychain.
 From then on drafts sync with the team, the **Team** tab shows who is here, the activity feed, the members and your
 notifications, and **Reviews** in the top bar holds approvals. If the server and the app do not match, Studio says
-so and does not sync: *The team server needs an update* (upgrade the server, step 11) or *Marketing Studio needs an
+so and does not sync: *The team server needs an update* (upgrade the server, step 10) or *Marketing Studio needs an
 update* (update the app).
 
 ## 5. Invite and manage members
@@ -123,7 +122,7 @@ the new device joins as the same member with the same role. A member who was dea
 | `viewer` | read everything, comment and @mention; never changes drafts |
 | `editor` | everything a viewer can, plus edit and send drafts, schedule, ask for approval |
 | `admin` | everything an editor can, plus invite, manage members, approval rules, shared team settings |
-| `owner` | everything an admin can, plus owners and the owner-only settings (server publishing and its keys) |
+| `owner` | everything an admin can, plus making and changing owners |
 
 On top of the role, a member can be an **approver** (`member <id> --approver yes`). Approvers, admins and owners may
 approve other people's work.
@@ -161,47 +160,9 @@ then `docker compose up -d` (it recreates the server with the new settings). Mem
 Team > Notifications. Messages are plain text with a link that opens Studio; they never contain tokens or webhook
 URLs. Without SMTP the bell still works and the app says the server has no email settings.
 
-## 9. Server publishing and the master key
+Server publishing (scheduled posts sent by the server) is planned; for now scheduled posts go out from a Mac with Studio open.
 
-Optional and **off by default**. Normally a scheduled SoMe post is published by a Mac running Studio. With server
-publishing, the team server publishes scheduled posts itself, so they go out while every Mac is closed. It needs all
-three of these:
-
-1. A master key on the server. Make one and put it in `.env`:
-
-   ```sh
-   docker compose run --rm --no-deps teamserver python3 -m teamserver vault new-key
-   # in .env:  TEAMSERVER_MASTER_KEY=<the printed key>
-   docker compose up -d
-   ```
-
-2. The runner: uncomment the `runner` service in `docker-compose.yml` and run `docker compose up -d` (or add
-   `--runner --live` to the server's command instead; use one of the two, not both). Try it first with `--fake`
-   instead of `--live`: then nothing is posted.
-3. An owner stores the channel keys from Studio (they are encrypted with the master key, and nobody can read them back
-   over the API) and switches server publishing on for SoMe.
-
-**Back up the master key** in a password manager, apart from the database backups. It is never written to the
-database, a log or a backup. Without it the stored channel keys cannot be opened: you would set a new key, clear the
-vault and upload the keys again from Studio.
-
-```sh
-docker compose exec teamserver python3 -m teamserver vault check        # does the key open every secret?
-docker compose exec teamserver python3 -m teamserver vault clear --yes  # only when the key is lost
-```
-
-**Rotate** the key (for example when someone who knew it leaves):
-
-```sh
-docker compose stop runner                                           # if you run the runner service
-docker compose exec teamserver python3 -m teamserver vault rotate   # asks for the new key twice
-# put the new key in .env as TEAMSERVER_MASTER_KEY and in the password manager, then:
-docker compose up -d
-```
-
-The image includes `openssl`, which the vault encrypts with.
-
-## 10. Backups and restore
+## 9. Backups and restore
 
 Everything the team shares lives in one database file in the `teamdata` volume. Make a backup at any time, while the
 server runs:
@@ -211,10 +172,11 @@ docker compose exec -T teamserver python3 -m teamserver backup --out /backups/te
 ```
 
 It uses SQLite's online backup, so the copy is consistent even while people sync, and it is checked before it is
-kept. Backups land in `teamserver/backups/` on the host, readable only by their owner. They hold device tokens only as
-hashes, and the publishing keys only encrypted.
+kept. Backups land in `teamserver/backups/` on the host, owned by uid 10001 (the container's user) and readable only
+by it, so reading, copying or pruning them on the host needs root. They hold device tokens only as hashes.
 
-**Nightly**, with cron on the host (`crontab -e`; adjust the path; `%` has to be escaped in a crontab):
+**Nightly**, with cron on the host. Put it in root's crontab (`sudo crontab -e`): the backup files belong to uid
+10001, so pruning them needs root. Adjust the path; `%` has to be escaped in a crontab:
 
 ```cron
 15 3 * * * cd /srv/MarketingStudio/teamserver && docker compose exec -T teamserver python3 -m teamserver backup --out /backups/team-$(date +\%F).db >> backups/backup.log 2>&1 && find backups -name 'team-*.db' -mtime +30 -delete
@@ -226,7 +188,7 @@ disk does not survive losing that disk.
 **Restore** (the server has to be stopped; the restore refuses otherwise):
 
 ```sh
-docker compose stop teamserver runner      # leave out runner if you do not run it
+docker compose stop teamserver
 docker compose run --rm --no-deps teamserver python3 -m teamserver restore /backups/team-2026-11-16.db --yes
 docker compose up -d
 ```
@@ -235,7 +197,7 @@ The database it replaces is kept next to it in the volume as `team.db.before-res
 join again. Anything changed on the server after the backup was made is gone from the server; Macs that still hold
 newer edits send them again at their next sync.
 
-## 11. Upgrades
+## 10. Upgrades
 
 ```sh
 cd MarketingStudio/teamserver
@@ -250,10 +212,12 @@ The database is upgraded in place when the new server starts. The app and the se
 time: until both match, Studio says *The team server needs an update* or *Marketing Studio needs an update* and does
 not sync. Local drafts are kept and sync once both match.
 
-With a published image instead of a local build, set `image:` in `docker-compose.yml` to the version you want, then
+A published image (`ghcr.io/sivertsen0007/marketingstudio-teamserver:<version>`) exists only for releases made with
+`release.sh --teamserver-image`. Until one exists for your version, build locally with `docker compose up -d --build` as
+above. Once it does, you can set `image:` in `docker-compose.yml` to that version instead of `build:` and run
 `docker compose pull && docker compose up -d`.
 
-## 12. Security notes
+## 11. Security notes
 
 - **HTTPS only.** Members connect over the internet with a device token, so never offer the server over plain HTTP.
   Caddy redirects HTTP to HTTPS and renews the certificate on its own.
@@ -265,12 +229,12 @@ With a published image instead of a local build, set `image:` in `docker-compose
   address per minute. Caddy drops slow clients first and refuses request bodies over 5 MB.
 - **Tokens.** Device and invite tokens are stored only as sha256 hashes. Revoke a lost Mac at once (`revoke`), and
   deactivate people who leave (`member <id> --active no`).
-- **Secrets.** The SMTP password and the master key live in `teamserver/.env` on the host (`chmod 600`, never commit
+- **Secrets.** The SMTP password lives in `teamserver/.env` on the host (`chmod 600`, never commit
   it). The image has no secrets in it. The containers run as a non-root user, with a read-only filesystem apart from
   the data volume and the backups folder, and no extra privileges.
 - **Webhooks.** Leave `TEAMSERVER_ALLOW_PRIVATE_WEBHOOKS` off on a server people reach over the internet: on, it lets
   members point webhooks at your private network.
-- Keep the host patched, allow only SSH, 80 and 443 through the firewall, and keep backups and the master key apart.
+- Keep the host patched, allow only SSH, 80 and 443 through the firewall, and keep copies of the backups off the server.
 
 ## Settings reference
 
@@ -290,14 +254,13 @@ Each `serve` flag can also come from an environment variable; with Docker, set t
 | `--smtp-from` | `TEAMSERVER_SMTP_FROM` | required with a host |
 | `--smtp-starttls` / `--no-smtp-starttls` | `TEAMSERVER_SMTP_STARTTLS=1/0` | STARTTLS on |
 | `--allow-private-webhooks` | `TEAMSERVER_ALLOW_PRIVATE_WEBHOOKS=1` | off: webhooks must be public `https://` URLs |
-| (vault key) | `TEAMSERVER_MASTER_KEY` | none: server publishing stays off |
 
-Commands: `serve`, `init`, `invite`, `members`, `member`, `revoke`, `backup`, `restore`, and with server publishing
-`runner` and `vault`. `python3 -m teamserver <command> --help` lists the options of each.
+Commands: `serve`, `init`, `invite`, `members`, `member`, `revoke`, `backup`, `restore`.
+`python3 -m teamserver <command> --help` lists the options of each.
 
 ## Without Docker
 
-Python 3.9 or newer and nothing to install (`openssl` only for server publishing). From the repository root:
+Python 3.9 or newer and nothing to install. From the repository root:
 
 ```sh
 python3 -m teamserver init  --data ./teamdata --email you@example.com --name "Your Name" --team "My team" \

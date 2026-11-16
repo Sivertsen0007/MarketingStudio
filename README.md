@@ -359,7 +359,6 @@ everyone joins it from **Setup > Team** with an invite link. A team gets:
   will be sent.
 - **Calendar.** One shared calendar, library and copy rules, in each person's team colour.
 - **Notifications** on the bell, by email or webhook, instantly or as a digest, with Focus and Away.
-- **Server publishing** (optional, off by default): the server publishes scheduled SoMe posts while every Mac is closed.
 
 Roles: owner, admin, editor and viewer. Setting up a server takes a few commands with Docker:
 **[Run a team server](teamserver/README.md)**.
@@ -666,6 +665,7 @@ with the same certificate as themselves.
 `--teamserver-image` (optional, off by default) also builds the team server image for linux/amd64 and linux/arm64 with
 `docker buildx` and pushes it to `ghcr.io/sivertsen0007/marketingstudio-teamserver:<version>` and `:latest`, after the app
 release is out. It needs docker with buildx and a `docker login ghcr.io`, and refuses before anything changes when docker is missing.
+Until a release has been made with it, no published image exists and team servers build their own (`docker compose up -d --build`).
 
 ## Repository layout
 

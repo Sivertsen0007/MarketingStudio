@@ -12,10 +12,11 @@ name: marketingstudio-team
 services:
   teamserver:
     build:
-      context: ..                       # the repository root: the image needs teamserver/ and engine/
+      context: ..                       # the repository root: the image needs teamserver/ and VERSION
       dockerfile: teamserver/Dockerfile
-    # Or use a published image instead of building, pinned to a version:
-    # image: ghcr.io/sivertsen0007/marketingstudio-teamserver:X.Y.Z   (a released version)
+    # Or a published image instead of building, pinned to a version. Images exist only for releases made with
+    # `release.sh --teamserver-image`; until then keep `build:` (docker compose up -d --build).
+    # image: ghcr.io/sivertsen0007/marketingstudio-teamserver:X.Y.Z
     restart: unless-stopped
     env_file: .env
     environment:
@@ -51,36 +52,6 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data                # certificates: keep this volume, or Caddy asks for new ones every start
       - caddy_config:/config
-
-  # Server publishing runner: OFF by default. It publishes scheduled SoMe posts from the server so they go out while
-  # every Mac is closed. It only does anything when ALL of these hold: this service is uncommented,
-  # TEAMSERVER_MASTER_KEY is set in .env, an owner has stored the channel keys from Studio, and an owner has
-  # switched server publishing on for the area in Studio. Remove --live (or use --fake) to try it without posting.
-  # Use either this separate service or `serve --runner --live` in the teamserver command, not both.
-  #
-  # runner:
-  #   build:
-  #     context: ..
-  #     dockerfile: teamserver/Dockerfile
-  #   restart: unless-stopped
-  #   env_file: .env
-  #   environment:
-  #     TEAMSERVER_DATA: /data
-  #   command: ["python3", "-m", "teamserver", "runner", "--data", "/data", "--live"]
-  #   volumes:
-  #     - teamdata:/data
-  #   read_only: true
-  #   tmpfs:
-  #     - /tmp
-  #   security_opt:
-  #     - no-new-privileges:true
-  #   cap_drop:
-  #     - ALL
-  #   healthcheck:
-  #     disable: true
-  #   depends_on:
-  #     teamserver:
-  #       condition: service_healthy
 
 volumes:
   teamdata:

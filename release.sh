@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
         *) echo "usage: $0 patch|minor|major|X.Y.Z [--notes FILE] [--dry-run] [--allow-branch] [--teamserver-image]" >&2; exit 2 ;;
     esac
 done
-[[ -n "$BUMP" ]] || { echo "usage: $0 patch|minor|major|X.Y.Z [--notes FILE] [--dry-run]" >&2; exit 2; }
+[[ -n "$BUMP" ]] || { echo "usage: $0 patch|minor|major|X.Y.Z [--notes FILE] [--dry-run] [--allow-branch] [--teamserver-image]" >&2; exit 2; }
 
 REPO="Sivertsen0007/MarketingStudio"
 ASSET="MarketingStudio-macOS-arm64.zip"

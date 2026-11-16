@@ -32,6 +32,8 @@ class SmtpStub:
         stub = self
 
         class H(socketserver.StreamRequestHandler):
+            timeout = 5  # a client that stops talking cannot hold a handler thread
+
             def handle(self):
                 w = lambda s: self.wfile.write(s.encode() + b"\r\n")  # noqa: E731
                 w("220 stub ready")
@@ -72,11 +74,13 @@ class SmtpStub:
         self.srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), H)
         self.srv.daemon_threads = True
         self.port = self.srv.server_address[1]
-        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.thread = threading.Thread(target=self.srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        self.thread.start()
 
     def stop(self):
         self.srv.shutdown()
         self.srv.server_close()
+        self.thread.join(timeout=5)
 
 
 class HookStub:
@@ -88,6 +92,8 @@ class HookStub:
         stub = self
 
         class H(BaseHTTPRequestHandler):
+            timeout = 5
+
             def log_message(self, *a):
                 pass
 
@@ -98,6 +104,8 @@ class HookStub:
                                    "type": self.headers.get("Content-Type")})
                 code = stub.statuses.pop(0) if stub.statuses else 200
                 self.send_response(code)
+                if 300 <= code < 400:
+                    self.send_header("Location", "/elsewhere")
                 self.send_header("Content-Length", "2")
                 self.end_headers()
                 self.wfile.write(b"ok")
@@ -105,7 +113,8 @@ class HookStub:
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.srv.daemon_threads = True
         self.url = "http://127.0.0.1:%d/hook/secret-path" % self.srv.server_address[1]
-        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.thread = threading.Thread(target=self.srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        self.thread.start()
 
     def texts(self):
         return [p["body"]["text"] for p in self.posts]
@@ -113,6 +122,7 @@ class HookStub:
     def stop(self):
         self.srv.shutdown()
         self.srv.server_close()
+        self.thread.join(timeout=5)
 
 
 class NotifyBase(Base):
@@ -504,6 +514,76 @@ class TestDelivery(NotifyBase):
         self.tick()
         self.assertEqual(self.hook.posts, [])
 
+
+    def test_review_to_you_instant_on_bell_in_digest_mode(self):
+        self.prefs(self.bo, {"bell": {"timing": "daily"}, "follow": {"email": True}})
+        self.push(self.alex, "email")  # followed: waits for the daily digest on the bell
+        self.write(self.alex, "email", "70", 0, {"fields": {"subject": "Hi"}})
+        self.ok("POST", "/api/v1/reviews", {"items": [{"coll": "email", "id": "70", "version": 1}],
+                                            "reviewers": [self.bo["member"]["id"]]}, self.alex["token"])
+        self.assertEqual(self.kinds(self.bo), ["review_requested"])
+        self.clock.advance(3600)  # 09:00, the daily digest
+        self.tick()
+        self.assertEqual(sorted(self.kinds(self.bo)), ["push", "review_requested"])
+
+    def test_redirects_are_not_followed(self):
+        self.prefs(self.alex, {"webhook": {"on": True, "url": self.hook.url}})
+        self.hook.statuses = [302]
+        self.comment(self.bo, "email", "9", "@alex one")
+        self.tick()
+        self.assertEqual([p["path"] for p in self.hook.posts], ["/hook/secret-path"])  # never /elsewhere
+        p = self.ok("GET", "/api/v1/notify/prefs", token=self.alex["token"])["prefs"]
+        self.assertIn("HTTP 302", p["webhook"]["last_error"])
+
+    def test_address_checked_again_at_send_time(self):
+        self.prefs(self.alex, {"webhook": {"on": True, "url": self.hook.url}})
+        self.srv.notifier.allow_private = False  # as if the host now resolved to a private address
+        self.comment(self.bo, "email", "9", "@alex one")
+        self.tick()
+        self.assertEqual(self.hook.posts, [])
+        p = self.ok("GET", "/api/v1/notify/prefs", token=self.alex["token"])["prefs"]
+        self.assertTrue(p["webhook"]["last_error"])  # refused before any connection (plain http, private address)
+        self.assertNotIn("secret-path", p["webhook"]["last_error"])
+        # the same for an https URL that now resolves to a loopback address
+        with self.assertRaises(ApiError) as cm:
+            notify.post_webhook("https://127.0.0.1:%d/hook/secret-path" % self.hook.srv.server_address[1], "x")
+        self.assertIn("private", cm.exception.message)
+        self.assertEqual(self.hook.posts, [])
+
+    def test_payloads_hold_no_other_members_emails(self):
+        self.prefs(self.bo, {"email": {"on": True}, "webhook": {"on": True, "url": self.hook.url}})
+        self.write(self.alex, "email", "71", 0, {"fields": {"subject": "Hi"}})
+        self.ok("POST", "/api/v1/reviews", {"items": [{"coll": "email", "id": "71", "version": 1}],
+                                            "reviewers": [self.bo["member"]["id"]]}, self.alex["token"])
+        self.comment(self.cy, "email", "71", "@bo please")
+        self.tick()
+        self.assertEqual(len(self.hook.posts), 1)
+        self.assertEqual(len(self.smtp.messages), 1)
+        blobs = [json.dumps(self.hook.posts[0]["body"]), self.smtp.messages[0]["data"],
+                 json.dumps(self.notes(self.bo))]
+        for blob in blobs:
+            for other in ("owner@example.com", "alex@example.com", "cy@example.com", "dee@example.com"):
+                self.assertNotIn(other, blob)
+            for tok in (self.bo["token"], self.cy["token"], self.alex["token"]):
+                self.assertNotIn(tok, blob)
+
+    def test_members_cannot_read_each_others_notifications_or_prefs(self):
+        self.prefs(self.alex, {"webhook": {"on": True, "url": self.hook.url}, "focus": {"on": True, "until": None},
+                               "follow": {"seo": True}})
+        self.comment(self.bo, "email", "1", "@alex private note")
+        bo_view = self.ok("GET", "/api/v1/notify/prefs", token=self.bo["token"])["prefs"]
+        self.assertFalse(bo_view["webhook"]["set"])
+        self.assertFalse(bo_view["focus"]["active"])
+        self.assertFalse(bo_view["follow"]["seo"])
+        self.assertEqual(self.notes(self.bo)["notifications"], [])
+        # a member id in the body or the query changes nothing: always the caller's own
+        alex_id = self.alex["member"]["id"]
+        self.call("PUT", "/api/v1/notify/prefs", {"member_id": alex_id, "focus": {"on": False}}, self.bo["token"])
+        self.assertTrue(self.ok("GET", "/api/v1/notify/prefs", token=self.alex["token"])["prefs"]["focus"]["active"])
+        self.assertEqual(self.notes(self.bo, member_id=alex_id)["notifications"], [])
+        # no token: refused
+        self.assertEqual(self.call("GET", "/api/v1/notifications")[0], 401)
+        self.assertEqual(self.call("GET", "/api/v1/notify/prefs")[0], 401)
 
 class TestWebhookChecks(unittest.TestCase):
     @staticmethod

@@ -771,4 +771,7 @@ class TeamServer:
         self.broker.close_all()
         self.httpd.shutdown()
         self.httpd.server_close()
+        t = self.notifier.thread  # daemon; give a pass in progress a moment to finish before the database closes
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout=2.0)
         self.store.close()

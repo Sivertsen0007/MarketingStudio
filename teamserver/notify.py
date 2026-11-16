@@ -164,9 +164,22 @@ def _short(text, n=MAX_TEXT):
 
 # ---------- webhook URL checks ----------
 
+# IPv6 forms that carry an IPv4 address inside (and can reach it through a gateway): checked as that IPv4 address
+_V4COMPAT = ipaddress.ip_network("::/96")          # IPv4-compatible (deprecated), e.g. ::127.0.0.1
+_NAT64 = (ipaddress.ip_network("64:ff9b::/96"),     # NAT64 well-known prefix
+          ipaddress.ip_network("64:ff9b:1::/48"))   # NAT64 local-use prefix (embedded address in the last 32 bits)
+_SIXTOFOUR = ipaddress.ip_network("2002::/16")      # 6to4
+_TEREDO = ipaddress.ip_network("2001::/32")         # Teredo
+
+
 def _ip_ok(ip, allow_private):
-    if ip.version == 6 and ip.ipv4_mapped:
-        ip = ip.ipv4_mapped
+    if ip.version == 6:
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        elif ip in _V4COMPAT or ip in _SIXTOFOUR or ip in _TEREDO or any(ip in n for n in _NAT64):
+            if not allow_private:
+                return False  # a public webhook never needs these transition forms: refused outright
+            ip = ip.sixtofour or (ip.teredo[1] if ip.teredo else ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
     if allow_private:
         return not ip.is_unspecified and not ip.is_multicast
     return ip.is_global and not ip.is_multicast
@@ -726,25 +739,43 @@ class Notifier:
             return v[0] if v else None
         limit = q("limit")
         limit = min(max(int(limit), 1), LIST_MAX) if limit and limit.isdigit() and len(limit) < 6 else 50
-        sql, args = "SELECT * FROM notifications WHERE member_id=? AND bell_at IS NOT NULL", [actor["id"]]
-        if q("unread") in ("1", "true", "yes"):
-            sql += " AND read=0"
+        # unread first, then read, each newest first. The cursor (next_before) is an id: positive while still in
+        # the unread part (unread with a smaller id, then every read one), negative once in the read part.
         before = q("before")
+        b_unread, b_read = None, None
         if before:
-            if not before.isdigit() or len(before) > 12:
+            neg = before.startswith("-")
+            digits = before[1:] if neg else before
+            if not digits.isdigit() or len(digits) > 12:
                 raise ApiError(400, "before must be a notification id")
-            sql += " AND id<?"
-            args.append(int(before))
-        sql += " ORDER BY id DESC LIMIT ?"
-        args.append(limit + 1)
+            if neg:
+                b_read = int(digits)
+            else:
+                b_unread = int(digits)
+        base = "SELECT * FROM notifications WHERE member_id=? AND bell_at IS NOT NULL AND read=?"
         with self.store.lock:
-            rows = self.store.db.execute(sql, args).fetchall()
-            unread = self.store.db.execute("SELECT COUNT(*) n FROM notifications WHERE member_id=? AND read=0"
-                                           " AND bell_at IS NOT NULL", (actor["id"],)).fetchone()["n"]
+            db = self.store.db
+            rows = []
+            if b_read is None:
+                sql, args = base, [actor["id"], 0]
+                if b_unread is not None:
+                    sql += " AND id<?"
+                    args.append(b_unread)
+                rows = db.execute(sql + " ORDER BY id DESC LIMIT ?", args + [limit + 1]).fetchall()
+            if len(rows) <= limit and q("unread") not in ("1", "true", "yes"):
+                sql, args = base, [actor["id"], 1]
+                if b_read is not None:
+                    sql += " AND id<?"
+                    args.append(b_read)
+                rows += db.execute(sql + " ORDER BY id DESC LIMIT ?", args + [limit + 1 - len(rows)]).fetchall()
+            unread = db.execute("SELECT COUNT(*) n FROM notifications WHERE member_id=? AND read=0"
+                                " AND bell_at IS NOT NULL", (actor["id"],)).fetchone()["n"]
         more = len(rows) > limit
         rows = rows[:limit]
-        return {"notifications": [self._out(r) for r in rows], "unread": unread, "more": more,
-                "next_before": rows[-1]["id"] if more else None}
+        nxt = None
+        if more:
+            nxt = rows[-1]["id"] if not rows[-1]["read"] else -rows[-1]["id"]
+        return {"notifications": [self._out(r) for r in rows], "unread": unread, "more": more, "next_before": nxt}
 
     def mark_read(self, actor, body):
         """{ids: [..]} or {all: true}. Mention notifications also mark their mention read (and the other way round:
@@ -857,9 +888,8 @@ class Notifier:
         why = None
         if was_held:  # Focus or Away just ended: everything that waited goes as one digest
             why = "while you were away" if was_held == 2 else "while you were in Focus"
-        for ch in CHANNELS:
-            self._run_channel(m, ch, prefs, url, now, why)
-        if was_held:
+        done = [self._run_channel(m, ch, prefs, url, now, why) for ch in CHANNELS]
+        if was_held and all(done):  # a channel backing off or rate limited keeps the wording for its later digest
             with self.store.tx() as db:
                 db.execute("UPDATE notify_prefs SET held=0 WHERE member_id=?", (mid,))
 
@@ -871,20 +901,20 @@ class Notifier:
             st = self.store.db.execute("SELECT * FROM notify_channel WHERE member_id=? AND channel=?",
                                        (mid, ch)).fetchone()
         if not rows:
-            return
+            return True
         usable = prefs[ch]["on"] and (url if ch == "webhook" else (self.smtp and m["email"]))
         if not usable:  # turned off (or no URL / no SMTP any more): these will not be sent
             with self.store.tx() as db:
                 db.execute("UPDATE notifications SET %s='skipped' WHERE member_id=? AND %s='pending'" % (ch, ch), (mid,))
-            return
+            return True
         timing = prefs[ch]["timing"]
         if not why and not any(due_at(r["created"], timing, prefs) <= now for r in rows):
-            return
+            return False
         if st and st["next_try"] and st["next_try"] > now:
-            return  # backing off after a failure
+            return False  # backing off after a failure
         limit, window = RATE[ch]
         if not self.rate.ok((mid, ch), limit, window, now):
-            return  # over the rate limit: they wait and go together as a digest
+            return False  # over the rate limit: they wait and go together as a digest
         subject, text = self._compose(rows, why, timing)
         try:
             if ch == "email":
@@ -906,12 +936,13 @@ class Notifier:
                 db.execute("INSERT INTO notify_channel(member_id, channel, fails, next_try, last_error) VALUES(?,?,?,?,?)"
                            " ON CONFLICT(member_id, channel) DO UPDATE SET fails=excluded.fails,"
                            " next_try=excluded.next_try, last_error=excluded.last_error", (mid, ch, fails, nxt, err))
-            return
+            return fails == 0  # given up (marked failed): nothing left waiting
         self.rate.add((mid, ch), now)
         with self.store.tx() as db:
             for r in rows:
                 db.execute("UPDATE notifications SET %s='sent' WHERE id=?" % ch, (r["id"],))
             db.execute("DELETE FROM notify_channel WHERE member_id=? AND channel=?", (mid, ch))
+        return True
 
     def _compose(self, rows, why, timing):
         """(subject, text): one notification as itself, several as a digest. Plain text, no secrets: the summary and

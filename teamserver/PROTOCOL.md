@@ -186,7 +186,8 @@ notification `{id, kind, actor, area, coll, item_id, text, data, at, read, link}
   webhook off, daily_at 09:00. `until`: ISO 8601 or null (until turned off). `server.email`: the server has SMTP settings.
 - Webhook: `PUT {webhook: {url}}` sets it (`""` or null removes it). The URL is write-only (GET shows only `set` and the
   `host`): it often holds a secret. It must be `https://`, without user info, and every address its host resolves to
-  must be public (no loopback, private, link-local, shared or reserved ranges); the sender connects to the checked
+  must be public (no loopback, private, link-local, shared or reserved ranges, and no IPv6 forms that carry an IPv4
+  address: IPv4-compatible, 6to4, Teredo, NAT64); the sender connects to the checked
   address. A server started with `--allow-private-webhooks` (tests, private networks) also accepts private addresses,
   and plain `http://` only for those. Payload: `{"text": "..."}` (Slack-compatible; a Telegram bot URL
   `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>` works the same way).
@@ -202,8 +203,9 @@ notification `{id, kind, actor, area, coll, item_id, text, data, at, read, link}
   `last_error` shows the latest failure, never the URL), rate limited per member (email 12, webhook 30 messages an hour;
   the rest waits and goes as one digest). Nothing in a message comes from settings or tokens: only the notification
   text and the app link. Notifications older than 90 days are deleted.
-- `GET /api/v1/notifications?unread=1&limit=50&before=<id>` -> `{notifications, unread, more, next_before}` (newest
-  first; only what is on the bell). `POST /api/v1/notifications/read {ids: [id]} | {all: true}` -> `{ok, updated, unread}`.
+- `GET /api/v1/notifications?unread=1&limit=50&before=<id>` -> `{notifications, unread, more, next_before}` (unread
+  first, then read, each newest first; only what is on the bell; pass `before=next_before` for the next page: a positive
+  id while still in the unread part, a negative one in the read part). `POST /api/v1/notifications/read {ids: [id]} | {all: true}` -> `{ok, updated, unread}`.
   Marking a `mention` notification read marks its mention read, and `POST /api/v1/mentions/read` marks the matching
   mention notifications read.
 - `POST /api/v1/notify/test {channel: email|webhook}` -> `{ok, error?}`: a test message now (5 per 10 minutes).

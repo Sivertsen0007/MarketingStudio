@@ -111,7 +111,7 @@
       if (n.kind === "mention" && TM.openThread) setTimeout(() => TM.openThread(n.coll, n.item_id, n.label), 400);
       return;
     }
-    if (n.area && typeof setArea === "function") setArea(n.area);
+    if (n.area && Object.prototype.hasOwnProperty.call(AREAS, n.area) && typeof setArea === "function") setArea(n.area);
   }
   pop.addEventListener("click", async e => {
     if (e.target.closest("[data-tnall]")) return markRead([], true);

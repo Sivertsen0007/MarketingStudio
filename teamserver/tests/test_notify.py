@@ -585,6 +585,48 @@ class TestDelivery(NotifyBase):
         self.assertEqual(self.call("GET", "/api/v1/notifications")[0], 401)
         self.assertEqual(self.call("GET", "/api/v1/notify/prefs")[0], 401)
 
+    def test_release_digest_keeps_its_wording_while_backing_off(self):
+        self.prefs(self.alex, {"follow": {"ads": True}, "webhook": {"on": True, "url": self.hook.url}})
+        self.prefs(self.alex, {"focus": {"on": True, "until": None}})
+        self.push(self.bo, "ads")
+        self.push(self.bo, "ads")
+        self.tick()
+        self.assertEqual(self.hook.posts, [])
+        self.hook.statuses = [500]
+        self.prefs(self.alex, {"focus": {"on": False}})
+        self.tick()  # the release digest fails once
+        self.assertEqual(len(self.hook.posts), 1)
+        self.clock.advance(notify.BACKOFF)
+        self.tick()  # the retry still says why it is a digest
+        self.assertEqual(len(self.hook.posts), 2)
+        self.assertIn("2 notifications while you were in Focus", self.hook.texts()[1])
+        self.push(self.bo, "ads")  # afterwards: instant, no digest wording
+        self.tick()
+        self.assertEqual(len(self.hook.posts), 3)
+        self.assertNotIn("while you were", self.hook.texts()[2])
+
+    def test_unread_first_across_pages(self):
+        cids = [self.comment(self.bo, "email", str(i), "@alex n%d" % i)["id"] for i in range(7)]
+        ids = [n["id"] for n in sorted(self.notes(self.alex, limit=50)["notifications"], key=lambda n: n["id"])]
+        self.assertEqual(len(ids), 7)
+        # read the newest three and the oldest one: unread = ids[1..3], read = ids[0], ids[4..6]
+        self.ok("POST", "/api/v1/notifications/read", {"ids": [ids[0], ids[4], ids[5], ids[6]]}, self.alex["token"])
+        seen, before = [], None
+        for _ in range(10):
+            q = {"limit": 2}
+            if before is not None:
+                q["before"] = before
+            out = self.notes(self.alex, **q)
+            seen += [(n["id"], n["read"]) for n in out["notifications"]]
+            if not out["more"]:
+                break
+            before = out["next_before"]
+        self.assertEqual(seen, [(ids[3], False), (ids[2], False), (ids[1], False), (ids[6], True), (ids[5], True),
+                                (ids[4], True), (ids[0], True)])
+        self.assertEqual([n["id"] for n in self.notes(self.alex, unread=1, limit=2)["notifications"]], [ids[3], ids[2]])
+        self.assertEqual(self.call("GET", "/api/v1/notifications?before=-x", token=self.alex["token"])[0], 400)
+        self.assertEqual(len(cids), 7)
+
 class TestWebhookChecks(unittest.TestCase):
     @staticmethod
     def resolver(*addrs):
@@ -611,6 +653,13 @@ class TestWebhookChecks(unittest.TestCase):
         for addr in ("127.0.0.1", "10.1.2.3", "192.168.1.10", "172.16.0.1", "169.254.169.254", "0.0.0.0", "::1",
                      "fc00::1", "fe80::1", "::ffff:127.0.0.1", "100.64.0.1", "224.0.0.1"):
             self.assertIn("private", self.bad("https://hooks.example.com/x", resolve=self.resolver(addr)) + "private")
+        # IPv6 forms that carry an IPv4 address (a gateway would reach it): refused, whatever the embedded address
+        for addr in ("::127.0.0.1", "::93.184.216.34", "2002:7f00:1::", "2002:5db8:d822::1", "64:ff9b::7f00:1",
+                     "64:ff9b::a9fe:a9fe", "64:ff9b::5db8:d822", "64:ff9b:1::7f00:1", "64:ff9b:1:ffff::a00:1",
+                     "2001:0:4136:e378:8000:63bf:80ff:fffe"):
+            self.assertIn("private", self.bad("https://hooks.example.com/x", resolve=self.resolver(addr)), addr)
+        # a public IPv6 address is still fine
+        notify.check_webhook_url("https://hooks.example.com/x", False, self.resolver("2606:2800:220:1:248:1893:25c8:1946"))
         # one bad address among good ones is enough to refuse (no picking the public one)
         self.bad("https://hooks.example.com/x", resolve=self.resolver("93.184.216.34", "10.0.0.1"))
 
@@ -622,6 +671,10 @@ class TestWebhookChecks(unittest.TestCase):
         ok = notify.check_webhook_url("http://127.0.0.1:9/x", True, self.resolver("127.0.0.1"))
         self.assertEqual(ok[4], ["127.0.0.1"])
         notify.check_webhook_url("https://10.0.0.5/x", True, self.resolver("10.0.0.5"))
+        # with the flag the embedded IPv4 address is what counts
+        notify.check_webhook_url("https://x.example/x", True, self.resolver("64:ff9b::a00:5"))
+        self.bad("https://x.example/x", allow=True, resolve=self.resolver("64:ff9b::e000:1"))  # 224.0.0.1 multicast
+        self.bad("https://x.example/x", allow=True, resolve=self.resolver("2002:e000:1::"))
         # plain http is only for private addresses, even then
         self.bad("http://hooks.example.com/x", allow=True, resolve=self.resolver("93.184.216.34"))
         self.bad("https://x.example/x", allow=True, resolve=self.resolver("224.0.0.1"))

@@ -24,7 +24,7 @@
 | | |
 |---|---|
 | **Start** | [What it is](#what-it-is) · [Install](#install) · [First run: Setup](#first-run-setup) · [Updates](#updates) |
-| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Keyboard](#keyboard) |
+| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
 | **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email platform](#email-platform) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
@@ -345,6 +345,24 @@ One calendar for every channel, plus the shared library and the copy rules. Work
   share a value with everyone: it then shows as *Set by your team* and is read-only for the others.
 - A new install starts with **no copy rules**: add your own. An install that was set up before this version (it has a `config.json`) keeps exactly the rules it had.
 
+
+## Teams
+
+Studio works on its own. To work as a team, run a small **team server** (one per team, on a server you control) and
+everyone joins it from **Setup > Team** with an invite link. A team gets:
+
+- **Shared drafts.** Ads, Email, SEO and SoMe drafts sync between everyone's Macs, change by change, with a clear
+  choice when two people edit the same field.
+- **Activity.** One feed of who edited, pushed, published and commented, and who is in Studio right now.
+- **Comments and @mentions** on any item.
+- **Approvals.** Per area, an owner or admin can require that nothing goes live before someone else has approved exactly what
+  will be sent.
+- **Calendar.** One shared calendar, library and copy rules, in each person's team colour.
+- **Notifications** on the bell, by email or webhook, instantly or as a digest, with Focus and Away.
+
+Roles: owner, admin, editor and viewer. Setting up a server takes a few commands with Docker:
+**[Run a team server](teamserver/README.md)**.
+
 ---
 
 ## Keyboard
@@ -644,6 +662,11 @@ It bumps `VERSION`, builds and signs the app, zips it, tags, pushes and publishe
 the update. Releases must be signed on the Mac that holds the signing certificate: installed copies only accept an update signed
 with the same certificate as themselves.
 
+`--teamserver-image` (optional, off by default) also builds the team server image for linux/amd64 and linux/arm64 with
+`docker buildx` and pushes it to `ghcr.io/sivertsen0007/marketingstudio-teamserver:<version>` and `:latest`, after the app
+release is out. It needs docker with buildx and a `docker login ghcr.io`, and refuses before anything changes when docker is missing.
+Until a release has been made with it, no published image exists and team servers build their own (`docker compose up -d --build`).
+
 ## Repository layout
 
 ```
@@ -651,6 +674,7 @@ engine/        the Python engine and the UI (see How it works)
 engine/tests/  tests
 macapp/        the Swift app, its build script and icon
 docs/          screenshots
+teamserver/    the team server (see Teams)
 release.sh     cut a release
 VERSION        the version, stamped into the app at build time
 ```

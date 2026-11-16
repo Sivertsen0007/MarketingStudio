@@ -1,0 +1,59 @@
+# Marketing Studio team server behind Caddy (automatic HTTPS). One stack = one team.
+#
+#   cd teamserver
+#   cp .env.example .env        # set TEAMSERVER_DOMAIN and TEAMSERVER_URL (and SMTP if you want email)
+#   docker compose up -d --build
+#   docker compose exec teamserver python3 -m teamserver init --email you@example.com --name "Your Name" --team "Team"
+#
+# Full steps: README.md in this folder.
+
+name: marketingstudio-team
+
+services:
+  teamserver:
+    build:
+      context: ..                       # the repository root: the image needs teamserver/ and VERSION
+      dockerfile: teamserver/Dockerfile
+    # Or a published image instead of building, pinned to a version. Images exist only for releases made with
+    # `release.sh --teamserver-image`; until then keep `build:` (docker compose up -d --build).
+    # image: ghcr.io/sivertsen0007/marketingstudio-teamserver:X.Y.Z
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TEAMSERVER_DATA: /data
+    volumes:
+      - teamdata:/data
+      - ./backups:/backups              # nightly backups land here (writable by uid 10001, see README.md)
+    # Not published on the host: only Caddy reaches it, over the internal network.
+    expose:
+      - "8790"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 15s
+
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    depends_on:
+      teamserver:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      TEAMSERVER_DOMAIN: ${TEAMSERVER_DOMAIN:?set TEAMSERVER_DOMAIN in teamserver/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data                # certificates: keep this volume, or Caddy asks for new ones every start
+      - caddy_config:/config
+
+volumes:
+  teamdata:
+  caddy_data:
+  caddy_config:

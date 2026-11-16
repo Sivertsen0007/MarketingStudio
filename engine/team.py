@@ -258,6 +258,39 @@ def parse_link(link):
     return link.rstrip("/"), ""
 
 
+HEALTH_EVERY = 3600  # seconds a good protocol check counts for (per process and server)
+_HEALTH = {"server": "", "at": 0.0}
+
+
+def protocol_problem(h):
+    """-> "" when the server's /api/v1/health speaks this Studio's protocol, else a message for the person."""
+    p = h.get("protocol") if isinstance(h, dict) else None
+    ver = (h.get("version") if isinstance(h, dict) else None) or "unknown"
+    if isinstance(p, int) and not isinstance(p, bool) and p == PROTOCOL:
+        return ""
+    if isinstance(p, int) and not isinstance(p, bool) and p > PROTOCOL:
+        return (f"Marketing Studio needs an update: the team server (version {ver}) speaks protocol {p}, this Studio "
+                f"speaks {PROTOCOL}. Update Marketing Studio, then sync again.")
+    return (f"The team server needs an update: it (version {ver}) speaks protocol {p if p is not None else 'unknown'}, "
+            f"this Studio needs protocol {PROTOCOL}. Ask the team owner to upgrade the server.")
+
+
+def _check_server(ctx=None, force=False):
+    """Health check before a sync: the same protocol as this Studio, or TeamError (426) and nothing is sent.
+    A good answer counts for HEALTH_EVERY seconds; a bad one is asked again next time (the server may be upgraded)."""
+    server = _server()
+    if not force and _HEALTH["server"] == server and time.time() - _HEALTH["at"] < HEALTH_EVERY:
+        return
+    h = _api("GET", "/api/v1/health")
+    problem = protocol_problem(h)
+    _update_state(server_version=str(h.get("version") or "") if isinstance(h, dict) else "",
+                  server_protocol=h.get("protocol") if isinstance(h, dict) else None, server_problem=problem)
+    if problem:
+        _HEALTH.update(server="", at=0.0)
+        raise TeamError(problem, 426)
+    _HEALTH.update(server=server, at=time.time())
+
+
 def join(link=None, server=None, invite=None, device_name=None):
     """Join a team with an invite. -> status()."""
     if joined() and not _state().get("removed"):
@@ -270,8 +303,9 @@ def join(link=None, server=None, invite=None, device_name=None):
     if not invite:
         raise ValueError("The invite code is missing: paste the whole invite link.")
     h = _http("GET", "/api/v1/health", server=server)
-    if h.get("protocol") != PROTOCOL:
-        raise TeamError(f"This team server speaks protocol {h.get('protocol')}; this Studio speaks {PROTOCOL}. Update Studio or the server.")
+    problem = protocol_problem(h)
+    if problem:
+        raise TeamError(problem, 426)
     name = device_name or f"{socket.gethostname().split('.')[0]} (Marketing Studio)"
     r = _http("POST", "/api/v1/join", {"invite": invite, "device_name": name[:100]}, server=server)
     token = r.get("device_token")
@@ -929,11 +963,13 @@ def sync():
                     removed = removed or e.status == 401
                     problems.append(str(e))
             try:
-                step(_push)
-                if not offline:
-                    step(_pull)
-                if ctx["repush"] and not offline:
+                step(_check_server)
+                if not problems:  # offline, removed, or a server on another protocol: neither send nor take anything
                     step(_push)
+                    if not offline:
+                        step(_pull)
+                    if ctx["repush"] and not offline:
+                        step(_push)
             finally:
                 _save_ctx(ctx)
             ok = not problems
@@ -1101,6 +1137,7 @@ def status():
             "remote_waiting": int(st.get("remote_waiting") or 0), "conflicts": sum(len(c["fields"]) for c in cf.values()),
             "auto_sync": bool(st.get("auto_sync")), "online": st.get("online"), "listening": _LISTENER["alive"],
             "changeset": _changesets()["active"], "members": members(), "failed": failed,
+            "server_version": st.get("server_version") or "", "server_problem": st.get("server_problem") or "",
             "skipped": (st.get("skipped") or [])[-20:], "can_send": _role() != "viewer"}
 
 

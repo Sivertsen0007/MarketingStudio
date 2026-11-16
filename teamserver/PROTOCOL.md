@@ -215,6 +215,10 @@ notification `{id, kind, actor, area, coll, item_id, text, data, at, read, link}
 ## Health
 
 - `GET /api/v1/health` -> `{ok, protocol: 1, version, team}` (no auth).
+- `protocol` is the wire version (this document); `version` is the server release. Studio checks `protocol` when it
+  joins and before a sync (a good answer counts for an hour). Any other value, or none: Studio neither sends nor
+  takes anything and says "The team server needs an update" (older or unknown) or "Marketing Studio needs an
+  update" (newer). A change that old clients cannot read raises `protocol`.
 
 ## Errors and limits
 

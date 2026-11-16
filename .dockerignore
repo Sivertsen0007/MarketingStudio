@@ -1,0 +1,26 @@
+# Build context for teamserver/Dockerfile (built from the repository root). Allow-list: only what the image needs.
+*
+!VERSION
+!LICENSE
+!engine
+!teamserver
+
+# never in the image: tests, caches, local data, backups, env files, the app's web assets and Mac-only pieces
+**/tests
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+**/*.env
+**/.env*
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*_cache*.json
+**/settings.json
+teamserver/backups
+teamserver/teamdata
+teamserver/Caddyfile
+teamserver/docker-compose.yml
+engine/static
+engine/index.html
+engine/wp-snippets

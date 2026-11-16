@@ -1,0 +1,51 @@
+# Caddy in front of the team server: automatic HTTPS (Let's Encrypt) for TEAMSERVER_DOMAIN, then a plain proxy to the
+# team server container. The domain's DNS must point at this host and ports 80 and 443 must be open for the
+# certificate to be issued. Used by docker-compose.yml; see README.md.
+
+{
+	# Optional: an address for certificate expiry notices.
+	# email you@example.com
+
+	servers {
+		timeouts {
+			# slow or idle clients are dropped here, before they reach the team server
+			read_header 10s
+			read_body 30s
+			idle 2m
+			# no write timeout: the live stream (/api/v1/stream, server-sent events) stays open for hours
+		}
+	}
+}
+
+{$TEAMSERVER_DOMAIN} {
+	# The server refuses requests over 4 MB; stop them at the edge too.
+	request_body {
+		max_size 5MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# No compression: it would buffer the event stream.
+	reverse_proxy teamserver:8790 {
+		# Flush every write at once, so live events (SSE) are never held back in a buffer.
+		flush_interval -1
+		transport http {
+			dial_timeout 5s
+			# The server sends a ping on the stream every 20 s, so a 5 minute wait between reads is generous.
+			read_timeout 5m
+			write_timeout 30s
+		}
+		# Caddy sets X-Forwarded-For to the real client (it ignores any value the client sent, because no
+		# trusted_proxies are configured), and the server runs with --trust-proxy to read it.
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

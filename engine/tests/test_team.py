@@ -38,9 +38,11 @@ def fake_join(role="editor", colour="#112233"):
     appconfig.set_many({"TEAM_SERVER_URL": "http://127.0.0.1:9"})
     appconfig.set_secret("TEAM_DEVICE_TOKEN", "t")
     team._save("state.json", {"member": {"id": 7, "name": "Me", "role": role, "colour": colour}, "team": "T", "cursor": 0})
-def fake_api(pages, fail_post=None):
+def fake_api(pages, fail_post=None, health=None):
     calls = []
     def api(method, path, body=None, timeout=None):
+        if path == "/api/v1/health":
+            return health or {"ok": True, "protocol": team.PROTOCOL, "version": "9.9.9", "team": "T"}
         calls.append((method, path))
         if method == "POST":
             if fail_post:
@@ -493,6 +495,64 @@ out = {"s1": s1, "s2": s2, "cursor": team._state()["cursor"], "calls": calls, "a
         self.assertEqual(r["a2"]["title"], "two")
         self.assertEqual(r["cursor"], 2)
         self.assertEqual(r["box"], [])
+
+    def test_protocol_messages(self):
+        r = self.run_in(self.home(), """
+P = team.PROTOCOL
+out = {"same": team.protocol_problem({"ok": True, "protocol": P, "version": "0.1.0"}),
+       "older": team.protocol_problem({"protocol": P - 1, "version": "0.0.9"}),
+       "newer": team.protocol_problem({"protocol": P + 1, "version": "2.0.0"}),
+       "bad": [team.protocol_problem(b) for b in ({}, {"protocol": "1"}, {"protocol": True}, None)]}""")
+        self.assertEqual(r["same"], "")
+        self.assertTrue(r["older"].startswith("The team server needs an update"), r["older"])
+        self.assertIn("0.0.9", r["older"])
+        self.assertTrue(r["newer"].startswith("Marketing Studio needs an update"), r["newer"])
+        for m in r["bad"]:
+            self.assertTrue(m.startswith("The team server needs an update"), m)
+
+    def test_server_reports_version_and_protocol(self):
+        with urllib.request.urlopen(self.url + "/api/v1/health", timeout=5) as r:
+            h = json.loads(r.read())
+        self.assertEqual(h["protocol"], 1)
+        self.assertRegex(h["version"], r"^\d+\.\d+\.\d+$")
+        a, _ = self.member("Vic")
+        st = self.sync(a)["status"]
+        self.assertEqual(st["server_version"], h["version"])
+        self.assertEqual(st["server_problem"], "")
+
+    def test_sync_stops_on_another_protocol(self):
+        h = self.home()
+        r = self.run_in(h, """
+fake_join()
+seo_put("x1", {"title": "stays local"})
+calls = fake_api({0: {"items": [item("seo:changes", "t9", 1, {"id": "t9", "title": "theirs"})], "cursor": 1, "more": False}},
+                 health={"ok": True, "protocol": team.PROTOCOL + 1, "version": "2.0.0"})
+s1 = team.sync()
+fake_api({0: {"items": [], "cursor": 0, "more": False}}, health={"ok": True, "protocol": team.PROTOCOL - 1, "version": "0.0.1"})
+s2 = team.sync()
+fake_api({0: {"items": [], "cursor": 0, "more": False}})
+s3 = team.sync()
+out = {"s1": s1, "s2": s2, "s3": s3, "calls": calls, "t9": seo_get("t9")}""")
+        self.assertFalse(r["s1"]["ok"])
+        self.assertEqual([c for c in r["calls"] if c[0] == "POST" or "since=" in c[1]], [])  # nothing sent or pulled
+        self.assertIsNone(r["t9"])
+        self.assertTrue(r["s1"]["message"].startswith("Marketing Studio needs an update"), r["s1"]["message"])
+        self.assertTrue(r["s2"]["message"].startswith("The team server needs an update"), r["s2"]["message"])
+        self.assertEqual(r["s2"]["status"]["server_problem"], r["s2"]["message"])
+        self.assertTrue(r["s3"]["ok"], r["s3"])  # upgraded: checked again, syncs
+        self.assertEqual(r["s3"]["status"]["server_problem"], "")
+        self.assertEqual(r["s3"]["sent"], 1)
+
+    def test_join_refuses_another_protocol(self):
+        r = self.run_in(self.home(), """
+team._http = lambda method, path, body=None, server=None, token=None, timeout=None: {"ok": True, "protocol": 0, "version": "0.0.1"}
+try:
+    team.join("http://127.0.0.1:9/join#abc")
+    out = "joined"
+except team.TeamError as e:
+    out = [str(e), e.status, team.joined()]""")
+        self.assertTrue(r[0].startswith("The team server needs an update"), r)
+        self.assertEqual(r[1:], [426, False])
 
     def test_pull_runs_when_push_fails(self):
         h = self.home()

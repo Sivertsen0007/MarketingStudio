@@ -1,4 +1,4 @@
-"""Command line: serve, init, invite, members, revoke.
+"""Command line: serve, init, invite, members, member, revoke, backup, restore.
 
 The admin commands work directly on the data directory, so they run on the server host (or in its container)
 whether or not the server is running.
@@ -8,6 +8,7 @@ import os
 import sys
 
 from . import __version__
+from . import backup as backup_mod
 from .app import TeamServer, invite_links
 from . import notify
 from .store import ApiError, Store, iso
@@ -94,10 +95,57 @@ def cmd_members(args):
     return 0
 
 
+def cmd_member(args):
+    """Change a member's role, approver flag or active state from the host (with an owner's rights)."""
+    store = open_store(args)
+    body = {}
+    if args.role:
+        body["role"] = args.role
+    if args.approver:
+        body["approver"] = args.approver == "yes"
+    if args.active:
+        body["active"] = args.active == "yes"
+    owner = next((m for m in store.list_members() if m["role"] == "owner" and m["active"]), None)
+    if not owner:
+        print("Error: the team has no active owner yet (run init and join first)", file=sys.stderr)
+        return 1
+    store.update_member(owner, args.member, body)  # the same rules as the app: e.g. the last owner stays an owner
+    m = next(x for x in store.list_members() if x["id"] == args.member)
+    print("%d  %s  %s%s%s" % (m["id"], m["email"], m["role"], ", approver" if m["approver"] else "",
+                              "" if m["active"] else ", inactive (devices signed out)"))
+    return 0
+
+
 def cmd_revoke(args):
     store = open_store(args)
     store.revoke_device(None, args.device)
     print("Device %s revoked." % args.device)
+    return 0
+
+
+def cmd_backup(args):
+    try:
+        info = backup_mod.backup(data_dir(args), args.out, force=args.force)
+    except backup_mod.BackupError as e:
+        print("Error: %s" % e, file=sys.stderr)
+        return 1
+    print("Backed up '%s' to %s (%d members, %d items, event %d)." % (
+        info["team"], os.path.abspath(args.out), info["members"], info["items"], info["events"]))
+    return 0
+
+
+def cmd_restore(args):
+    try:
+        info = backup_mod.restore(data_dir(args), args.file, yes=args.yes)
+    except backup_mod.BackupError as e:
+        print("Error: %s" % e, file=sys.stderr)
+        return 1
+    print("Restored '%s' from %s (%d members, %d items, event %d)." % (
+        info["team"], args.file, info["members"], info["items"], info["events"]))
+    if info["kept"]:
+        print("The database it replaced is kept as %s" % info["kept"])
+    print("Start the server again. Studio copies sync on their own; anything changed after this backup was made is gone "
+          "from the server, so members with newer local edits should sync to send them again.")
     return 0
 
 
@@ -136,6 +184,20 @@ def main(argv=None):
     sp.add_argument("--public-url")
 
     add("members", cmd_members, "list members, devices and pending invites")
+
+    sp = add("member", cmd_member, "change a member's role, approver flag or active state")
+    sp.add_argument("member", type=int, help="member id (see `members`)")
+    sp.add_argument("--role", choices=["owner", "admin", "editor", "viewer"])
+    sp.add_argument("--approver", choices=["yes", "no"], help="may approve other people's work")
+    sp.add_argument("--active", choices=["yes", "no"], help="no: deactivate and sign out every device")
+
+    sp = add("backup", cmd_backup, "copy the team database to a file (safe while the server runs)")
+    sp.add_argument("--out", required=True, help="backup file to write, e.g. backups/team-$(date +%%F).db")
+    sp.add_argument("--force", action="store_true", help="replace --out when it already exists")
+
+    sp = add("restore", cmd_restore, "replace the team database with a backup (stop the server first)")
+    sp.add_argument("file", help="a file made by `backup`")
+    sp.add_argument("--yes", action="store_true", help="replace the existing database (it is kept next to it)")
 
     sp = add("revoke", cmd_revoke, "revoke a device token")
     sp.add_argument("device", type=int, help="device id (see `members`)")

@@ -8,3 +8,7 @@ dist/
 .env*
 settings.json
 *_cache*.json
+!.env.example
+teamserver/backups/*
+!teamserver/backups/.gitkeep
+teamdata/

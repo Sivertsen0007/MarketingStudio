@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cut a Marketing Studio release: bump VERSION, build, sign, zip, tag, publish.
 #
-#   ./release.sh patch|minor|major|X.Y.Z [--notes FILE] [--dry-run] [--allow-branch]
+#   ./release.sh patch|minor|major|X.Y.Z [--notes FILE] [--dry-run] [--allow-branch] [--teamserver-image]
 #
 # Every copy of the app installed from a release checks GitHub for the newest
 # one and offers it ("Update now"), so publishing here IS shipping to everyone.
@@ -12,6 +12,12 @@
 # --dry-run      build and zip into dist/ but change nothing: no commit, no tag,
 #                no push, no GitHub release.
 # --allow-branch release from a branch other than main.
+# --teamserver-image  OPTIONAL, off by default: after the app release is out, also build the team server
+#                image (teamserver/Dockerfile) for linux/amd64 and linux/arm64 with docker buildx and push
+#                it to $TS_IMAGE:<version> and :latest. Needs docker with buildx and a prior
+#                `docker login ghcr.io` with a token that may write packages. Without the flag nothing
+#                about the app release changes. With --dry-run it only prints what it would run.
+#                Multi-platform builds need a buildx builder that can do them, once: docker buildx create --use
 #
 # Must run on the Mac that holds the "Mattdaemon Local Signing" certificate (MSTUDIO_SIGN_ID).
 # Installed copies only accept an update signed by the same certificate as
@@ -20,21 +26,24 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-BUMP="" NOTES_FILE="" DRY=0 ALLOW_BRANCH=0
+BUMP="" NOTES_FILE="" DRY=0 ALLOW_BRANCH=0 TS_IMAGE_STEP=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --notes) NOTES_FILE="$2"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
         --allow-branch) ALLOW_BRANCH=1; shift ;;
+        --teamserver-image) TS_IMAGE_STEP=1; shift ;;
         patch|minor|major) BUMP="$1"; shift ;;
         [0-9]*.[0-9]*.[0-9]*) BUMP="$1"; shift ;;
-        *) echo "usage: $0 patch|minor|major|X.Y.Z [--notes FILE] [--dry-run] [--allow-branch]" >&2; exit 2 ;;
+        *) echo "usage: $0 patch|minor|major|X.Y.Z [--notes FILE] [--dry-run] [--allow-branch] [--teamserver-image]" >&2; exit 2 ;;
     esac
 done
 [[ -n "$BUMP" ]] || { echo "usage: $0 patch|minor|major|X.Y.Z [--notes FILE] [--dry-run]" >&2; exit 2; }
 
 REPO="Sivertsen0007/MarketingStudio"
 ASSET="MarketingStudio-macOS-arm64.zip"
+TS_IMAGE="ghcr.io/sivertsen0007/marketingstudio-teamserver"
+TS_PLATFORMS="linux/amd64,linux/arm64"
 SIGN_ID="${MSTUDIO_SIGN_ID:-Mattdaemon Local Signing}"
 
 die() { echo "!! $*" >&2; exit 1; }
@@ -52,6 +61,15 @@ else
 fi
 if [[ "$BRANCH" != "main" && "$ALLOW_BRANCH" != 1 ]]; then
     die "on branch $BRANCH - releases come from main (or pass --allow-branch)"
+fi
+# The optional team server image: refuse before anything changes when docker or buildx is missing.
+if [[ "$TS_IMAGE_STEP" == 1 ]]; then
+    command -v docker >/dev/null 2>&1 \
+        || die "--teamserver-image needs docker, which is not installed here. Leave the flag off to release only the app."
+    docker buildx version >/dev/null 2>&1 \
+        || die "--teamserver-image needs docker buildx (docker buildx version failed). Leave the flag off to release only the app."
+    [[ "$DRY" == 1 ]] || docker info >/dev/null 2>&1 \
+        || die "--teamserver-image: the docker daemon is not running. Start it, or leave the flag off."
 fi
 security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_ID" \
     || die "signing identity \"$SIGN_ID\" is not on this Mac - releases must be signed with it"
@@ -107,7 +125,19 @@ ditto -c -k --keepParent "$APP" "dist/$ASSET"
 SHA="$(shasum -a 256 "dist/$ASSET" | cut -d' ' -f1)"
 echo "==> dist/$ASSET  sha256 $SHA"
 
+# The optional team server image (only with --teamserver-image), run after the app release below.
+TS_CMD=(docker buildx build --platform "$TS_PLATFORMS" -f teamserver/Dockerfile
+        --label "org.opencontainers.image.source=https://github.com/$REPO"
+        --label "org.opencontainers.image.version=$NEW"
+        --label "org.opencontainers.image.licenses=MIT"
+        -t "$TS_IMAGE:$NEW" -t "$TS_IMAGE:latest" --push .)
+ts_image_cmd() { printf '%q ' "${TS_CMD[@]}"; }
+
 if [[ "$DRY" == 1 ]]; then
+    if [[ "$TS_IMAGE_STEP" == 1 ]]; then
+        echo "==> Dry run: would build and push the team server image with:"
+        echo "    $(ts_image_cmd)"
+    fi
     echo "==> Dry run: nothing committed, tagged or published. VERSION is back at $CUR."
     exit 0
 fi
@@ -129,3 +159,11 @@ fi
 gh release create "v$NEW" "dist/$ASSET" -R "$REPO" \
     --title "Marketing Studio $NEW" --notes-file "$NOTES"
 echo "==> Published v$NEW. Installed copies offer it at their next start, or within a day."
+
+if [[ "$TS_IMAGE_STEP" == 1 ]]; then
+    echo "==> Team server image $TS_IMAGE:$NEW (+ :latest) for $TS_PLATFORMS"
+    if ! "${TS_CMD[@]}"; then
+        die "the app release v$NEW is out, but the team server image was not pushed. Check \`docker login ghcr.io\`, then run from the v$NEW tag: $(ts_image_cmd)"
+    fi
+    echo "==> Pushed $TS_IMAGE:$NEW and :latest."
+fi

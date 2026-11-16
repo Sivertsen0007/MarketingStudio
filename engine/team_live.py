@@ -583,13 +583,19 @@ def state():
     out = {"joined": True, "removed": False, "me": me, "team": st.get("team"), "ping": ping(),
            "members": [{"id": int(k) if str(k).isdigit() else k, **v} for k, v in mem.items()]}
     for k, fn in (("presence", lambda: presence()["presence"]), ("claims", lambda: claims()["claims"]),
-                  ("unread", lambda: mentions(True)["unread"])):
+                  ("unread", _bell_unread)):
         try:
             out[k] = fn()
         except (team.TeamError, ValueError) as e:
             out[k] = [] if k != "unread" else 0
             out["error"] = str(e)
     return out
+
+
+def _bell_unread():
+    """The top bar's number: unread notifications (team_notify.py), or unread @mentions on an older server."""
+    import team_notify  # noqa: PLC0415
+    return team_notify.unread()
 
 
 # ---------- HTTP routes (server.py: /api/team/live/<name>) ----------

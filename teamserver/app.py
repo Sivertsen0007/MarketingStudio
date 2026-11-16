@@ -18,6 +18,7 @@ from . import PROTOCOL, __version__
 from . import reviews
 from .store import ApiError, MANAGERS, Store, iso
 from . import teamsettings
+from . import notify
 
 MAX_BODY_BYTES = 4 * 1024 * 1024
 JOIN_LIMIT = (10, 60)        # attempts per IP per window (seconds)
@@ -464,7 +465,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def r_mentions_read(self, query, body):
         ctx = self.authed(query)
-        return self.team.store.mark_read(ctx["member"]["id"], body.get("ids"))
+        out = self.team.store.mark_read(ctx["member"]["id"], body.get("ids"))
+        self.team.notifier.mentions_read(ctx["member"]["id"], body.get("ids"))  # their notifications too
+        return out
 
     def r_presence_post(self, query, body):
         ctx = self.authed(query)
@@ -624,6 +627,7 @@ ROUTES = [
 ]
 ROUTES += [_r(m, p, fn) for m, p, fn in reviews.ROUTES]  # reviews, approval policy, owners (reviews.py)
 ROUTES += teamsettings.routes(_r)  # team settings (teamsettings.py)
+ROUTES += notify.routes(_r)  # notifications, prefs, Focus and Away (notify.py)
 
 
 _BUSY = (b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 34\r\n"
@@ -687,7 +691,8 @@ class TeamServer:
                  ping_interval=20.0, verbose=False, trust_proxy=False, max_connections=MAX_CONNECTIONS,
                  max_streams_per_device=MAX_STREAMS_PER_DEVICE, request_timeout=REQUEST_TIMEOUT,
                  device_check_interval=DEVICE_CHECK_INTERVAL, request_deadline=REQUEST_DEADLINE,
-                 max_connections_per_ip=MAX_CONNECTIONS_PER_IP):
+                 max_connections_per_ip=MAX_CONNECTIONS_PER_IP, smtp=None, allow_private_webhooks=False,
+                 notify_interval=1.0):
         os.makedirs(data_dir, exist_ok=True)
         self.clock = clock or time.time
         self.store = Store(os.path.join(data_dir, "team.db"), clock=self.clock)
@@ -695,6 +700,9 @@ class TeamServer:
         self.broker = Broker()
         self.store.on_emit = self.broker.publish
         reviews.install(self.store)
+        # notify_interval None: no sender thread (tests call notifier.run_once())
+        self.notifier = notify.install(self.store, smtp=smtp, allow_private_webhooks=allow_private_webhooks,
+                                       interval=notify_interval)
         self.public_url = public_url
         self.ping_interval = ping_interval
         self.verbose = verbose
@@ -740,12 +748,14 @@ class TeamServer:
             t = threading.Thread(target=target, daemon=True)
             t.start()
             self._threads.append(t)
+        self.notifier.start(self.stopping)
         return self
 
     def serve_forever(self):
         """Serve in the foreground until Ctrl-C."""
         t = threading.Thread(target=self._expiry_loop, daemon=True)
         t.start()
+        self.notifier.start(self.stopping)
         try:
             self.httpd.serve_forever()
         except KeyboardInterrupt:
@@ -757,7 +767,11 @@ class TeamServer:
         if self.stopping.is_set():
             return
         self.stopping.set()
+        self.notifier.wake.set()
         self.broker.close_all()
         self.httpd.shutdown()
         self.httpd.server_close()
+        t = self.notifier.thread  # daemon; give a pass in progress a moment to finish before the database closes
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout=2.0)
         self.store.close()

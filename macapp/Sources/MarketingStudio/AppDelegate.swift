@@ -293,14 +293,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     /// A marketingstudio://join?server=..&invite=.. link (team invite) waiting to be handed to the page.
     private var pendingJoin: String?
+    /// A marketingstudio://open?coll=..&id=.. link (from a team notification email or webhook): its query, for the page.
+    private var pendingOpen: String?
 
     /// Team invite links: the page gets them as #team-join=<link> and opens Setup > Team with the link filled in
     /// (the person still presses Join). Works on a cold start too: the link waits until the engine answers.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme?.lowercased() == "marketingstudio" && url.host?.lowercased() == "join" {
-            pendingJoin = url.absoluteString
+        for url in urls where url.scheme?.lowercased() == "marketingstudio" {
+            if url.host?.lowercased() == "join" { pendingJoin = url.absoluteString }
+            if url.host?.lowercased() == "open" { pendingOpen = url.query ?? "" }
         }
-        guard pendingJoin != nil, window != nil else { return }
+        guard pendingJoin != nil || pendingOpen != nil, window != nil else { return }
         showWindow()
         if studioLoaded { loadStudio() }
     }
@@ -312,6 +315,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
            let enc = link.addingPercentEncoding(withAllowedCharacters: .alphanumerics) {
             address += "#team-join=" + enc
             pendingJoin = nil
+        } else if let query = pendingOpen,
+                  let enc = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) {
+            address += "#team-open=" + enc  // team_notify.js jumps to the item
+            pendingOpen = nil
         }
         guard let url = URL(string: address) else { return }
         webView.load(URLRequest(url: url))

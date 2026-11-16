@@ -161,8 +161,56 @@ Two ordinary item collections, synced like drafts (`/api/v1/items`, versions, me
 - `GET /api/v1/stream` (text/event-stream, auth header or `?token=`): `event: items` `{cursor}`, `event: event` `{seq}`,
   `event: presence`, `event: comment` `{coll, id}`, `event: mention` `{comment_id}` (only to the mentioned member),
   `event: review` `{id, status}` (reviewers and requester), `event: policy`, `event: owners`,
-  `event: settings` `{key, version}`.
+  `event: settings` `{key, version}`, `event: notify` `{id?, unread?, quiet}` (only to that member).
   A `: ping` comment every 20 s.
+
+## Notifications
+
+notification `{id, kind, actor, area, coll, item_id, text, data, at, read, link}`  link: `marketingstudio://open?coll=..&id=..`
+(or `?area=..` when there is no item). For a review, coll is `review` and item_id the review id.
+
+- Rules (what pings a member; the server decides, per member):
+  always (on by default; each can be turned off in `rules`): `review_requested` (a review addressed to you),
+  `mention` (a comment, or an edit of one, that @mentions you), `review_decided` (your own request approved or sent
+  back), `pending_changed` (someone else changed an item you have pending: your last write to it was tagged with a
+  changeset and you have not reported a push / publish listing it since), `claim` (a claim on something you own: an
+  owner scope that is the collection, `coll/id` or a scope above it, or an item you created).
+  follow (off by default, per area `ads`, `email`, `seo`, `social`): `push`, `publish`, `send_to_editor` events in that
+  area. Item writes (edit sessions) never ping anyone, except the `pending_changed` case. Your own actions never ping you.
+- `GET /api/v1/notify/prefs` -> `{prefs, server: {email}, rules, areas, timings}`; `PUT /api/v1/notify/prefs {partial prefs}`
+  (merged; any member, for themselves). prefs:
+  `{rules: {kind: bool}, follow: {area: bool}, bell: {timing}, email: {on, timing, last_error},
+  webhook: {on, timing, set, host, last_error}, daily_at: "HH:MM", tz_offset: minutes east of UTC (-840..840),
+  focus: {on, until, active}, away: {on, until, backup, backup_ok, active}}`. timing: `instant`, `hourly` (sent on the
+  hour), `daily` (at daily_at in the member's tz_offset). Defaults: every rule on, follow nothing, bell instant, email and
+  webhook off, daily_at 09:00. `until`: ISO 8601 or null (until turned off). `server.email`: the server has SMTP settings.
+- Webhook: `PUT {webhook: {url}}` sets it (`""` or null removes it). The URL is write-only (GET shows only `set` and the
+  `host`): it often holds a secret. It must be `https://`, without user info, and every address its host resolves to
+  must be public (no loopback, private, link-local, shared or reserved ranges, and no IPv6 forms that carry an IPv4
+  address: IPv4-compatible, 6to4, Teredo, NAT64); the sender connects to the checked
+  address. A server started with `--allow-private-webhooks` (tests, private networks) also accepts private addresses,
+  and plain `http://` only for those. Payload: `{"text": "..."}` (Slack-compatible; a Telegram bot URL
+  `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>` works the same way).
+- Delivery: every notification goes on the bell. Email (plain text, short, with the app link) goes to the member's
+  address when `email.on` and the server has SMTP settings; the webhook when `webhook.on` and a URL is set. Several
+  notifications due at once go as one digest. `review_requested` and `mention` are always instant on the bell, whatever
+  `bell.timing`. Focus (`focus.on`, until a time or until turned off): the bell still counts (SSE `notify` with
+  `quiet: true`), email and webhook wait and go as one digest when Focus ends. Away (`away.on`): the same, plus each new
+  review addressed to you is also routed to `away.backup`: the server adds them as a reviewer when they may approve it
+  (active, approver or admin / owner, not the requester, never wrote an item in it; `backup_ok` shows the first part),
+  else the review stays with the reviewers asked. The review's response does not yet list the backup; GET it again.
+- Sending: a background thread with retry and backoff (30 s doubling to 1 h, 6 tries, then the batch is marked failed;
+  `last_error` shows the latest failure, never the URL), rate limited per member (email 12, webhook 30 messages an hour;
+  the rest waits and goes as one digest). Nothing in a message comes from settings or tokens: only the notification
+  text and the app link. Notifications older than 90 days are deleted.
+- `GET /api/v1/notifications?unread=1&limit=50&before=<id>` -> `{notifications, unread, more, next_before}` (unread
+  first, then read, each newest first; only what is on the bell; pass `before=next_before` for the next page: a positive
+  id while still in the unread part, a negative one in the read part). `POST /api/v1/notifications/read {ids: [id]} | {all: true}` -> `{ok, updated, unread}`.
+  Marking a `mention` notification read marks its mention read, and `POST /api/v1/mentions/read` marks the matching
+  mention notifications read.
+- `POST /api/v1/notify/test {channel: email|webhook}` -> `{ok, error?}`: a test message now (5 per 10 minutes).
+- SSE `event: notify` `{id?, unread?, quiet}` to the member only, when something lands on their bell or they marked
+  notifications read.
 
 ## Health
 

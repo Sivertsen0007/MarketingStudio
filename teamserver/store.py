@@ -169,6 +169,10 @@ class Store:
         self.clock = clock or time.time
         self.lock = threading.RLock()
         self.on_emit = None
+        # Hook for teamserver/notify.py: on_events(entries) after each committed transaction that added events.
+        # entries: ("event", rowid) or ("edit_session", rowid, actor id, [(coll, id) written in that batch]).
+        self.on_events = None
+        self._fresh = []
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None, timeout=10)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -203,9 +207,16 @@ class Store:
                 yield self.db
             except BaseException:
                 self.db.execute("ROLLBACK")
+                self._fresh = []
                 raise
             else:
                 self.db.execute("COMMIT")
+                fresh, self._fresh = self._fresh, []
+        if fresh and self.on_events:  # after the lock: the hook runs its own transactions
+            try:
+                self.on_events(fresh)
+            except Exception:
+                pass
 
     def q(self, sql, args=()):
         with self.lock:
@@ -669,8 +680,10 @@ class Store:
     def _add_event(self, db, actor_id, kind, area, coll, iid, summary, data):
         """Insert an event inside a transaction and return its seq."""
         seq = self._next(db, "event_seq")
-        db.execute("INSERT INTO events(seq, at, actor, kind, area, coll, item_id, summary, data) VALUES(?,?,?,?,?,?,?,?,?)",
-                   (seq, self.now(), actor_id, kind, area, coll, iid, summary, json.dumps(data or {})))
+        cur = db.execute("INSERT INTO events(seq, at, actor, kind, area, coll, item_id, summary, data)"
+                         " VALUES(?,?,?,?,?,?,?,?,?)",
+                         (seq, self.now(), actor_id, kind, area, coll, iid, summary, json.dumps(data or {})))
+        self._fresh.append(("event", cur.lastrowid))
         return seq
 
     def _touch_session(self, db, actor, touched, now):
@@ -710,6 +723,7 @@ class Store:
                        " started_at=excluded.started_at, last_at=excluded.last_at, items=excluded.items,"
                        " writes=excluded.writes",
                        (actor["id"], rowid, now, now, json.dumps(keys), len(touched)))
+        self._fresh.append(("edit_session", rowid, actor["id"], list(touched)))
         return seq
 
     @staticmethod

@@ -135,6 +135,11 @@ F_ADSET = ("id,name,campaign_id,status,effective_status,daily_budget,lifetime_bu
 F_AD = ("id,name,adset_id,campaign_id,status,effective_status,updated_time,"
         "creative{id,name,object_type,object_story_spec,asset_feed_spec,object_story_id,thumbnail_url,image_url,url_tags,degrees_of_freedom_spec,"
         "body,title,link_url,call_to_action_type,effective_object_story_id}")
+# effective_status filters for the list reads: everything except DELETED and ARCHIVED (Meta's own values per object),
+# so a long-running account's archive isn't paged through on every Refresh.
+LIVE_CAMP = ["ACTIVE", "PAUSED", "IN_PROCESS", "WITH_ISSUES"]
+LIVE_ADSET = LIVE_CAMP + ["CAMPAIGN_PAUSED"]
+LIVE_AD = LIVE_ADSET + ["ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED", "PREAPPROVED", "PENDING_BILLING_INFO"]
 F_AUD = "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,time_updated,operation_status"
 F_INS = "spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,actions,conversions"
 # Custom pixel events Meta reports under "conversions" (offsite_conversion.fb_pixel_custom.<Event>): our column key -> event name.
@@ -151,9 +156,9 @@ def _cache_file():
 def refresh():
     """Pull the whole account (5-8 paged calls) and cache it."""
     data = {"account": get(act(), fields="name,currency,timezone_name,account_status"),
-            "campaigns": get_all(f"{act()}/campaigns", fields=F_CAMP),
-            "adsets": get_all(f"{act()}/adsets", fields=F_ADSET),
-            "ads": get_all(f"{act()}/ads", fields=F_AD),
+            "campaigns": get_all(f"{act()}/campaigns", fields=F_CAMP, effective_status=LIVE_CAMP),
+            "adsets": get_all(f"{act()}/adsets", fields=F_ADSET, effective_status=LIVE_ADSET),
+            "ads": get_all(f"{act()}/ads", fields=F_AD, effective_status=LIVE_AD),
             "audiences": get_all(f"{act()}/customaudiences", fields=F_AUD),
             "insights": {}}
     for level in ("campaign", "adset", "ad"):

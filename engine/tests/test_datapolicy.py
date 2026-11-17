@@ -328,6 +328,49 @@ class Mcp(Base):
         self.assertEqual(self.built, [], "an MCP read uses the cached data")
 
 
+class ModeSwitch(Base):
+    """The Settings switch (POST /api/settings/data_policy): manual stays the default, auto only when chosen."""
+
+    def test_set_mode(self):
+        (TMP / "settings.json").write_text(json.dumps({"views": [{"name": "Mine"}], "meta_accounts": []}))
+        self.assertEqual(datapolicy.mode(), "manual")
+        self.assertEqual(datapolicy.set_mode("auto"), {"data_policy": "auto"})
+        self.assertTrue(datapolicy.background_ok())
+        kept = json.loads((TMP / "settings.json").read_text())
+        self.assertEqual((kept["views"], kept["data_policy"]), ([{"name": "Mine"}], "auto"))  # other settings kept
+        datapolicy.set_mode("manual")
+        self.assertTrue(datapolicy.manual())
+        for bad in ("Auto", "", None, "always"):
+            with self.assertRaises(ValueError):
+                datapolicy.set_mode(bad)
+        self.assertEqual(datapolicy.mode(), "manual")
+
+    def test_route_and_scheduler_hold(self):
+        import http.client
+        import scheduler
+        from http.server import ThreadingHTTPServer
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), server.H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+
+        def post(body, press=True):
+            c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+            h = {"Content-Type": "application/json"}
+            if press:
+                h["X-Studio-Press"] = server.PRESS
+            c.request("POST", "/api/settings/data_policy", json.dumps(body), h)
+            r = c.getresponse()
+            return r.status, json.loads(r.read())
+        self.assertEqual(post({"mode": "auto"}, press=False)[0], 403)
+        self.assertEqual(datapolicy.mode(), "manual")
+        self.assertEqual(post({"mode": "nonsense"})[0], 400)
+        self.assertEqual(post({"mode": "auto"}), (200, {"data_policy": "auto"}))
+        self.assertEqual(scheduler.status()["policy"], "auto")
+        self.assertEqual(post({"mode": "manual"}), (200, {"data_policy": "manual"}))
+        self.assertEqual(scheduler.status()["policy"], "manual")
+
+
 class CallLog(unittest.TestCase):
     def test_counts_host_and_path_without_query(self):
         os.environ["STUDIO_CALL_LOG"] = "1"

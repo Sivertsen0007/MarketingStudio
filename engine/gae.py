@@ -26,7 +26,7 @@ Usage:
   gae history ["<campaign>"] [--days N] what Claude proposed + what was posted live
   Global: --account ml|mluk|<customer id>   (default ml)
 """
-import argparse, csv, datetime as dt, json, os, re, sqlite3, sys
+import argparse, csv, datetime as dt, json, os, re, sqlite3, sys, unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -366,6 +366,12 @@ LIMITS = {"Headline": 30, "Description": 90, "Path": 15, "Link Text": 25, "Descr
           "Snippet Values": 999, "Item": 25}
 
 
+def width(text):
+    """Length as Google Ads counts it for its limits: double-width characters (Chinese, Japanese, Korean and other
+    East Asian wide / full-width characters) count as 2."""
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in str(text or ""))
+
+
 def _block_rules():
     """The Google Ads "block" copy rules from Studio's settings (team_settings, key copy_rules):
     -> ([(pattern, message)] checked before the length limits, [...] after them)."""
@@ -388,8 +394,8 @@ def lint(rows):
                 if rx.search(text):
                     problems.append(f"row {i} {k}: {msg}")
             for prefix, lim in LIMITS.items():
-                if k.startswith(prefix) and not k.endswith("position") and len(v) > lim:
-                    problems.append(f"row {i} {k}: {len(v)} chars > {lim} ({v!r})")
+                if k.startswith(prefix) and not k.endswith("position") and width(v) > lim:
+                    problems.append(f"row {i} {k}: {width(v)} chars > {lim} ({v!r})")
             for rx, msg in late:
                 if rx.search(text):
                     problems.append(f"row {i} {k}: {msg}")

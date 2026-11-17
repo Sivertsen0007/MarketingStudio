@@ -12,6 +12,7 @@ _os.environ["GAE_EDITOR_DIR"] = _tf.mkdtemp(prefix="gae-editor-test-")
 
 import io
 import json
+import os
 import sys
 import unittest
 import urllib.error
@@ -250,6 +251,168 @@ class Flow(Base):
                     yu.status(A, bad)
         self.assertEqual(len(seen), 1)
         self.assertTrue(seen[0].startswith("SELECT "))
+
+
+class Security(Base):
+    """a10: no redirects with the token, GAQL resource fully matched, staged copies cleaned up, granularity capped."""
+
+    def setUp(self):
+        super().setUp()
+        import shutil
+        shutil.rmtree(yu.stage_dir(), ignore_errors=True)
+        self.addCleanup(shutil.rmtree, yu.stage_dir(), True)
+        for f in ("outside.mp4", "keep.mp4"):
+            self.addCleanup(lambda f=f: (yu.stage_dir().parent / f).unlink() if (yu.stage_dir().parent / f).exists() else None)
+
+    def test_redirect_handler_refuses(self):
+        h = [x for x in yu._OPENER.handlers if isinstance(x, urllib.request.HTTPRedirectHandler)]
+        self.assertEqual([type(x) for x in h], [yu._NoRedirect])
+        req = urllib.request.Request(SESSION, b"x", {"Authorization": "Bearer TEST-TOKEN"}, method="PUT")
+        with self.assertRaises(yu.UploadError):
+            h[0].redirect_request(req, None, 302, "Found", {}, "https://evil.example/steal")
+
+    def test_a_redirect_is_never_followed(self):
+        """A real local HTTP server (127.0.0.1 only) answers 302/307 to another local path: the opener stops, the second
+        path is never asked and the token never goes anywhere else."""
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        hits = []
+
+        class Redirector(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _go(self):
+                hits.append((self.command, self.path, self.headers.get("Authorization")))
+                if self.path.startswith("/start"):
+                    self.send_response(307 if self.command == "PUT" else 302)
+                    self.send_header("Location", "/stolen")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"{}")
+            do_GET = do_POST = do_PUT = _go
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Redirector)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        for method in ("POST", "PUT", "GET"):
+            req = urllib.request.Request(base + "/start", b"" if method != "GET" else None, {"Authorization": "Bearer TEST-TOKEN"}, method=method)
+            with self.assertRaises(yu.UploadError):
+                yu._open(req, 5)
+        self.assertEqual([h[1] for h in hits], ["/start"] * 3)
+
+    def test_redirect_during_upload_is_an_upload_error(self):
+        def redirected(req, timeout=None):
+            raise yu.UploadError("Google answered with a redirect (302)")
+        with mock.patch.object(yu, "_open", redirected):
+            with self.assertRaises(yu.UploadError):
+                yu.begin(A, "T", "", 10)
+            with self.assertRaises(yu.UploadError):
+                yu.send(SESSION, self.file, 2560, 256)
+            with self.assertRaises(yu.UploadError):
+                yu._query(SESSION)
+
+    def test_status_resource_fully_matched(self):
+        seen = []
+        with mock.patch.object(live, "query", lambda acct, g: seen.append(g) or []):
+            self.assertEqual(yu.status(A, f"customers/{A}/youTubeVideoUploads/12~34")["state"], "UNKNOWN")
+            for bad in (f"customers/{A}/youTubeVideoUploads/77\n", f"customers/{A}/youTubeVideoUploads/77' OR '1'='1",
+                        f"customers/{A}/youTubeVideoUploads/", f"customers/{A}/youTubeVideoUploads/7/8", f"customers/{A}x/youTubeVideoUploads/7",
+                        f" customers/{A}/youTubeVideoUploads/7", f"customers/{A}/youTubeVideoUploads/\u0661", None):
+                with self.assertRaises(ValueError, msg=repr(bad)):
+                    yu.status(A, bad)
+        self.assertEqual(len(seen), 1)
+
+    def test_granularity_capped(self):
+        def big(req, timeout=None):
+            return Resp({"X-Goog-Upload-URL": SESSION, "X-Goog-Upload-Chunk-Granularity": str(4 * 1024 ** 3)})
+        with mock.patch.object(yu, "_open", big):
+            self.assertEqual(yu.begin(A, "T", "", 10), (SESSION, yu.GRAN_MAX))
+        self.assertEqual(yu._chunk_size(10 * 1024 ** 3), yu.GRAN_MAX)
+        self.assertEqual(yu._chunk_size(-5), yu.CHUNK)
+        with mock.patch.object(yu, "_open", lambda req, timeout=None: Resp({"X-Goog-Upload-URL": SESSION, "X-Goog-Upload-Chunk-Granularity": "-9"})):
+            self.assertEqual(yu.begin(A, "T", "", 10)[1], 0)
+
+    def staged(self, name="clip.mp4"):
+        return Path(yu.stage(io.BytesIO(self.data), len(self.data), name)["file"])
+
+    def test_removing_the_item_deletes_the_staged_copy(self):
+        p = self.staged()
+        iid = core.add(A, [{"type": "video_upload", "file": str(p), "title": "Clip"}])[0]["id"]
+        core.remove(A, [iid])
+        self.assertFalse(p.exists())
+        p2 = self.staged()
+        core.add(A, [{"type": "video_upload", "file": str(p2), "title": "Clip"}, {"type": "video_upload", "file": str(p2), "title": "Same file"}])
+        first = core.draft(A)["items"][0]["id"]
+        core.remove(A, [first])
+        self.assertTrue(p2.exists(), "another item still uses the file")
+        core.clear(A)
+        self.assertFalse(p2.exists())
+
+    def test_files_outside_staging_are_never_deleted(self):
+        iid = core.add(A, [{"type": "video_upload", "file": str(self.file), "title": "Mine"}])[0]["id"]
+        core.remove(A, [iid])
+        self.assertTrue(self.file.exists())
+        sneaky = yu.stage_dir() / ".." / "youtube_staging" / ".." / "keep.mp4"
+        sneaky.resolve().write_bytes(b"x")
+        self.assertEqual(yu.release(A, [{"change": {"type": "video_upload", "file": str(sneaky)}}], []), 0)
+        self.assertTrue(sneaky.resolve().exists())
+        yu.stage_dir().mkdir(parents=True, exist_ok=True)
+        link = yu.stage_dir() / "link.mp4"
+        link.symlink_to(self.file)
+        self.assertEqual(yu.release(A, [{"change": {"type": "video_upload", "file": str(link)}}], []), 0)
+        self.assertTrue(self.file.exists())
+
+    def test_final_refusal_deletes_the_staged_copy(self):
+        p = self.staged()
+        iid = core.add(A, [{"type": "video_upload", "file": str(p), "title": "Clip"}])[0]["id"]
+        self.fake(fail={1: 403})
+        r = yu.upload(A, iid)
+        self.assertFalse(r["ok"])
+        self.assertIn("pick the file again", r["message"])
+        self.assertFalse(p.exists())
+        self.assertEqual(len(core.draft(A)["items"]), 1)
+
+    def test_temporary_failures_keep_the_staged_copy(self):
+        p = self.staged()
+        iid = core.add(A, [{"type": "video_upload", "file": str(p), "title": "Clip"}])[0]["id"]
+        self.fake(start_error=400)  # refused at the start: the title can be fixed, the file is still good
+        self.assertFalse(yu.upload(A, iid)["ok"])
+        self.assertTrue(p.exists())
+        self.fake(fail={i: 503 for i in range(1, 10)})  # the connection kept dropping
+        self.assertFalse(yu.upload(A, iid)["ok"])
+        self.assertTrue(p.exists())
+
+    def test_sweep_old_unused_staging_files(self):
+        import time as _t
+        old, used, fresh = self.staged("old.mp4"), self.staged("used.mp4"), self.staged("fresh.mp4")
+        part = yu.stage_dir() / "x.mp4.part"
+        part.write_bytes(b"x")
+        outside = yu.stage_dir().parent / "outside.mp4"
+        outside.write_bytes(b"x")
+        link = yu.stage_dir() / "link.mp4"
+        link.symlink_to(outside)
+        week = _t.time() - 8 * 86400
+        for f in (old, used, part, outside):
+            os.utime(f, (week, week))
+        os.utime(link, (week, week), follow_symlinks=False)
+        core.add(A, [{"type": "video_upload", "file": str(used), "title": "Still waiting"}])
+        gone = yu.sweep()
+        self.assertEqual(sorted(gone), sorted([old.name, part.name]))
+        self.assertFalse(old.exists())
+        self.assertTrue(used.exists() and fresh.exists() and outside.exists() and link.is_symlink())
+
+    def test_meta_post_has_no_video_routes(self):
+        src = (Path(__file__).resolve().parents[1] / "server.py").read_text()
+        meta_post = src.split("def _meta_post", 1)[1].split("\ndef ", 1)[0]
+        self.assertNotIn("/api/videos", meta_post)
+        self.assertNotIn("youtube_upload", meta_post)
+        self.assertIn("youtube_upload.sweep()", src)
 
 
 class Staging(Base):

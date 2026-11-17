@@ -438,6 +438,53 @@ class Job(unittest.TestCase):
         scheduler._reset_for_tests()
 
 
+class Polish(unittest.TestCase):
+    def test_no_history_is_not_enough_data(self):
+        f = pacing.forecast({AS_OF.isoformat(): 0.0}, AS_OF, budget=50.0, active=True)
+        self.assertFalse(f["enough"])
+        self.assertTrue(pacing.forecast({}, AS_OF, active=False)["enough"])  # paused: nothing more is the forecast
+        snap = g_snap(G_ACCT)
+        new = dict(next(c for c in snap["campaigns"] if c["id"] == "11"), id="77", name="Brand new", daily={})
+        only_new = {**snap, "campaigns": [new]}
+        tg = {**TG, "accounts": {G_ACCT["id"]: {"monthly": 3000, "campaigns": {"77": 500}}}}
+        v = pacing.account_view(G_ACCT, only_new, tg)
+        c = v["campaigns"][0]
+        self.assertEqual((c["forecast"], c["enough_data"], c["flag"]), (None, False, "no_data"))
+        self.assertEqual((v["forecast"], v["enough_data"], v["flag"]), (None, False, "no_data"))
+        both = {**snap, "campaigns": snap["campaigns"] + [new]}
+        v = pacing.account_view(G_ACCT, both, {**TG, "accounts": {G_ACCT["id"]: {"monthly": 6000, "campaigns": {}}}})
+        self.assertTrue(v["enough_data"])
+        self.assertIsNotNone(v["forecast"])
+        self.assertIn("Brand new", v["no_data_campaigns"])
+        self.assertIn(v["flag"], ("over", "under", "on_track"))
+
+    def test_meta_ad_sets_read_without_the_archive(self):
+        get, get_all, sent = meta_fakes()
+        pacing.fetch_meta("act_555", get=get, get_all=get_all, now=NOW)
+        by = {path.rsplit("/", 1)[1]: p for _, path, p in sent if path.endswith(("/campaigns", "/adsets"))}
+        self.assertNotIn("effective_status", by["campaigns"])  # a deleted campaign that spent this month still counts
+        self.assertEqual(set(by["adsets"]["effective_status"]) & {"DELETED", "ARCHIVED"}, set())
+        self.assertIn("CAMPAIGN_PAUSED", by["adsets"]["effective_status"])
+
+    def test_targets_stay_local_unless_shared(self):
+        seen = []
+        with mock.patch.object(team_settings, "save", lambda key, value, scope="local": seen.append((key, value, scope))):
+            pacing.save_targets({"account": "1234567890", "monthly": 100, "share": "yes"})
+            pacing.save_targets({"account": "1234567890", "monthly": 100})
+            pacing.save_targets({"share": True})
+            pacing.save_targets({"unshare": True})
+        self.assertEqual([x[2] for x in seen], ["local", "local", "team", "team"])
+        self.assertIsNone(seen[3][1])  # stop sharing: everyone goes back to their own
+        with self.assertRaises(ValueError):
+            pacing.save_targets({"unshare": True})  # not in a team
+
+    def test_ui_escapes_and_says_not_enough_data(self):
+        js = (HERE / "static/pacing.js").read_text(encoding="utf-8")
+        self.assertIn("not enough data", js)
+        self.assertIn('h(cur(a.mtd, c))', js)
+        self.assertNotIn('placeholder="none" style="width:110px" ${dis}>`, c]', js)  # the currency code is escaped
+
+
 class Text(unittest.TestCase):
     def test_house_style(self):
         for f in ("pacing.py", "areas/pacing.py", "static/pacing.js", "tests/test_pacing.py"):

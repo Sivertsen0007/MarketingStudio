@@ -95,10 +95,20 @@ RSA_LIVE = {"1": {"headlines": [{"text": "Dive the reef", "pinnedField": "HEADLI
                   "descriptions": [{"text": "D1"}, {"text": "D2"}]}}
 
 
+PMAX_COUNT = {"n": 5, "enabled": 5}  # headlines in asset group 40 now (the counts read before a PMax text change)
+
+
 def fake_google(log):
     def query(cid, gaql):
         log.append(gaql)
         assert gaql.lstrip().startswith("SELECT")
+        if "asset_group_asset.source" in gaql:
+            assert "asset_group.id IN (40)" in gaql and "field_type = HEADLINE" in gaql, gaql
+            return [{"assetGroup": {"id": "40"}, "assetGroupAsset": {"status": "ENABLED" if i < PMAX_COUNT["enabled"] else "PAUSED",
+                                                                       "source": "ADVERTISER"}} for i in range(PMAX_COUNT["n"])] \
+                + [{"assetGroup": {"id": "40"}, "assetGroupAsset": {"status": "ENABLED", "source": "AUTOMATICALLY_CREATED"}}]
+        if "FROM customer" in gaql:
+            return [{"customer": {"timeZone": "Pacific/Auckland"}}]
         if "FROM ad_group_ad_asset_view" in gaql:
             return google_rows()
         if "FROM asset_group_asset" in gaql:
@@ -228,6 +238,19 @@ class Window(unittest.TestCase):
                     {"start": "2026-11-01", "end": "2030-01-01"}):
             with self.assertRaises(ValueError):
                 creatives.window(**bad)
+
+    def test_ninety_days_in_the_account_time_zone(self):
+        log = []
+        w = creatives.google_window("1234567890", creatives.window(90), fake_google(log))
+        import zoneinfo
+        today = dt.datetime.now(zoneinfo.ZoneInfo("Pacific/Auckland")).date()
+        e = today - dt.timedelta(days=1)
+        self.assertEqual(w["g_cond"], f"segments.date BETWEEN '{e - dt.timedelta(days=89)}' AND '{e}'")
+        self.assertEqual(len(log), 1)
+        self.assertIn("FROM customer", log[0])
+        self.assertEqual(creatives.google_window("1234567890", creatives.window(30), fake_google(log))["g_cond"],
+                         "segments.date DURING LAST_30_DAYS")
+        self.assertEqual(len(log), 1)  # LAST_30_DAYS is already in the account's zone: no read
 
     def test_finish(self):
         m = creatives.finish({"impressions": 1000, "clicks": 50, "cost": 25.0, "conversions": 2, "value": 100.0})
@@ -448,6 +471,32 @@ class Meta(unittest.TestCase):
         with self.assertRaises(meta.MetaError):
             creatives.fetch_meta("act_555", win30(), get=Bad(), busy=None)
 
+    def test_network_error_keeps_what_was_read(self):
+        import urllib.error
+
+        class Drop(FakeMeta):
+            def __call__(self, path, **params):
+                if params.get("breakdowns") == "image_asset":
+                    self.calls.append((path, params))
+                    raise urllib.error.URLError("connection reset")
+                if params.get("breakdowns") == "video_asset":
+                    self.calls.append((path, params))
+                    raise meta.MetaError({"message": "timed out"})  # get_once: no answer from Meta
+                return super().__call__(path, **params)
+        s = creatives.fetch_meta("act_555", win30(), get=Drop(), busy=None)
+        self.assertEqual(set(s["breakdowns"]), {"body_asset", "title_asset", "description_asset"})
+        self.assertEqual(s["missing"][0], "image_asset")
+        self.assertIn("connection reset", s["warnings"][0])
+        snap = creatives.fill_missing(s, win30(), get=Drop(), busy=None, known={})
+        self.assertIn("image_asset", snap["missing"])
+
+    def test_ads_view_labels_wait_for_the_creative(self):
+        s = creatives.fetch_meta("act_555", win30(), get=FakeMeta(), busy=None)
+        s["ads"]["a3"].update(read=False, format="")
+        rows = {m["ad_id"]: m for m in creatives._members(s, "ads")}
+        self.assertEqual(rows["a3"]["field_label"], "Not read yet")
+        self.assertEqual(rows["a1"]["field_label"].split()[0], "Flexible")
+
     def test_no_delivery_one_call(self):
         get = mock.Mock(return_value={"data": []})
         s = creatives.fetch_meta("act_555", win30(), get=get, busy=None)
@@ -569,6 +618,8 @@ class Draft(unittest.TestCase):
         self.gp = creatives.status("1234567890", days=30, view="pmax")
         self.m = creatives.status("meta_555", days=30, view="assets")
         self.ma = creatives.status("meta_555", days=30, view="ads")
+        self.meta_get = FakeMeta()
+        PMAX_COUNT.update(n=5, enabled=5)
 
     def tearDown(self):
         for x in self.p:
@@ -578,6 +629,7 @@ class Draft(unittest.TestCase):
         return next(r["key"] for r in v["rows"] if r["text"] == text)
 
     def add(self, account, view, key, action, **kw):
+        kw.setdefault("meta_get", self.meta_get)
         return creatives.add_to_draft(account, view, key, action, days=30, query=fake_google(self.log), **kw)
 
     def test_rsa_replace_headline_everywhere(self):
@@ -619,17 +671,75 @@ class Draft(unittest.TestCase):
             self.add("1234567890", "ads", img, "delete_everything")
         self.assertEqual(core.draft("1234567890")["items"], [])
 
-    def test_pmax_replace_is_remove_plus_add(self):
+    def test_pmax_replace_is_add_plus_remove(self):
         r = self.add("1234567890", "pmax", self.key(self.gp, "Sail away"), "replace_text", new_text="Sail further")
         self.assertEqual(len(r["added"]), 2)
         ch = [i["change"] for i in core.draft("1234567890")["items"]]
-        self.assertEqual(ch[0], {"type": "pmax_asset", "campaign": "PMax A", "asset_group": "AG one", "field": "headline", "remove": True, "texts": ["Sail away"]})
-        self.assertEqual(ch[1], {"type": "pmax_asset", "campaign": "PMax A", "asset_group": "AG one", "field": "headline", "texts": ["Sail further"]})
-        self.assertFalse(self.log)  # PMax needs no extra read
+        self.assertEqual(ch[0], {"type": "pmax_asset", "campaign": "PMax A", "asset_group": "AG one", "field": "headline", "texts": ["Sail further"]})
+        self.assertEqual(ch[1], {"type": "pmax_asset", "campaign": "PMax A", "asset_group": "AG one", "field": "headline", "remove": True, "texts": ["Sail away"]})
+        self.assertEqual(len(self.log), 1)  # one read of the asset group's counts
+        self.assertIn("asset_group_asset.source", self.log[0])
+
+    def test_pmax_full_group_removes_first(self):
+        PMAX_COUNT.update(n=15, enabled=15)
+        self.add("1234567890", "pmax", self.key(self.gp, "Sail away"), "replace_text", new_text="Sail further")
+        ch = [i["change"] for i in core.draft("1234567890")["items"]]
+        self.assertEqual([bool(c.get("remove")) for c in ch], [True, False])
+
+    def test_pmax_remove_at_minimum_is_skipped(self):
+        PMAX_COUNT.update(n=4, enabled=3)  # 3 enabled (+1 paused, +1 created by Google, which doesn't count)
+        r = self.add("1234567890", "pmax", self.key(self.gp, "Sail away"), "remove_text")
+        self.assertEqual(r["added"], [])
+        self.assertIn("needs at least 3", r["skipped"][0]["why"])
+        PMAX_COUNT.update(n=4, enabled=4)
+        r = self.add("1234567890", "pmax", self.key(self.gp, "Sail away"), "remove_text")
+        self.assertEqual(len(r["added"]), 1)
+
+    def test_pmax_counts_unreadable_still_drafts(self):
+        def broken(cid, gaql):
+            raise OSError("no network in tests")
+        r = creatives.add_to_draft("1234567890", "pmax", self.key(self.gp, "Sail away"), "replace_text", new_text="Sail on", days=30, query=broken)
+        self.assertEqual(len(r["added"]), 2)  # the preview checks the counts again
+
+    def test_rsa_replace_never_duplicates(self):
+        live = {"1": RSA_LIVE["1"], "2": {"headlines": [{"text": "Dive the reef"}, {"text": "Other one"}, {"text": "Dive  the  reef"}, {"text": "Fourth"}],
+                                          "descriptions": [{"text": "D1"}, {"text": "D2"}]}}
+        with mock.patch.dict(RSA_LIVE, live):
+            r = self.add("1234567890", "ads", self.key(self.g, "Dive the reef"), "replace_text", new_text="Dive deeper", ad_ids=["2"])
+        self.assertEqual(len(r["added"]), 1, r)
+        c = core.draft("1234567890")["items"][0]["change"]
+        self.assertEqual([h["text"] for h in c["headlines"]], ["Dive deeper", "Other one", "Fourth"])
+        with self.assertRaises(ValueError):  # same text again
+            self.add("1234567890", "ads", self.key(self.g, "Dive the reef"), "replace_text", new_text="Dive  the reef")
+
+    def test_clash_without_local_id(self):
+        core.add("1234567890", [{"type": "rsa", "edit": True, "campaign": "Search A", "ad_group": "group a",
+                                 "headlines": ["H1", "H2", "H3"], "descriptions": ["D1", "D2"]}])
+        r = self.add("1234567890", "ads", self.key(self.g, "Dive the reef"), "replace_text", new_text="Dive the outer reef")
+        self.assertEqual(len(r["added"]), 1)  # ad 2 (Group B) only
+        self.assertEqual(r["skipped"][0]["name"], "Search A / Group A")
+        self.assertIn("already has a change", r["skipped"][0]["why"])
+        self.assertTrue(creatives._clash("google", [{"change": {"type": "rsa", "ad_id": "1", "headlines": ["x"]}}],
+                                         {"type": "rsa", "local_id": 1, "campaign": "C", "ad_group": "G", "headlines": ["y"]}))
+        self.assertFalse(creatives._clash("google", [{"change": {"type": "rsa", "ad_id": "9", "headlines": ["x"]}}],
+                                          {"type": "rsa", "local_id": 1, "campaign": "C", "ad_group": "G", "headlines": ["y"]}))
+        self.assertFalse(creatives._clash("google", [{"change": {"type": "rsa", "campaign": "C", "ad_group": "G", "status": "paused"}}],
+                                          {"type": "rsa", "local_id": 1, "campaign": "C", "ad_group": "G", "headlines": ["y"]}))
+
+    def test_double_width_text_length(self):
+        with self.assertRaises(ValueError) as e:  # 16 double-width characters count as 32 > 30
+            self.add("1234567890", "ads", self.key(self.g, "Dive the reef"), "replace_text", new_text="\u65e5" * 16)
+        self.assertIn("double-width", str(e.exception))
+        r = self.add("1234567890", "ads", self.key(self.g, "Dive the reef"), "replace_text", new_text="\u65e5" * 15)
+        self.assertEqual(len(r["added"]), 2)
+        self.assertEqual(core.gae.width("ab\uff21\u65e5"), 6)
 
     def test_meta_feed_text(self):
         r = self.add("meta_555", "assets", self.key(self.m, "Body A"), "replace_text", new_text="Body C", by="you")
         self.assertEqual(len(r["added"]), 2, r)
+        fresh = [c for c in self.meta_get.calls if c[0] == "act_555/ads"]
+        self.assertEqual(len(fresh), 1)  # one fresh read of both ads' text lists
+        self.assertEqual(fresh[0][1]["filtering"][0]["value"], ["a1", "a2"])
         items = core.draft(meta.acct())["items"]
         by_id = {i["change"]["id"]: i for i in items}
         self.assertEqual(by_id["a1"]["change"], {"type": "meta_feed_copy", "level": "ad", "id": "a1", "bodies": ["Body C", "Body B"]})
@@ -640,6 +750,19 @@ class Draft(unittest.TestCase):
         self.assertEqual(len(r["added"]), 1)
         self.assertIn("only primary text", r["skipped"][0]["why"])
         self.assertEqual(core.draft(meta.acct())["items"][0]["change"]["bodies"], ["Body B"])
+
+    def test_meta_feed_text_from_a_fresh_read(self):
+        class Now(FakeMeta):
+            def __call__(self, path, **params):
+                if path == "act_555/ads":
+                    self.calls.append((path, params))
+                    return {"data": [{"id": "a1", "creative": creative_feed(["Body A", "Added on Meta since", "Body A "], ["Title A"])}]}
+                return super().__call__(path, **params)
+        r = self.add("meta_555", "assets", self.key(self.m, "Body A"), "replace_text", new_text="Body C", meta_get=Now())
+        self.assertEqual(len(r["added"]), 1, r)
+        self.assertIn("didn't return the ad", r["skipped"][0]["why"])  # a2 is gone on Meta now
+        c = core.draft(meta.acct())["items"][0]["change"]
+        self.assertEqual(c["bodies"], ["Body C", "Added on Meta since"])  # Meta's list now, the text once
 
     def test_meta_pause_and_ad_copy(self):
         key = next(r["key"] for r in self.ma["rows"] if r["members"][0]["owner_id"] == "a3")
@@ -671,6 +794,52 @@ class Draft(unittest.TestCase):
     def test_needs_the_view_first(self):
         with self.assertRaises(ValueError):
             creatives.add_to_draft("1234567890", "ads", "k", "pause_ad", days=7)
+
+
+class PmaxPushCounts(unittest.TestCase):
+    """live._pmax_asset_ops: a replace (add + remove) is checked against what the asset group holds after the earlier
+    items of the same push. Fakes only: the asset group read is a fake query, nothing is sent."""
+
+    def ops(self, changes, have, enable_new=False):
+        import live  # noqa: PLC0415
+        rows = [{"assetGroupAsset": {"status": "ENABLED", "source": "ADVERTISER"}, "asset": {"id": str(i), "textAsset": {"text": f"H{i}"}}}
+                for i in range(have)]
+
+        class Ids:
+            acct = "1234567890"
+            _n = 0
+
+            def campaign(self, name):
+                return "customers/1234567890/campaigns/300", "ref"
+
+            def asset_group(self, camp, name):
+                return "customers/1234567890/assetGroups/40"
+
+            def tmp(self, kind):
+                Ids._n -= 1
+                return f"customers/1234567890/{kind}/{Ids._n}"
+        ids, out = Ids(), []
+        with mock.patch.object(live, "query", lambda acct, gaql: rows):
+            for c in changes:
+                try:
+                    out.append(("ok", live._pmax_asset_ops(ids, c, enable_new)))
+                except ValueError as ex:
+                    out.append(("refused", str(ex)))
+        return out
+
+    def test_replace_in_a_full_group(self):
+        base = {"type": "pmax_asset", "campaign": "PMax A", "asset_group": "AG one", "field": "headline"}
+        rm, add = {**base, "remove": True, "texts": ["H0"]}, {**base, "texts": ["New one"]}
+        self.assertEqual([r[0] for r in self.ops([rm, add], 15)], ["ok", "ok"])  # the removal frees the slot
+        self.assertEqual([r[0] for r in self.ops([add], 15)], ["refused"])
+
+    def test_replace_at_the_minimum(self):
+        base = {"type": "pmax_asset", "campaign": "PMax A", "asset_group": "AG one", "field": "headline"}
+        rm, add = {**base, "remove": True, "texts": ["H0"]}, {**base, "texts": ["New one"]}
+        self.assertEqual([r[0] for r in self.ops([add, rm], 3, enable_new=True)], ["ok", "ok"])
+        out = self.ops([add, rm], 3)  # the new text goes in paused: the group would keep 2 enabled
+        self.assertEqual(out[1][0], "refused")
+        self.assertIn("at least 3", out[1][1])
 
 
 class Text(unittest.TestCase):

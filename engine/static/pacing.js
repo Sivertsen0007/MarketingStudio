@@ -33,11 +33,14 @@ if (!document.getElementById("pc-css")){ const st = document.createElement("styl
 
 const h = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const cur = (v, c) => v == null || v === "" ? "" : curFmt(v, c);
-const FLAG = {over: "Over", under: "Under", on_track: "On track", no_target: "No target"};
+const FLAG = {over: "Over", under: "Under", on_track: "On track", no_target: "No target", no_data: "Not enough data"};
+const NODATA = `<span class="pc-flag no_target" title="No spend in the last 28 days, so there is no run-rate to forecast from yet">not enough data</span>`;
+const fc = (v, c, ok) => ok === false || v == null ? NODATA : h(cur(v, c));
 const P = {el: null, v: null, busy: false};
 
 function flagChip(st, amt, pct, c){
   if (!st || st === "no_target") return `<span class="pc-flag no_target">No target</span>`;
+  if (st === "no_data") return NODATA;
   const extra = st === "on_track" ? "" : ` by ${cur(Math.abs(amt), c)} (${pct > 0 ? "+" : ""}${pct}%)`;
   return `<span class="pc-flag ${h(st)}">${FLAG[st] || h(st)}${h(extra)}</span>`;
 }
@@ -50,6 +53,7 @@ function render(el){
     <span class="pc-set" title="How far a forecast may be from the target before it is flagged">Tolerance <input type="number" id="pcTol" min="1" max="50" step="1">%</span>
     <span class="pc-set" title="Largest budget change per step on Meta (big changes restart learning)">Meta step <input type="number" id="pcStep" min="5" max="50" step="1">%</span>
     <button id="pcShare" style="display:none" title="Make these targets the team's (owners and admins)">Share targets with the team</button>
+    <button id="pcUnshare" style="display:none" title="Everyone goes back to the targets saved on their own Mac (owners and admins)">Stop sharing targets</button>
     <span id="pcFetched" class="chip"></span>
     <button id="pcRefresh" title="Read month-to-date spend again from Google and Meta (read-only)">Refresh</button>
   </div>
@@ -59,6 +63,7 @@ function render(el){
   const setting = (k, id) => $(id).onchange = e => saveTargets({[k]: e.target.value});
   setting("tolerance_pct", "#pcTol"); setting("meta_step_pct", "#pcStep");
   $("#pcShare").onclick = () => { if (confirm("Share all pacing targets with the team? They then replace everyone's own.")) saveTargets({share: true}) };
+  $("#pcUnshare").onclick = () => { if (confirm("Stop sharing pacing targets? Everyone goes back to the targets saved on their own Mac.")) saveTargets({unshare: true}) };
   load();
 }
 
@@ -69,7 +74,7 @@ async function load(){
 }
 
 async function saveTargets(body){
-  try { await api("/api/area/pacing/targets", body); toast(body.share ? "Targets shared with the team" : "Saved"); load() }
+  try { await api("/api/area/pacing/targets", body); toast(body.share ? "Targets shared with the team" : body.unshare ? "Targets are this Mac's own again" : "Saved"); load() }
   catch(e) { toast(e.message); load() }
 }
 
@@ -88,6 +93,7 @@ function draw(){
   $("#pcTol").value = v.targets.tolerance_pct; $("#pcStep").value = v.targets.meta_step_pct;
   $("#pcTol").disabled = $("#pcStep").disabled = ro;
   $("#pcShare").style.display = info.joined && info.can_admin && !info.team ? "" : "none";
+  $("#pcUnshare").style.display = info.joined && info.can_admin && info.team ? "" : "none";
   const first = v.accounts[0];
   $("#pcMonth").textContent = first ? first.month : "";
   const olds = v.accounts.map(a => a.fetched_at).filter(Boolean).sort();
@@ -106,9 +112,10 @@ function card(a, ro){
   const recs = a.campaigns.reduce((n, x) => n + x.recommendations.length, 0);
   const stale = a.stale ? `<span class="chip warn" title="Pacing uses spend up to the day it was fetched">Fetched on an earlier day: Refresh</span>` : "";
   const tiles = [
-    ["Monthly target", `<input type="number" min="0" step="1" data-month="${h(a.account)}" value="${a.target ?? ""}" placeholder="none" style="width:110px" ${dis}>`, c],
-    ["Spent this month", h(cur(a.mtd, c)), a.expected_to_date != null ? `Expected by today: ${h(cur(a.expected_to_date, c))}` : `${a.days_left} days left`],
-    ["Forecast to month end", h(cur(a.forecast, c)), flagChip(a.flag, a.flag_amount, a.flag_pct, c)],
+    ["Monthly target", `<input type="number" min="0" step="1" data-month="${h(a.account)}" value="${h(a.target ?? "")}" placeholder="none" style="width:110px" ${dis}>`, h(c)],
+    ["Spent this month", h(cur(a.mtd, c)), a.expected_to_date != null ? `Expected by today: ${h(cur(a.expected_to_date, c))}` : `${h(a.days_left)} days left`],
+    ["Forecast to month end", fc(a.forecast, c, a.enough_data), flagChip(a.flag, a.flag_amount, a.flag_pct, c)
+      + ((a.no_data_campaigns || []).length && a.enough_data !== false ? `<div>Leaves out ${h(a.no_data_campaigns.length)} campaign${a.no_data_campaigns.length === 1 ? "" : "s"} with no spend history yet</div>` : "")],
     ["Daily budgets now", h(cur(a.daily_budgets, c)), a.needed_daily != null ? `Needed per day: ${h(cur(a.needed_daily, c))}` : "Set a target to see what is needed"],
   ].map(([k, val, d]) => `<div class="pc-tile"><div class="k">${k}</div><div class="v">${val}</div><div class="d">${d || ""}</div></div>`).join("");
   const rows = a.campaigns.map(x => {
@@ -120,8 +127,8 @@ function card(a, ro){
     const notes = x.notes.concat(x.learning ? [`Ad sets ${x.learning}`] : []).map(n => `<div class="pc-rec">${h(n)}</div>`).join("");
     return `<tr class="${x.active ? "" : "off"}"><td>${h(x.name)}<div class="sub" style="font-size:11px;color:var(--muted)">${h(x.channel)}${x.budget_kind === "adsets" ? " · ad set budgets" : ""}</div></td>
       <td>${h(x.status)}</td><td class="num">${h(cur(x.budget, c))}</td><td class="num">${h(cur(x.run_rate, c))}</td>
-      <td class="num">${h(cur(x.mtd, c))}</td><td class="num">${h(cur(x.forecast, c))}</td>
-      <td class="num"><input type="number" min="0" step="1" data-camp="${h(x.id)}" data-acct="${h(a.account)}" value="${tgt ?? ""}" placeholder="${h(ph)}" ${dis}></td>
+      <td class="num">${h(cur(x.mtd, c))}</td><td class="num">${fc(x.forecast, c, x.enough_data)}</td>
+      <td class="num"><input type="number" min="0" step="1" data-camp="${h(x.id)}" data-acct="${h(a.account)}" value="${h(tgt ?? "")}" placeholder="${h(ph)}" ${dis}></td>
       <td class="num">${h(cur(x.needed_daily, c))}</td><td>${flagChip(x.flag, x.flag_amount, x.flag_pct, c)}</td>
       <td>${recs}${notes}</td>
       <td>${x.recommendations.length ? `<button data-add="${h(x.id)}" data-acct="${h(a.account)}">Add to draft</button>` : ""}</td></tr>`;

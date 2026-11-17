@@ -74,6 +74,7 @@ G_CUSTOMER = "SELECT customer.time_zone, customer.currency_code, customer.descri
 SMART = {"MAXIMIZE_CONVERSIONS", "MAXIMIZE_CONVERSION_VALUE", "TARGET_CPA", "TARGET_ROAS", "TARGET_SPEND", "TARGET_IMPRESSION_SHARE"}
 M_CAMP = "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,stop_time"
 M_ADSET = "id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,budget_remaining,learning_stage_info,end_time"
+M_LIVE_ADSET = ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "IN_PROCESS", "WITH_ISSUES"]  # not DELETED / ARCHIVED
 LEARNING = {"LEARNING": "in the learning phase", "FAIL": "learning limited"}
 
 
@@ -143,7 +144,9 @@ def weekday_factors(daily, days, shrink=SHRINK):
 def forecast(daily, as_of, budget=None, active=True):
     """Forecast one campaign (or ad set) to month end. daily: {date: spend} (dates or ISO strings), as_of: the
     account's today. budget: its daily budget when it has one (caps the rest of the month), else None.
-    -> {mtd, mtd_done, today, today_expected, rest, total, base, days_left, future_days, history_days, weekday}"""
+    -> {mtd, mtd_done, today, today_expected, rest, total, base, days_left, future_days, history_days, weekday, enough}
+    enough: False for an active campaign with no spend in the last HISTORY_DAYS completed days (new, or just switched on):
+    there is no run-rate, so its "forecast" would only be what it spent so far. The view shows "not enough data" then."""
     daily = {_d(k): float(v or 0) for k, v in (daily or {}).items()}
     first, last = month_bounds(as_of)
     mtd_done = sum(daily.get(d, 0.0) for d in _days(first, as_of - dt.timedelta(days=1)))
@@ -152,7 +155,7 @@ def forecast(daily, as_of, budget=None, active=True):
     spent = [d for d in hist if daily.get(d, 0.0) > 0]
     future = _days(as_of + dt.timedelta(days=1), last)
     out = {"mtd_done": _r2(mtd_done), "today": _r2(today), "mtd": _r2(mtd_done + today), "days_left": len(future) + 1,
-           "future_days": len(future), "history_days": 0, "weekday": False, "base": 0.0}
+           "future_days": len(future), "history_days": 0, "weekday": False, "base": 0.0, "enough": bool(spent) or not active}
     if not active or not spent:
         out.update(today_expected=_r2(today), rest=0.0, total=_r2(mtd_done + today))
         return out
@@ -265,8 +268,9 @@ def fetch_meta(act, get=None, get_all=None, now=None):
     tz = acc.get("timezone_name") or "Europe/London"
     as_of = _today(tz, now)
     start = min(as_of.replace(day=1), as_of - dt.timedelta(days=HISTORY_DAYS))
+    # campaigns unfiltered: an archived or deleted campaign that spent this month still counts towards the month
     camps = get_all(f"{act}/campaigns", fields=M_CAMP)
-    sets = get_all(f"{act}/adsets", fields=M_ADSET)
+    sets = get_all(f"{act}/adsets", fields=M_ADSET, effective_status=M_LIVE_ADSET)
     by_c = _insights_by_day(get_all, act, "campaign", start, as_of)
     abo = {str(c["id"]) for c in camps if not (c.get("daily_budget") or c.get("lifetime_budget"))}
     by_s = _insights_by_day(get_all, act, "adset", start, as_of) if abo else {}
@@ -427,8 +431,13 @@ def targets_info():
 
 def save_targets(body):
     """body: {account: id, monthly: number|null, campaigns: {id: number|null}} for one account, or
-    {tolerance_pct, meta_step_pct}; share: true saves it as the team's value (owners and admins)."""
+    {tolerance_pct, meta_step_pct}; share: true saves it as the team's value (owners and admins); unshare: true stops
+    sharing (everyone goes back to their own). Without share, targets stay on this Mac (team_settings "local"); only
+    when the team already shares them does an owner's or admin's edit change the team's value (as the view says)."""
     import team_settings  # noqa: PLC0415
+    if body.get("unshare"):
+        team_settings.save("pacing_targets", None, "team")
+        return {"targets": targets(), "info": targets_info()}
     cur = targets()
     val = {"accounts": json.loads(json.dumps(cur["accounts"])), "tolerance_pct": cur["tolerance_pct"], "meta_step_pct": cur["meta_step_pct"]}
     if body.get("account"):
@@ -449,7 +458,7 @@ def save_targets(body):
     for k in ("tolerance_pct", "meta_step_pct"):
         if body.get(k) not in (None, ""):
             val[k] = float(body[k])
-    team_settings.save("pacing_targets", val, "team" if body.get("share") else "local")
+    team_settings.save("pacing_targets", val, "team" if body.get("share") is True else "local")
     return {"targets": targets(), "info": targets_info()}
 
 
@@ -535,6 +544,8 @@ def account_view(a, snap, tg=None):
         t_src = "own" if t is not None else "share" if c["id"] in alloc else None
         t = t if t is not None else alloc.get(c["id"])
         st, amt, pct = flag(f["total"], t, tol) if t_src == "own" else ("no_target", None, None)
+        if t_src == "own" and not f["enough"]:
+            st, amt, pct = "no_data", None, None
         need = needed_daily(t, f["mtd_done"], f["days_left"]) if t is not None else None
         notes = []
         if c["budget_kind"] == "shared":
@@ -562,7 +573,7 @@ def account_view(a, snap, tg=None):
                     recs.append(rec)
         out.append({"id": c["id"], "name": c["name"], "status": c["status"], "active": c["active"], "channel": c.get("channel", ""),
                     "budget": c["budget"], "budget_kind": c["budget_kind"], "mtd": f["mtd"], "today": f["today"],
-                    "forecast": f["total"], "run_rate": f["base"], "target": _r2(t), "target_source": t_src,
+                    "forecast": f["total"] if f["enough"] else None, "enough_data": f["enough"], "run_rate": f["base"], "target": _r2(t), "target_source": t_src,
                     "needed_daily": _r2(need), "flag": st, "flag_amount": amt, "flag_pct": pct, "notes": notes,
                     "learning": next((u["learning"] for u in c["units"] if u.get("learning") and u.get("active")), None),
                     "recommendations": recs,
@@ -570,8 +581,11 @@ def account_view(a, snap, tg=None):
                                 "budget_kind": u["budget_kind"]} for u in c["units"]] if c["budget_kind"] == "adsets" else []})
     out = [x for x in out if x["active"] or x["mtd"] or x["target_source"] == "own"]
     mtd = sum(x["mtd"] for x in out)
-    total = sum(x["forecast"] for x in out)
-    st, amt, pct = flag(total, monthly, tol)
+    known = [x for x in out if x["enough_data"]]
+    no_data = [x["name"] for x in out if not x["enough_data"]]
+    total = sum(x["forecast"] for x in known)
+    enough = bool(known) or not no_data  # no campaign has a run-rate: no account forecast either
+    st, amt, pct = flag(total, monthly, tol) if enough else (("no_data" if monthly else "no_target"), None, None)
     days_in = (last - first).days + 1
     elapsed = (as_of - first).days + 1
     stale = _today(snap["tz"]) != as_of
@@ -579,7 +593,8 @@ def account_view(a, snap, tg=None):
             "tz": snap["tz"], "as_of": as_of.isoformat(), "month": f"{as_of:%B %Y}", "fetched_at": snap.get("fetched_at"),
             "stale": stale, "days_in_month": days_in, "days_left": (last - as_of).days + 1,
             "target": _r2(monthly), "mtd": _r2(mtd), "expected_to_date": _r2(float(monthly) * elapsed / days_in) if monthly else None,
-            "forecast": _r2(total), "needed_daily": _r2(needed_daily(monthly, mtd - sum(x["today"] for x in out), (last - as_of).days + 1)),
+            "forecast": _r2(total) if enough else None, "enough_data": enough, "no_data_campaigns": no_data,
+            "needed_daily": _r2(needed_daily(monthly, mtd - sum(x["today"] for x in out), (last - as_of).days + 1)),
             "daily_budgets": _r2(sum(float(x["budget"] or 0) for x in out if x["active"] and x["budget_kind"] in ("daily", "adsets"))),
             "flag": st, "flag_amount": amt, "flag_pct": pct, "campaigns": out,
             "recommendations": sum(len(x["recommendations"]) for x in out)}
@@ -588,7 +603,9 @@ def account_view(a, snap, tg=None):
 METHOD = ("Forecast = spend so far this month + today's expected spend + the rest of the month at a run-rate. Run-rate: "
           f"the last {RECENT_DAYS} completed days, adjusted for weekday (factors from the last {HISTORY_DAYS} days, used with "
           f"{MIN_DAYS_FOR_WEEKDAYS}+ days of history). Paused campaigns add nothing more; a daily budget caps each remaining day. "
-          "Needed per day = (target - spend before today) / days left including today. Days are in each account's time zone.")
+          "A live campaign with no spend in that time has no run-rate yet: it shows \"not enough data\" and is left out of "
+          "the account forecast. Needed per day = (target - spend before today) / days left including today. Days are in "
+          "each account's time zone.")
 
 
 def status(account=None, refresh=False, now=None):

@@ -429,7 +429,53 @@ def call_creatives(name, a):
                               "fields", "missing", "warnings", "method")} | {"rows": rows}
 
 
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS + META_TEST_TOOLS + CREATIVE_TOOLS
+DG_TOOLS = [
+    # Demand Gen / YouTube video ads (demandgen.py): one read, one draft tool. Uploading a video file to YouTube has no tool:
+    # it is only ever the user's own Upload button in Studio.
+    {"name": "video_assets_list",
+     "description": "YouTube videos of a Google Ads account: video assets in its asset library (asset id, YouTube id, title, "
+                    "duration where Google Ads knows it), YouTube uploads made through Google Ads (state, YouTube id), and the "
+                    "Demand Gen campaigns, ad groups (with channel controls) and ads (type, status, texts, videos), plus square "
+                    "logo images usable in a Demand Gen video ad. Read-only, cached until refresh=true. With video (an id or "
+                    "YouTube URL): checks it and says what Google Ads knows about that one video.",
+     "inputSchema": {"type": "object", "properties": {
+         "account": ACCT, "refresh": {"type": "boolean", "description": "read again now (read-only); default false"},
+         "video": {"type": "string", "description": "one YouTube id or URL to check"},
+         "part": {"type": "string", "enum": ["videos", "uploads", "campaigns", "ad_groups", "ads", "logos", "all"],
+                  "description": "only this part (default all)"}}}},
+    {"name": "demandgen_add_to_draft",
+     "description": "Add Demand Gen / YouTube video ad changes to the Google Ads draft. Draft only: nothing reaches Google until the "
+                    "user previews (Google validates) and presses Push live; team approval applies; new campaigns are always Paused, "
+                    "new ad groups and ads Paused unless the user ticks otherwise. Experiment trial campaigns are refused. "
+                    "Uploading a video file is not possible from here.\n\n" + __import__("demandgen").CHANGE_REFERENCE,
+     "inputSchema": {"type": "object", "properties": {
+         "account": ACCT, "changes": {"type": "array", "items": {"type": "object"}},
+         "note": {"type": "string", "description": "why - shown to the user next to each change"}}, "required": ["changes"]}},
+]
+DG_NAMES = {t["name"] for t in DG_TOOLS}
+
+
+def call_demandgen(name, a):
+    import demandgen  # noqa: PLC0415
+    if meta.is_meta(a.get("account")):
+        raise ValueError("Demand Gen is Google Ads: give a Google Ads account")
+    acct = core.resolve(a.get("account"))
+    if name == "video_assets_list":
+        if a.get("video"):
+            return demandgen.video_info(acct, a["video"])
+        v = demandgen.library(acct, refresh=bool(a.get("refresh")))
+        part = a.get("part") or "all"
+        return v if part == "all" else {"account": v["account"], "fetched_at": v["fetched_at"], "errors": v["errors"], part: v[part]}
+    changes = a.get("changes") or []
+    if isinstance(changes, dict):
+        changes = [changes]
+    bad = sorted({str(c.get("type")) for c in changes if not isinstance(c, dict) or c.get("type") not in demandgen.PUSH_TYPES})
+    if bad:
+        raise ValueError("demandgen_add_to_draft takes " + ", ".join(demandgen.PUSH_TYPES) + " (not " + ", ".join(bad) + ")")
+    return core.add(acct, changes, by="claude", note=a.get("note"))
+
+
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS + META_TEST_TOOLS + CREATIVE_TOOLS + DG_TOOLS
 TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
 
 
@@ -580,6 +626,8 @@ def call(name, a):
         return call_alerts(name, a)
     if name in CREATIVE_NAMES:
         return call_creatives(name, a)
+    if name in DG_NAMES:
+        return call_demandgen(name, a)
     if name in ("team_status", "team_sync"):
         return call_team(name)
     if name in ("reviews_list", "review_request"):

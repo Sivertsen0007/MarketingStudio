@@ -441,6 +441,7 @@ Object.assign(VIEWS, {
     {key:"membership",label:"Membership",hide:1}, {key:"campaigns",label:"Campaigns",num:1}, {key:"attached_to",label:"Used by"}], api:1},
   recommendations:{label:"Recommendations", cols:[{key:"type",label:"Recommendation"}, LV, CA, AG, {key:"impact_clicks",label:"+ Clicks",num:1}, {key:"impact_cost",label:"+ Cost",num:1,fmt:money},
     {key:"impact_conversions",label:"+ Conv.",num:1}, {key:"dismissed",label:"Dismissed",hide:1}], api:1},
+  videos:{label:"Videos", cols:[], ro:1, custom:1, api:1}, // [videos] static/videos.js: YouTube videos, uploads, Demand Gen
 });
 // Meta stats for the picked date range (meta.grid puts them on these generic keys)
 const STATS = [{key:"spend",label:"Spend",num:1,fmt:money}, {key:"impressions",label:"Impr.",num:1}, {key:"reach",label:"Reach",num:1,hide:1},
@@ -621,7 +622,8 @@ function renderPills(){
 $("#fpills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; const was = S.filter; S.filter = b.dataset.f; localSet("filter", S.filter);
   if ((was === "removed") !== (S.filter === "removed")){ loadTree(); loadGrid() } else { renderPills(); renderGrid() } };
 function renderGrid(){
-  if (V()[S.kind] && V()[S.kind].custom){ $("#fpills").innerHTML = ""; return window.MetaTests ? MetaTests.render($("#grid")) : ($("#grid").innerHTML = `<div class="empty">Loading ...</div>`) } // [meta tests]
+  if (V()[S.kind] && V()[S.kind].custom){ $("#fpills").innerHTML = ""; const C = S.kind === "videos" && !isMeta() ? window.Videos : window.MetaTests; // [meta tests] [videos]
+    return C ? C.render($("#grid")) : ($("#grid").innerHTML = `<div class="empty">Loading ...</div>`) }
   const v = V()[S.kind], cols = colsFor();
   let rows = S.rows.filter(passFilter);
   if (S.sort){ const {key, dir} = S.sort, mc = cols.find(c => c.key === key && isMoney(c)), sv = r => { const x = r[key]; return mc && dispCur() && x != null && x !== "" ? toDisp(x) : x };
@@ -1091,6 +1093,7 @@ const ADD = {
       [["Add to draft", () => submit([{type:"shared_list", campaign:sc.campaign, lists:[...$("#f_lists").selectedOptions].map(o => o.value)}], val("f_note")), "primary"]]);
   },
 };
+ADD.videos = () => window.Videos ? Videos.add() : toast("Videos didn't load: see the Studio log"); // [videos]
 $("#addBtn").onclick = () => isMeta() ? (META_ADD[S.kind] ? META_ADD[S.kind]() : toast(`${V()[S.kind].label} are read-only in Studio`)) : ADD[S.kind] ? ADD[S.kind]() : toast(`Adding ${V()[S.kind].label.toLowerCase()} isn't supported here yet`);
 
 function counter(inp, max){ const c = inp.parentElement.querySelector(".cnt"); const f = () => { c.textContent = inp.value.length + "/" + max; c.classList.toggle("over", inp.value.length > max) }; inp.oninput = f; f() }
@@ -2003,7 +2006,8 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
 <!-- [mac-app updater] end -->
 <script>window.addEventListener("unhandledrejection", e => { const m = e.reason && e.reason.message; if (m && typeof toast === "function"){ toast(m); e.preventDefault() } });</script>
 <script src="/static/setup.js"></script>
-<script src="/static/meta_tests.js"></script><!-- [meta tests] the Tests tab in the Meta ads area -->
+<script src="/static/meta_tests.js"></script>
+<script src="/static/videos.js"></script><!-- [videos] the Videos tab in the Google Ads area --><!-- [meta tests] the Tests tab in the Meta ads area -->
 <script src="/static/team.js"></script>
 <script src="/static/team_reviews.js"></script>
 <script src="/static/team_marks.js"></script><!-- [team live] tints, locks, claims, comments, presence, mentions -->

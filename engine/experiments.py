@@ -158,7 +158,9 @@ def touches(change):
     """The existing campaign a draft change touches, or None (new campaign, account-level asset)."""
     if change.get("level") == "account":
         return None
-    if change.get("type") == "campaign" and change.get("new"):
+    if change.get("type") in ("campaign", "dg_campaign") and change.get("new"):
+        return None
+    if change.get("type") in ("video_asset", "video_upload"):
         return None
     return change.get("campaign") or None
 

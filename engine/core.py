@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import appconfig  # noqa: E402,F401
+import demandgen  # noqa: E402  (Demand Gen / YouTube video change types, live only)
 import draftstore  # noqa: E402
 import experiments  # noqa: E402
 import gae  # noqa: E402
@@ -377,7 +378,7 @@ AUDIENCE_MODES = ("observation", "targeting")
 
 def live_only(change):
     t = change.get("type")
-    return t == "pmax_asset" or (t == "audience" and bool(change.get("remove") or change.get("mode")))
+    return t == "pmax_asset" or demandgen.is_dg(change) or (t == "audience" and bool(change.get("remove") or change.get("mode")))
 
 
 def _warn(rows):
@@ -390,7 +391,9 @@ def _warn(rows):
     return sorted(set(out))
 
 
-def _check_live_only(c):
+def _check_live_only(c, acct=None):
+    if demandgen.is_dg(c):
+        return demandgen.check(c, acct)
     problems = [f"{k} is missing" for k in ("campaign",) if not c.get(k)]
     if c["type"] == "pmax_asset":
         if not c.get("asset_group"):
@@ -423,10 +426,10 @@ def _check_live_only(c):
     return problems, []
 
 
-def check(change):
+def check(change, acct=None):
     """-> (problems that block, warnings). Uses gae's own lint so Studio and gae never disagree."""
     if live_only(change):
-        return _check_live_only(change)
+        return _check_live_only(change, acct)
     try:
         rows = gae.plan_rows(change)
     except (KeyError, ValueError) as ex:
@@ -448,13 +451,15 @@ def add(acct, changes, by="you", note=None):
     Refuses (ValueError, nothing added) when a change touches an experiment's trial campaign (experiments.py)."""
     if isinstance(changes, dict):
         changes = [changes]
+    if by == "claude" and any(isinstance(c, dict) and c.get("type") == "video_upload" for c in changes):
+        raise ValueError("Not added to the draft. Uploading a video to YouTube is the user's own Upload button in Studio's Videos tab")
     exps = experiments.known(acct)
     refused = [f"{_summary(c)}: {p}" for c in changes for p in experiments.check(exps, c)[0]]
     if refused:
         raise ValueError("Not added to the draft. " + "; ".join(refused))
     items = []
     for c in changes:
-        problems, warnings = check(c)
+        problems, warnings = check(c, acct)
         warnings = warnings + experiments.check(exps, c)[1]
         items.append({"id": uuid.uuid4().hex[:8], "change": c, "by": by, "note": note or "",
                       "ts": dt.datetime.now().isoformat(timespec="seconds"), "summary": _summary(c),
@@ -467,6 +472,8 @@ def add(acct, changes, by="you", note=None):
 
 def _summary(c):
     t = c.get("type")
+    if demandgen.is_dg(c):
+        return demandgen.summary(c)
     if t == "pmax_asset":
         texts = c.get("texts", [c.get("text")])
         return (f"{'Remove' if c.get('remove') else 'Add'} {str(c.get('field', '')).replace('_', ' ')}s in asset group "
@@ -505,7 +512,9 @@ def validate(acct):
         results = []
         exps = experiments.merge(experiments.known(acct), experiments.from_editor(db))
         for it in items:
-            problems, warnings = check(it["change"])
+            if it["change"].get("type") == "video_upload":
+                continue  # runs from its own Upload button; never part of Send to Editor
+            problems, warnings = check(it["change"], acct)
             xp, xw = experiments.check(exps, it["change"])
             problems, warnings = xp + problems, warnings + xw
             if live_only(it["change"]):
@@ -536,6 +545,7 @@ def push(acct, title=None, why=None, only=None):
     only: (team approvals / push by person) just these draft items; see team_reviews.Only."""
     results = validate(acct)
     d = draft(acct)
+    d["items"] = [i for i in d["items"] if i["change"].get("type") != "video_upload"]
     if only is not None:
         keep = {i["id"] for i in d["items"] if (only.admits(i) if hasattr(only, "admits") else i["id"] in only)}
         results = [r for r in results if r["id"] in keep]

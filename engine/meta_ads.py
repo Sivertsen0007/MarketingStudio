@@ -776,6 +776,15 @@ NOT_YET = {"from_adset": "copying an ad set (Duplicate with one change) is not a
            "activate_with_test": "creating objects Active for a test is not available yet: new objects are always created Paused"}
 
 
+def _not_yet(c):
+    """NOT_YET keys set on a change, or on anything nested in it (e.g. a test's cells)."""
+    found = [k for k in NOT_YET if c.get(k)]
+    for x in c.get("cells") or []:
+        if isinstance(x, dict):
+            found += [k for k in NOT_YET if x.get(k) and k not in found]
+    return found
+
+
 PRICE = re.compile(r"(?:[$£€]\s?\d(?:[\d,.]*\d)?|\d(?:[\d,.]*\d)?\s?(?:USD|GBP|EUR))")
 PCT = re.compile(r"\d{1,2}\s?%")
 
@@ -1015,9 +1024,9 @@ def check(c, d=None, items=None):
                 problems.append(f"card cta must be one of {', '.join(CTAS)}")
     except (KeyError, TypeError, ValueError) as ex:
         problems.append(f"invalid change: {ex}")
-    for k in NOT_YET:
-        if c.get(k):
-            problems.append(f"{k}: {NOT_YET[k]}")
+    problems += [f"{k}: {NOT_YET[k]}" for k in _not_yet(c)]
+    if c.get("with_end") and (t != "meta_status" or c.get("status") != "paused"):
+        problems.append("with_end is only for pausing (meta_status paused) together with End test")
     texts = _texts(c)
     try:
         import team_settings  # noqa: PLC0415 - copy rules (key copy_rules, area "meta_ads")
@@ -1467,15 +1476,14 @@ def ops_for(c, items=None):
     """Draft change -> list of steps. Each step: {line, kind, ...} with what to do, how to check it and how to undo it.
     Steps that create objects carry "refs" ({param: draft item id}) that the push fills with ids made earlier in it."""
     t = c["type"]
+    for k in _not_yet(c):  # never Active through a test, never a copy: refused here too, whatever the draft says
+        raise ValueError(f"{k}: {NOT_YET[k]}")
     if t in TEST_TYPES:
         import meta_tests  # noqa: PLC0415
         steps = meta_tests.ops_for(c, items if items is not None else _items())
         for s in steps:
             s["needs"] = meta_tests.refs(c)
         return steps
-    for k in NOT_YET:  # never Active through a test, never a copy: refused here too, whatever the draft says
-        if c.get(k):
-            raise ValueError(f"{k}: {NOT_YET[k]}")
     if t == "meta_new_campaign":
         p = {"name": c["name"], "objective": c["objective"], "status": "PAUSED", "special_ad_categories": c.get("special_ad_categories") or []}
         if c.get("daily_budget"):
@@ -1593,6 +1601,11 @@ def ops_for(c, items=None):
     nm = cur.get("name", oid)
     if t == "meta_status":
         new = STATUS[c["status"]]
+        if c.get("with_end"):  # paused together with End test: the test is over, so undo never switches it back on
+            return [{"kind": "update", "id": oid, "params": {"status": new}, "undo": None, "permanent": True,
+                     "final": "the test has ended; switch it on by hand if you want",
+                     "line": f'{lvl} "{nm}": status {cur["status"].title()} -> {new.title()} (with End test; not undone by undo: '
+                             "the test has ended, switch it on by hand if you want)"}]
         return [{"kind": "update", "id": oid, "params": {"status": new}, "undo": {"status": cur["status"]},
                  "line": f'{lvl} "{nm}": status {cur["status"].title()} -> {new.title()}',
                  "spend": f"activates {lvl}" if new == "ACTIVE" and cur["status"] != "ACTIVE" else ""}]
@@ -1750,7 +1763,7 @@ def _do(s, ctx=None):
     ctx = {} if ctx is None else ctx
     if s["kind"] == "update":
         post(s["id"], s["params"])
-        return {"line": s["line"], "id": s["id"], "undo": s["undo"]}
+        return {"line": s["line"], "id": s["id"], "undo": s["undo"], **({"final": s["final"]} if s.get("final") else {})}
     if s["kind"] == "copy":
         new = post(f"{act()}/adcreatives", s["creative"])["id"]
         post(s["id"], {"creative": {"creative_id": new}})
@@ -1924,12 +1937,18 @@ def history(limit=20):
                     "summaries": [i["summary"] for i in r.get("items", [])] + ([f"Failed: {r['error']}"] if r.get("error") else [])
                     + ([f"Kept on Meta: {len(r['ops'])} change(s) a test uses"] if r.get("partial") else []),
                     "lines": [o["line"] for o in r.get("ops", [])], "partial": bool(r.get("partial")),
+                    "undo_spend": undo_spend(r.get("ops") or []),
                     "can_undo": (r["ok"] or bool(r.get("partial"))) and not r.get("undo_of") and r["id"] not in undone
                     and any(o.get("undo") is not None for o in r.get("ops") or [])})
     return out[:limit]
 
 
-def undo(push_id):
+def undo_spend(ops):
+    """Undo steps that would switch something back on (status ACTIVE): they can raise spend, like Push live."""
+    return [o["line"] for o in ops if isinstance(o.get("undo"), dict) and str(o["undo"].get("status") or "").upper() == "ACTIVE"]
+
+
+def undo(push_id, accept_spend=False):
     recs = [json.loads(l) for l in _log().read_text().splitlines() if l.strip()]
     rec = next((r for r in recs if r["id"] == push_id), None)
     if not rec or not (rec["ok"] or rec.get("partial")):
@@ -1938,6 +1957,10 @@ def undo(push_id):
         raise ValueError("already undone")
     a = acct()
     ops = rec["ops"]
+    on = undo_spend(ops)
+    if on and not accept_spend:  # nothing is sent: the UI asks, then calls again with accept_spend
+        return {"ok": False, "needs_spend": True, "spend": on, "not_undone": [], "errors": None,
+                "message": f"Not undone - this undo switches {len(on)} thing(s) back on, which can raise spend; accept to undo."}
     progress.start(a, "undo", [(n, "Undo: " + o["line"], 1) for n, o in enumerate(ops)], "sending", "Reversing on Meta, one change at a time")
     idx = {id(o): n for n, o in enumerate(ops)}
     try:

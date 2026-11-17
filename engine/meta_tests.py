@@ -757,7 +757,8 @@ def end_changes(study_id, pause=False):
     if pause and st:
         for cell in st["cells"]:
             if cell["level"] in ("adset", "campaign", "ad"):
-                out += [{"type": "meta_status", "level": cell["level"], "id": i, "status": "paused"} for i in cell["ids"]]
+                out += [{"type": "meta_status", "level": cell["level"], "id": i, "status": "paused", "with_end": str(study_id)}
+                        for i in cell["ids"]]
     return out
 
 

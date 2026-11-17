@@ -524,7 +524,7 @@ class H(BaseHTTPRequestHandler):
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{meta.acct()}", body,
                                                                    lambda only: meta.preview(only=only)),
             "/api/live/push": live_push,
-            "/api/live/undo": lambda: meta.undo(body["push_id"]),
+            "/api/live/undo": lambda: meta.undo(body["push_id"], bool(body.get("accept_spend"))),
             "/api/draft/add": lambda: meta.add(body["changes"], body.get("by", "you"), body.get("note")),
             "/api/draft/remove": lambda: {"removed": core.remove(meta.acct(), body["ids"])},
             "/api/draft/clear": lambda: {"removed": core.clear(meta.acct())},

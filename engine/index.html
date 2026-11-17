@@ -939,10 +939,13 @@ async function livePush(){
   } catch(e) { toast(e.message) }
   poll(true);
 }
-async function liveUndo(id){
-  if (!confirm(`Reverse this push in ${isMeta() ? "Meta" : "Google Ads"} now?`)) return;
+async function liveUndo(id, spend){
+  if (!spend && !confirm(`Reverse this push in ${isMeta() ? "Meta" : "Google Ads"} now?`)) return;
   try {
-    const r = await withProgress("Undoing in " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/undo", {push_id:id});
+    const r = await withProgress("Undoing in " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/undo", {push_id:id, ...(spend ? {accept_spend:true} : {})});
+    if (r.needs_spend){ dlg.close(); // switching things back on can raise spend: ask, like the Push live tick
+      if (confirm(`This undo switches these back on, which can raise spend:\n\n${(r.spend || []).join("\n")}\n\nUndo anyway?`)) return liveUndo(id, true);
+      return poll(true) }
     const list = await lastProgress();
     showDialog(r.ok ? "Undone" : "Not undone", `${list}<p>${esc(r.message)}</p>${r.not_undone && r.not_undone.length ? `<p class="hint">Not reversed automatically:</p><ul>${r.not_undone.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}${r.errors ? `<pre class="out">${esc(JSON.stringify(r.errors, null, 1))}</pre>` : ""}`, []);
   } catch(e) { toast(e.message) }

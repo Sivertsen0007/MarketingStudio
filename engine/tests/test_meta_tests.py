@@ -570,6 +570,66 @@ class Safety(Base):
         self.assertNotIn("variant", js.lower())
 
 
+class UndoSafety(Base):
+    """Undo never switches anything on silently, and pauses made with End test are not undone."""
+
+    def test_end_with_pause_is_not_undone(self):
+        items = meta_tests.add("end", {"study_id": "900", "pause": True})
+        self.assertEqual([i["change"].get("with_end") for i in items[1:]], ["900", "900"])
+        core.remove(meta.acct(), [i["id"] for i in items if i["problems"]])  # s9 is not in this account's data
+        r = meta.push(False, False, True)
+        self.assertTrue(r["ok"], r)
+        rec = json.loads((TMP / "live_meta_123.jsonl").read_text().splitlines()[-1])
+        self.assertTrue(all(o["undo"] is None for o in rec["ops"]), rec["ops"])
+        self.assertTrue(any("switch it on by hand" in o["line"] for o in rec["ops"]))
+        h = meta.history()[0]
+        self.assertFalse(h["can_undo"])
+        n = len(self.f.posts)
+        with self.assertRaises(ValueError):
+            meta.undo("nope")
+        u = meta.undo(h["id"], accept_spend=True)  # even forced: nothing is switched back on
+        self.assertFalse([prm for _, prm, _ in self.f.posts[n:] if prm.get("status") == "ACTIVE"])
+        self.assertTrue(any("the test has ended" in x for x in u["not_undone"]), u)
+
+    def test_undo_that_switches_on_needs_the_spend_tick(self):
+        meta.add([{"type": "meta_status", "level": "adset", "id": "s1", "status": "paused"}])
+        r = meta.push()
+        self.assertTrue(r["ok"], r)
+        h = meta.history()[0]
+        self.assertTrue(h["can_undo"])
+        self.assertEqual(len(h["undo_spend"]), 1)
+        n = len(self.f.posts)
+        u = meta.undo(h["id"])
+        self.assertFalse(u["ok"])
+        self.assertTrue(u["needs_spend"])
+        self.assertEqual(self.f.posts[n:], [], "nothing sent without the tick")
+        self.assertTrue(meta.history()[0]["can_undo"], "still undoable after the refusal")
+        u = meta.undo(h["id"], accept_spend=True)
+        self.assertTrue(u["ok"], u)
+        self.assertEqual(self.f.posts[n:], [("s1", {"status": "ACTIVE"}, False)])
+
+    def test_undo_without_switching_on_needs_no_tick(self):
+        meta.add([{"type": "meta_rename", "level": "adset", "id": "s1", "new_name": "New"}])
+        h = meta.history()[0] if meta.push()["ok"] else None
+        self.assertEqual(h["undo_spend"], [])
+        self.assertTrue(meta.undo(h["id"])["ok"])
+
+    def test_from_adset_nested_in_a_cell_is_refused(self):
+        it = meta.add([{"type": "meta_test_split", "name": "T", "end_date": D(10),
+                        "cells": [{"ids": ["s1"]}, {"ids": ["s2"], "from_adset": "s1"}]}])[0]
+        self.assertTrue(any(x.startswith("from_adset:") for x in it["problems"]), it["problems"])
+        with self.assertRaises(ValueError):
+            meta.ops_for(it["change"], {})
+        bad = meta.add([{"type": "meta_status", "level": "adset", "id": "s1", "status": "active", "with_end": "900"}])[0]
+        self.assertTrue(any("with_end is only for pausing" in x for x in bad["problems"]), bad["problems"])
+
+    def test_undo_route_passes_the_tick(self):
+        import server
+        src = (HERE / "server.py").read_text()
+        self.assertIn('meta.undo(body["push_id"], bool(body.get("accept_spend")))', src)
+        self.assertIn("needs_spend", (HERE / "index.html").read_text())
+
+
 class Mcp(Base):
     def test_tools(self):
         import mcp_server

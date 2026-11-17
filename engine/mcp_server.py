@@ -387,7 +387,49 @@ META_TEST_TOOLS = [  # [meta tests] meta_tests.py: two reads and one draft tool;
          "required": ["mode", "test"]}},
 ]
 META_TEST_NAMES = {t["name"] for t in META_TEST_TOOLS}
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS + META_TEST_TOOLS
+CREATIVE_TOOLS = [
+    # Creative and asset performance (creatives.py). Read-only: changes from it are the user's Add to draft buttons in Studio.
+    {"name": "creative_performance",
+     "description": "Creative and asset performance for one ad account (Google Ads or Meta) over a date range: per asset "
+                    "(headline, description, image, video, logo, call to action, link), added up across the ads that use it, "
+                    "with impressions, clicks, CTR, cost, conversions, CPA, value and ROAS where reported, Meta video metrics "
+                    "(plays, ThruPlays, 25-100% watched, average watch time) and a low-volume flag. Views: Google ads (Search RSA, "
+                    "Demand Gen, video ad assets) and pmax (Performance Max asset groups); Meta assets (ads with several text or "
+                    "media options, from Meta's asset breakdowns) and ads (ad by ad). Cached until a refresh; refresh=true reads "
+                    "the platform again (read-only). Changes (pause an ad, replace or remove a text) are made by the user in "
+                    "Studio's Creatives tab, into the draft.",
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "ad account id or key (see list_accounts); default the first account"},
+         "view": {"type": "string", "enum": ["ads", "pmax", "assets"], "description": "Google: ads (default) or pmax; Meta: assets (default) or ads"},
+         "days": {"type": "integer", "enum": [7, 14, 30, 90], "description": "date range in days (default 30)"},
+         "start": {"type": "string", "description": "custom range start YYYY-MM-DD (with end)"},
+         "end": {"type": "string", "description": "custom range end YYYY-MM-DD"},
+         "field": {"type": "string", "description": "only this asset field, e.g. headline, description, image, video, body_asset"},
+         "search": {"type": "string", "description": "only rows whose text, campaign or ad contains this"},
+         "grouped": {"type": "boolean", "description": "add up the same asset across ads (default true); false = one row per ad and asset"},
+         "sort": {"type": "string", "enum": ["cost", "impressions", "clicks", "ctr", "conversions", "cpa", "roas", "value", "plays", "thruplays"]},
+         "min_impressions": {"type": "number", "description": "rows under this are flagged low volume (default 500)"},
+         "limit": {"type": "integer", "description": "at most this many rows (default 50, max 500)"},
+         "refresh": {"type": "boolean", "description": "read the platform again now (read-only); default false"}}}},
+]
+CREATIVE_NAMES = {t["name"] for t in CREATIVE_TOOLS}
+
+
+def call_creatives(name, a):
+    import creatives  # noqa: PLC0415
+    v = creatives.status(a.get("account") or None, a.get("view") or None, a.get("days"), a.get("start"), a.get("end"),
+                         refresh=bool(a.get("refresh")), grouped=a.get("grouped", True) is not False,
+                         min_impressions=a.get("min_impressions", creatives.LOW_IMPRESSIONS), field=a.get("field"),
+                         search=a.get("search"), sort=a.get("sort") or "cost", limit=max(1, min(int(a.get("limit") or 50), 500)))
+    keep = ("field_label", "kind", "text", "image_url", "video_id", "video_title", "ads", "campaigns", "channels", "impressions",
+            "clicks", "ctr", "cost", "conversions", "cpa", "value", "roas", "views", "plays", "thruplays", "thruplay_rate", "p25",
+            "p50", "p75", "p100", "avg_watch", "low_volume", "headline", "primary_text", "flexible")
+    rows = [{k: r[k] for k in keep if r.get(k) not in (None, "", [], False)} for r in v["rows"]]
+    return {k: v[k] for k in ("account", "name", "platform", "currency", "window", "fetched_at", "view", "views", "count", "totals",
+                              "fields", "missing", "warnings", "method")} | {"rows": rows}
+
+
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS + META_TEST_TOOLS + CREATIVE_TOOLS
 TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
 
 
@@ -536,6 +578,8 @@ def call(name, a):
         return call_pacing(name, a)
     if name in ALERT_NAMES:
         return call_alerts(name, a)
+    if name in CREATIVE_NAMES:
+        return call_creatives(name, a)
     if name in ("team_status", "team_sync"):
         return call_team(name)
     if name in ("reviews_list", "review_request"):

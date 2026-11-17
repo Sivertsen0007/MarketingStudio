@@ -50,7 +50,7 @@ TYPE = "meta_audience"
 ACTIONS = ("create", "edit", "remove")
 KINDS = ("website", "engagement", "lookalike")
 URL_OPS = {"contains": "i_contains", "equals": "eq", "not_contains": "i_not_contains"}
-URL_LABEL = {v: k.replace("_", " ") for k, v in URL_OPS.items()}
+URL_LABEL = {v: k for k, v in URL_OPS.items()}  # one form everywhere: the snake_case key
 WEBSITE_DAYS, ENGAGEMENT_DAYS = 180, 730
 SOURCE_DAYS = {"page": 730, "instagram": 730, "lead_form": 90}  # Meta's limits per source
 NOT_YET = {"video": "video viewer audiences are not available yet (Meta's guide doesn't document their rule; Studio won't guess one)"}
@@ -488,11 +488,22 @@ def ops_for(c, meta):
         new["description"], old["description"] = c["description"], cur.get("description", "")
         bits.append("description")
     rule = _rule(cur)
-    if any(c.get(k) is not None for k in ("rules", "exclude", "match")) or c.get("retention_days"):
+    asked = any(c.get(k) is not None for k in ("rules", "exclude", "match"))
+    if asked and rule:  # backstop: rules equal to the stored ones (after normalising) are never sent
+        have0 = rule_rows(rule)
+        if have0 is not None:
+            want = {"rules": c["rules"] if c.get("rules") is not None else have0["rules"],
+                    "exclude": c["exclude"] if c.get("exclude") is not None else have0["exclude"], "match": c.get("match") or have0["match"]}
+            norm = lambda x: [(r.get("field", "url"), r.get("op") if r.get("field", "url") == "url" else None, str(r.get("value"))) for r in x or []]  # noqa: E731
+            if norm(want["rules"]) == norm(have0["rules"]) and norm(want["exclude"]) == norm(have0["exclude"]) and \
+                    (len(want["rules"]) <= 1 or want["match"] == have0["match"]):
+                c = {k: v for k, v in c.items() if k not in ("rules", "exclude", "match")}
+                asked = False
+    if asked or c.get("retention_days"):
         if not rule:
             raise ValueError("this audience has no rule Studio can change")
         days = int(c.get("retention_days") or cur.get("retention_days") or 30)
-        if any(c.get(k) is not None for k in ("rules", "exclude", "match")):
+        if asked:
             have = rule_rows(rule)
             if have is None:
                 raise ValueError("this audience's rule has parts Studio can't rebuild: change it in Ads Manager")
@@ -513,11 +524,12 @@ def ops_for(c, meta):
         new["rule"], old["rule"] = json.dumps(nr), json.dumps(rule)
     if not new:
         raise ValueError(f'audience "{cur.get("name")}" already looks like this')
-    longer = c.get("retention_days") and int(c["retention_days"]) > int(cur.get("retention_days") or 0)
+    # Conservative: when the audience is in use, any change to who is in it (retention or rules) needs the spend tick,
+    # for the push and for its undo, whichever way it goes.
+    reach = "rule" in new and bool(users(d).get(str(c["id"])))
+    tick = "changes who is in an audience that ad sets use (can reach more people)" if reach else ""
     return [{"kind": "audience_update", "id": str(c["id"]), "params": new, "undo": old,
-             "line": f'audience "{cur.get("name")}": ' + "; ".join(bits),
-             "spend": "longer retention or new rules can put the ad sets that use it in front of more people"
-             if (longer or "rules" in " ".join(bits)) and users(d).get(str(c["id"])) else ""}]
+             "line": f'audience "{cur.get("name")}": ' + "; ".join(bits), "spend": tick, "undo_spend": tick}]
 
 
 def check_step(s):
@@ -534,7 +546,7 @@ def do(s, meta):
         return {"line": s["line"], "id": new, "undo": "delete-audience", "created": "customaudience"}
     if s["kind"] == "audience_update":
         meta.post(s["id"], s["params"])
-        return {"line": s["line"], "id": s["id"], "undo": s["undo"]}
+        return {"line": s["line"], "id": s["id"], "undo": s["undo"], **({"undo_spend": s["undo_spend"]} if s.get("undo_spend") else {})}
     if s["kind"] == "audience_delete":
         meta.delete(s["id"])
         return {"line": s["line"], "id": s["id"], "undo": None, "final": "a deleted audience can't be brought back"}

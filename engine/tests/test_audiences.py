@@ -79,7 +79,7 @@ class GFake:
             name = q.split("user_list.name = '", 1)[1].rsplit("'", 1)[0].replace("\\'", "'")
             return [{"userList": json.loads(json.dumps(u))} for u in LISTS if u["name"] == name]
         if "FROM user_list WHERE user_list.type = CRM_BASED" in q:
-            return [{"userList": {"name": u["name"]}} for u in LISTS if u["type"] == "CRM_BASED"]
+            return [{"userList": {"id": u["id"], "name": u["name"]}} for u in LISTS if u["type"] == "CRM_BASED"]
         if "FROM user_list WHERE user_list.type = LOGICAL" in q:
             return [{"userList": COMBO}]
         if q.startswith("SELECT user_list.id, user_list.name FROM user_list"):
@@ -551,7 +551,8 @@ class MetaLive(MBase):
 
     def test_retention_only_edit_keeps_rule(self):
         meta.add([{"type": "meta_audience", "action": "edit", "id": "e1", "retention_days": 180}])
-        meta.push()
+        self.assertFalse(meta.push()["ok"], "e1 is in use (a lookalike seed): needs the tick")
+        meta.push(accept_spend=True)
         rule = json.loads(self.f.posts[-1][1]["rule"])
         self.assertEqual(rule["inclusions"]["rules"][0]["filter"]["filters"][0]["value"], "page_visited")
         self.assertEqual(rule["inclusions"]["rules"][0]["retention_seconds"], 180 * 86400)
@@ -732,6 +733,107 @@ class MetaReviewFixes(MBase):
         self.add1({"type": "meta_targeting", "level": "adset", "id": "s1", "age_min": 30})
         res = meta.push()
         self.assertTrue(meta.undo(res["push_id"]).get("needs_spend"), "undoing a narrower age range widens it again")
+
+
+ALL_OPS = ["CONTAINS", "EQUALS", "STARTS_WITH", "ENDS_WITH", "NOT_CONTAINS", "NOT_EQUALS", "NOT_STARTS_WITH", "NOT_ENDS_WITH"]
+OPS_LIST = {**WEB, "resourceName": RES(18), "id": "18", "name": "Ops list", "ruleBasedUserList": {"flexibleRuleUserList": {
+    "inclusiveRuleOperator": "OR", "inclusiveOperands": [
+        {"rule": {"ruleItemGroups": [{"ruleItems": [{"name": "url__", "stringRuleItem": {"operator": op, "value": f"/{op.lower()}"}}]}]},
+         "lookbackWindowDays": str(10 + i)} for i, op in enumerate(ALL_OPS)]}}}
+
+
+class Round3(GBase):
+    """a08 review round 3: one operator form, rename-only saves send no rules, customer lists checked by id."""
+
+    def test_every_operator_round_trips_and_rename_sends_no_rules(self):
+        LISTS.append(OPS_LIST)
+        base = {**BASE, "rows": {**BASE["rows"], "user_lists": BASE["rows"]["user_lists"] + [ul_row(OPS_LIST)]}}
+        js = (HERE / "static/audiences.js").read_text()
+        try:
+            with mock.patch.object(gapi, "base", lambda *a, **k: base):
+                r = next(x for x in audiences.rows(A)["rows"] if x["name"] == "Ops list")
+                self.assertTrue(r["rules_editable"])
+                self.assertEqual([x["op"] for x in r["rules"]], [audiences.OP_LABEL[o] for o in ALL_OPS])
+                for x in r["rules"]:
+                    self.assertIn(f'["{x["op"]}", ', js, "the UI has an option with exactly this key")
+                    self.assertIn(x["op"], audiences.URL_OPS)
+                # what the dialog reads back on a rename-only save: the same rows
+                p = self.preview([{"type": "user_list", "action": "edit", "list": "Ops list", "new_name": "Ops 2",
+                                   "rules": [{"op": x["op"], "value": x["value"]} for x in r["rules"]], "exclude": r["exclude"], "match": r["match"]}])
+                self.assertTrue(p["ok"], p)
+                op = self.g.mutates[-1][0][0]["userListOperation"]
+                self.assertEqual(op["updateMask"], "name", "unchanged rules are dropped (backstop)")
+                self.assertNotIn("ruleBasedUserList", op["update"])
+                # a real change keeps each unchanged rule's own lookback
+                rules = [{"op": x["op"], "value": x["value"]} for x in r["rules"]] + [{"op": "contains", "value": "/new"}]
+                self.preview([{"type": "user_list", "action": "edit", "list": "Ops list", "rules": rules}])
+                f = self.g.mutates[-1][0][0]["userListOperation"]["update"]["ruleBasedUserList"]["flexibleRuleUserList"]
+                self.assertEqual([o["lookbackWindowDays"] for o in f["inclusiveOperands"]], [str(10 + i) for i in range(8)] + ["30"])
+        finally:
+            LISTS.remove(OPS_LIST)
+
+    def test_customer_list_checked_by_resolved_id(self):
+        import sqlite3
+        db = sqlite3.connect(":memory:")
+        db.row_factory = sqlite3.Row
+        db.execute("create table UserList(name text, remoteId integer)")
+        db.execute("insert into UserList values ('VIP old name', 13)")  # list 13 is a customer list, renamed in Google since
+        with mock.patch.object(core, "_db", lambda a: db), mock.patch.object(gapi, "source", lambda a: "editor"):
+            p = self.preview([{"type": "user_list", "action": "create", "kind": "combined", "name": "Mix2", "any": ["Egypt visitors", "VIP old name"]}])
+        self.assertFalse(p["ok"])
+        self.assertIn("customer list", " ".join(p["items"][0]["problems"]))
+        self.assertFalse(any("Mix2" in json.dumps(o) for o, _ in self.g.mutates), "never sent to Google")
+
+    def test_customer_check_unreadable_refuses(self):
+        real = self.g.query
+
+        def broken(acct, q):
+            if "CRM_BASED" in q:
+                raise RuntimeError("Google Ads API: unavailable")
+            return real(acct, q)
+        with mock.patch.object(live, "query", broken):
+            p = self.preview([{"type": "user_list", "action": "create", "kind": "combined", "name": "Mix", "any": ["Egypt visitors", "Unused list"]}])
+        self.assertFalse(p["ok"])
+        self.assertIn("can't read which lists are customer lists", " ".join(p["items"][0]["problems"]))
+        core.clear(A)
+        with mock.patch.object(gapi, "base", mock.Mock(side_effect=RuntimeError("no data"))):
+            with self.assertRaises(ValueError):
+                core.add(A, [{"type": "user_list", "action": "create", "kind": "combined", "name": "Mix", "any": ["Egypt visitors", "Unused list"]}])
+
+
+class MetaRound3(MBase):
+    def test_every_targeting_undo_needs_the_tick(self):
+        tg = {**TG, "custom_audiences": [{"id": "w1", "name": "Site visitors"}, {"id": "w2", "name": "Unused site"}]}
+        with mock.patch.object(meta, "_live", lambda level, oid: {"name": oid, "status": "ACTIVE", "targeting": json.loads(json.dumps(tg))}):
+            self.add1({"type": "meta_targeting", "level": "adset", "id": "s1", "audiences_remove": ["w2"]})
+            res = meta.push(accept_spend=True)
+            self.assertTrue(res["ok"], res)
+            n = len(self.f.posts)
+            out = meta.undo(res["push_id"])
+            self.assertTrue(out.get("needs_spend"), out)
+            self.assertEqual(len(self.f.posts), n, "nothing sent without the tick")
+            self.assertTrue(meta.undo(res["push_id"], accept_spend=True)["ok"])
+
+    def test_audience_edit_in_use_needs_the_tick_both_ways(self):
+        self.add1({"type": "meta_audience", "action": "edit", "id": "w1", "retention_days": 7})  # shorter, but w1 is in use
+        p = meta.preview()
+        self.assertTrue(p["spend"])
+        self.assertFalse(meta.push()["ok"], "needs the tick")
+        res = meta.push(accept_spend=True)
+        self.assertTrue(res["ok"], res)
+        n = len(self.f.posts)
+        self.assertTrue(meta.undo(res["push_id"]).get("needs_spend"))
+        self.assertEqual(len(self.f.posts), n)
+        core.clear(meta.acct())
+        self.add1({"type": "meta_audience", "action": "edit", "id": "w2", "name": "Renamed"})  # a rename: no tick
+        self.assertFalse(meta.preview()["spend"])
+
+    def test_meta_unchanged_rules_not_sent(self):
+        self.add1({"type": "meta_audience", "action": "edit", "id": "w2", "name": "Renamed",
+                   "rules": [{"field": "url", "op": "contains", "value": "/egypt"}], "exclude": [], "match": "any"})
+        res = meta.push()
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(self.f.posts[-1], ("w2", {"name": "Renamed"}, False))
 
 
 class Text(unittest.TestCase):

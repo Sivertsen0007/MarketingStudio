@@ -1692,7 +1692,8 @@ def ops_for(c, items=None):
                f'{after["excluded"] or "none"}') if any(c.get(k) for k in meta_audiences.AUD_KEYS) else ""
         return [{"kind": "update", "id": oid, "params": {"targeting": _pin_device(tg)}, "undo": {"targeting": _pin_device(cur.get("targeting"))},
                  "line": f'ad set "{nm}": countries {before["countries"]} -> {after["countries"]}; age {before["age"]} -> {after["age"]}' + aud,
-                 "spend": ", ".join(spend), "undo_spend": ", ".join(undo_wider)}]
+                 # conservative: undoing any targeting change puts the old targeting back, which can reach more people
+                 "spend": ", ".join(spend), "undo_spend": ", ".join(undo_wider) or "puts the ad set's old targeting back (can reach more people)"}]
     if t == "meta_placements":
         old_tg = cur.get("targeting") or {}
         tg = _apply_placements(old_tg, c)

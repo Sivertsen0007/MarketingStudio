@@ -9,7 +9,9 @@
   const v = id => ((document.getElementById(id) || {}).value || "").trim();
   const checked = id => !!(document.getElementById(id) || {}).checked;
   const google = () => !isMeta();
-  const URL_OPS = [["contains", "URL contains"], ["equals", "URL equals"], ["starts_with", "URL starts with"], ["ends_with", "URL ends with"], ["not_contains", "URL doesn't contain"]];
+  // the same keys as the engine (audiences.URL_OPS): never the spaced labels
+  const URL_OPS = [["contains", "URL contains"], ["equals", "URL equals"], ["starts_with", "URL starts with"], ["ends_with", "URL ends with"],
+    ["not_contains", "URL doesn't contain"], ["not_equals", "URL isn't"], ["not_starts_with", "URL doesn't start with"], ["not_ends_with", "URL doesn't end with"]];
   const META_OPS = [["contains", "URL contains"], ["equals", "URL equals"], ["not_contains", "URL doesn't contain"], ["event", "Pixel event"]];
   const ENG = {page: ["Facebook Page", {engaged: "Engaged with the Page", visited: "Visited the Page", messaged: "Messaged the Page", cta: "Clicked a call-to-action button",
                                        saved: "Saved the Page or a post", post: "Engaged with a post or ad"}],

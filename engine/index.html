@@ -1882,7 +1882,9 @@ async function settingsDialog(){
       if (t.dataset.mrn){ await api("/api/settings/meta/rename", {act:t.dataset.mrn, name:document.querySelector(`[data-mname="${t.dataset.mrn}"]`).value}); toast("Name saved"); await reloadAccounts() }
       if (t.dataset.mrm){ if (!confirm("Hide this ad account in Studio? Nothing changes in Meta. Its draft and push log stay on disk.")) return; await api("/api/settings/meta/remove", {act:t.dataset.mrm}); await reloadAccounts(); settingsDialog() }
       if (t.id === "m_add" || t.dataset.madd){ t.disabled = true; const r = await api("/api/settings/meta/add", {act:t.dataset.madd || val("m_act"), name:t.dataset.madd ? "" : val("m_name")}); toast("Added " + r.name); await reloadAccounts(); settingsDialog() }
-      if (t.dataset.job){ t.disabled = true; await api("/api/settings/scheduler", {name:t.dataset.job, enabled:t.checked}); toast(t.checked ? "Job switched on" : "Job switched off"); loadJobs() }
+      if (t.dataset.job){ t.disabled = true; const on = t.checked;
+        try { await api("/api/settings/scheduler", {name:t.dataset.job, enabled:on}); toast(on ? "Job switched on" : "Job switched off") }
+        catch(err) { t.checked = !on; toast(err.message) } finally { t.disabled = false } loadJobs(); return }
       if (t.dataset.vdel){ await api("/api/settings/view/delete", JSON.parse(t.dataset.vdel)); await loadViews(); settingsDialog() }
     } catch(err) { t.disabled = false; toast(err.message) }
   };

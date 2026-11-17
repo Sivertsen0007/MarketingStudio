@@ -36,7 +36,9 @@ from pathlib import Path
 #     degrees_of_freedom_spec.creative_features_spec.product_extensions.enroll_status OPT_OUT unless it is already set;
 #   - Lookalike audiences: lookalike_spec.country / location_spec are refused (Studio creates no audiences);
 #   - meta_moment_maker_spec is gone from ad set reads and writes (Studio never used it).
-# Every Graph call Studio makes was checked on v27.0 (read-only GETs and validate_only POSTs) on 17 November 2026.
+# Checked on v27.0 on 17 November 2026: every read Studio makes (GET), and with validate_only the writes Push live
+# builds (new campaign, ad set, creative, ad; status, budget, name, targeting, placements, copy edits). Not checkable
+# that way, so not run on v27: media uploads (adimages, advideos) and organic SoMe publishing.
 GRAPH_VERSION = "v27.0"
 GRAPH_HOST = "https://graph.facebook.com"
 API = f"{GRAPH_HOST}/{GRAPH_VERSION}"

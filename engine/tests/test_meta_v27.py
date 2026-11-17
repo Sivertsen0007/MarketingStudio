@@ -54,7 +54,8 @@ class V27(unittest.TestCase):
         self.assertTrue(meta_api.API.endswith("/v27.0"))
 
     def test_pin_device(self):
-        self.assertEqual(meta._pin_device({})["targeting_automation"], {"individual_setting": {"device": 0}})
+        self.assertEqual(meta._pin_device({})["targeting_automation"], {"advantage_audience": 0, "individual_setting": {"device": 0}})
+        self.assertEqual(meta._pin_device({"targeting_automation": None})["targeting_automation"]["advantage_audience"], 0)
         t = {"targeting_automation": {"advantage_audience": 1}}
         out = meta._pin_device(t)
         self.assertEqual(out["targeting_automation"], {"advantage_audience": 1, "individual_setting": {"device": 0}})
@@ -100,6 +101,23 @@ class V27(unittest.TestCase):
     def test_media_creative_opt_out(self):
         p = meta._media_creative({"link": "https://example.com/", "primary_text": "T", "headline": "H"}, None, "image", "N")
         self.assertEqual(p["degrees_of_freedom_spec"]["creative_features_spec"]["product_extensions"], {"enroll_status": "OPT_OUT"})
+
+    def test_instagram_boost_identity(self):
+        """Most ads have no Instagram account: an Instagram boost still finds the pair that has one."""
+        ads = [{"creative": {"object_story_spec": {"page_id": "p1"}}}] * 5 + \
+              [{"creative": {"object_story_spec": {"page_id": "p1", "instagram_user_id": "ig1"}}}] * 3 + \
+              [{"creative": {"object_story_spec": {"page_id": "p2", "instagram_user_id": "ig2"}}}]
+        with mock.patch.object(meta, "load", lambda *a, **k: {**DATA, "ads": ads}):
+            self.assertEqual(meta._identity(), {"page_id": "p1"})  # other new creatives: unchanged
+            self.assertEqual(meta._identity(need_ig=True), {"page_id": "p1", "instagram_user_id": "ig1"})
+            s = meta.ops_for(meta._normalise({"type": "meta_boost_post", "adset_id": "s1", "name": "B", "channel": "instagram",
+                                              "post_id": "123"}), {})[0]
+            self.assertEqual((s["creative"]["object_id"], s["creative"]["instagram_user_id"]), ("p1", "ig1"))
+        with mock.patch.object(meta, "load", lambda *a, **k: {**DATA, "ads": ads[:5]}), \
+                mock.patch.object(meta, "_page_for_account", lambda d=None: "p1"):
+            with self.assertRaises(ValueError):
+                meta.ops_for(meta._normalise({"type": "meta_boost_post", "adset_id": "s1", "name": "B", "channel": "instagram",
+                                              "post_id": "123"}), {})
 
     def test_no_lookalike_or_moment_maker_fields(self):
         src = (HERE / "meta_ads.py").read_text()

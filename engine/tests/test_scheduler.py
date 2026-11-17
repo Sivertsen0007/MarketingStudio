@@ -311,6 +311,71 @@ class Persistence(Base):
         self.assertEqual(S._jobs["d"]["next_run"], at(2026, 11, 19, 7, 0))
 
 
+class Review(Base):
+    def test_interrupted_after_a_crash(self):
+        gate = threading.Event()
+        S.register("long", lambda: gate.wait(5), every=10, enabled_default=True)
+        self.clock[0] += 10
+        self.assertEqual(S.run_due(), ["long"])
+        self.assertEqual(json.loads((TMP / "scheduler.json").read_text())["jobs"]["long"]["last_status"], "running")
+        # Studio dies here: a new process reads the file
+        old = S._jobs.pop("long")
+        S._disk.update(loaded=False, data=None)
+        S.register("long", lambda: None, every=10, enabled_default=True)
+        row = S.status()["jobs"][0]
+        self.assertEqual(row["last_status"], "interrupted")
+        self.assertFalse(row["running"])
+        self.assertIn("Studio stopped", row["last_error"])
+        gate.set()
+        old["worker"].join(5)
+
+    def test_resume_false_starts_over(self):
+        S.register("pub", lambda: None, every=30, enabled_default=True, resume=False)
+        self.clock[0] += 3600  # Studio closed for an hour
+        S._jobs.clear()
+        S._disk.update(loaded=False, data=None)
+        S.register("pub", lambda: None, every=30, enabled_default=True, resume=False)
+        self.assertEqual(S.run_due(), [])  # no catch-up run at start
+        self.assertEqual(S._jobs["pub"]["next_run"], self.clock[0] + 30)
+
+    def test_repeated_failure_prints_traceback_once(self):
+        import contextlib
+        import io
+
+        def bad():
+            raise RuntimeError("same every time")
+        S.register("bad", bad, every=10, enabled_default=True)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            for _ in range(3):
+                self.clock[0] += 10
+                S.run_due()
+                wait_idle("bad")
+        out = buf.getvalue()
+        self.assertEqual(out.count("Traceback"), 1)
+        self.assertEqual(out.count("failed again"), 2)
+
+    def test_local_zone_has_dst(self):
+        z = S.local_tz()
+        for ts in (at(2026, 1, 15, 12, 0), at(2026, 7, 15, 12, 0)):
+            d = dt.datetime.fromtimestamp(ts, z)
+            self.assertEqual(d.utcoffset().total_seconds(), time.localtime(ts).tm_gmtoff)
+        s = S._SystemTZ()
+        for ts in (at(2026, 1, 15, 12, 0), at(2026, 7, 15, 12, 0)):
+            d = dt.datetime.fromtimestamp(ts, s)
+            self.assertEqual(d.utcoffset().total_seconds(), time.localtime(ts).tm_gmtoff)
+            self.assertEqual(d.timestamp(), ts)
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = "Europe/London"
+        try:
+            self.assertEqual(getattr(S.local_tz(), "key", None), "Europe/London")
+        finally:
+            if old is None:
+                os.environ.pop("TZ")
+            else:
+                os.environ["TZ"] = old
+
+
 class Thread(unittest.TestCase):
     """The real thread with the real clock: start once, run, stop."""
 

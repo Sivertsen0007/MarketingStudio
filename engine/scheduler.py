@@ -19,7 +19,9 @@ Rules
 - every: seconds (or a timedelta) between starts. The first run is one interval after start (as Studio's old SoMe
   thread did). at: "HH:MM", daily, in tz (an IANA name, a tzinfo, or a function returning either). tz=None means the
   account's time zone: the Meta ad account's time zone from Studio's cache (no API call), else the Mac's.
-- Missed runs (the Mac was asleep or Studio was closed) run once, not once per missed slot.
+- Missed runs (the Mac was asleep or Studio was closed) run once, not once per missed slot. resume=False: after a
+  restart the job starts over (first run one interval after start) instead of using the saved next run.
+- A run that was still going when Studio stopped (closed, crashed, Mac restarted) shows as "interrupted".
 - refresh=True marks a job that pulls data from Google, Meta, an email platform etc. It runs only when the data policy
   (datapolicy.py) is "auto"; in "manual" it is held (shown as such) and nothing is pulled. Jobs that only work on what
   is already on the Mac (alerts on cached data, the SoMe publisher the user turned on) leave refresh False.
@@ -40,6 +42,7 @@ from zoneinfo import ZoneInfo
 import datapolicy
 
 TICK = 1.0  # seconds between looks at the job list
+TRACE_EVERY = 3600  # a job failing the same way every round prints its full traceback at most once an hour
 DEFAULT_TIMEOUT = 300
 STATE_FILE = "scheduler.json"
 
@@ -115,7 +118,55 @@ def account_tz():
                 return ZoneInfo(name)
     except Exception:  # noqa: BLE001 - unknown zone name, unreadable folder: the Mac's zone
         pass
-    return dt.datetime.now().astimezone().tzinfo
+    return local_tz()
+
+
+def local_tz():
+    """The Mac's own time zone as a real zone (DST included): TZ, else /etc/localtime's target, else a zone that asks
+    time.localtime for each moment."""
+    for name in (os.environ.get("TZ", "").lstrip(":"), _localtime_name()):
+        if name:
+            try:
+                return ZoneInfo(name)
+            except Exception:  # noqa: BLE001 - not an IANA name
+                pass
+    return _SystemTZ()
+
+
+def _localtime_name():
+    try:
+        target = os.path.realpath("/etc/localtime")
+    except OSError:
+        return ""
+    return target.split("zoneinfo/", 1)[1] if "zoneinfo/" in target else ""
+
+
+class _SystemTZ(dt.tzinfo):
+    """The C library's local time, asked per moment (so DST is right on both sides of a change)."""
+
+    def _lt(self, d):
+        if d is None:
+            return time.localtime()
+        try:
+            return time.localtime(time.mktime((d.year, d.month, d.day, d.hour, d.minute, d.second, 0, 0, -1)))
+        except (OverflowError, ValueError):
+            return time.localtime()
+
+    def utcoffset(self, d):
+        return dt.timedelta(seconds=self._lt(d).tm_gmtoff)
+
+    def dst(self, d):
+        return dt.timedelta(hours=1) if self._lt(d).tm_isdst > 0 else dt.timedelta(0)
+
+    def tzname(self, d):
+        return self._lt(d).tm_zone
+
+    def fromutc(self, d):
+        lt = time.localtime(d.replace(tzinfo=dt.timezone.utc).timestamp())
+        return (d + dt.timedelta(seconds=lt.tm_gmtoff)).replace(tzinfo=self)
+
+    def __repr__(self):
+        return "local"
 
 
 def _tz(j):
@@ -157,7 +208,7 @@ def _next_after(j, ts):
 # ---------- registration ----------
 
 def register(name, fn, every=None, at=None, enabled_default=False, timeout=DEFAULT_TIMEOUT, tz=None, refresh=False,
-             label=None, can_disable=True, note=""):
+             label=None, can_disable=True, note="", resume=True):
     """Add (or replace) a named job. Exactly one of every (seconds or timedelta) or at ("HH:MM", daily).
     Safe before or after start(). Returns the job's status row."""
     if not name or not callable(fn):
@@ -183,8 +234,12 @@ def register(name, fn, every=None, at=None, enabled_default=False, timeout=DEFAU
         for k in ("last_run", "last_end", "last_status", "last_error", "duration", "runs", "failures"):
             if saved.get(k) is not None:
                 j[k] = saved[k]
+        if j["last_status"] == "running" and not j["worker"]:  # Studio stopped during that run
+            j["last_status"] = "interrupted"
+            j["last_error"] = "Studio stopped while this was running (closed, crashed or the Mac restarted)"
+            j["failures"] = int(j.get("failures") or 0) + 1
         now = _now()
-        if saved.get("spec") == spec and saved.get("next_run"):
+        if resume and saved.get("spec") == spec and saved.get("next_run"):
             j["next_run"] = float(saved["next_run"])  # in the past: it runs once at the next look (a missed run)
         else:
             j["next_run"] = _next_after(j, now)
@@ -237,8 +292,7 @@ def _worker(j, started):
         j["fn"]()
     except Exception as ex:  # noqa: BLE001 - one job's failure never stops the others
         status, err = "error", f"{ex.__class__.__name__}: {str(ex)[:300]}"
-        print(f"[scheduler] job {j['name']} failed:", file=sys.stderr)
-        traceback.print_exc()
+        _report(j, err)
     end = _now()
     with _lock:
         if j.get("timed_out"):
@@ -250,6 +304,17 @@ def _worker(j, started):
         if status != "ok":
             j["failures"] = int(j.get("failures") or 0) + 1
         _save_job(j)
+
+
+def _report(j, err):
+    """Log a job's failure: the full traceback when it is new (or once an hour), else one short line."""
+    t = time.time()
+    if err != j.get("_tb_err") or t - (j.get("_tb_at") or 0) >= TRACE_EVERY:
+        j.update(_tb_err=err, _tb_at=t)
+        print(f"[scheduler] job {j['name']} failed:", file=sys.stderr)
+        traceback.print_exc()
+    else:
+        print(f"[scheduler] job {j['name']} failed again: {err[:120]}", file=sys.stderr)
 
 
 def _start_run(j, now):

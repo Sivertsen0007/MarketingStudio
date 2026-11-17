@@ -775,6 +775,22 @@ class Scheduler(unittest.TestCase):
         scheduler._reset_for_tests()
         social._sched.clear()
 
+    def test_health_row_sees_the_scheduler(self):
+        social.save_settings({"local_scheduler": True})
+        with mock.patch.object(social, "scheduler_running", lambda: False):
+            row = next(r for r in social.health() if r.get("account") == "Studio on this Mac")
+            self.assertIn("not running yet", row["detail"])
+        with mock.patch.object(social, "scheduler_running", lambda: True):
+            row = next(r for r in social.health() if r.get("account") == "Studio on this Mac")
+            self.assertNotIn("not running", row["detail"])
+        with mock.patch.object(social, "tick", lambda at=None: None):
+            social.start_scheduler(interval=3600)
+            row = next(r for r in social.health() if r.get("account") == "Studio on this Mac")
+            self.assertNotIn("not running", row["detail"])
+        import scheduler
+        scheduler._reset_for_tests()
+        social._sched.clear()
+
     def test_scheduler_job_runs_tick_and_keeps_errors(self):
         import scheduler
         calls = []

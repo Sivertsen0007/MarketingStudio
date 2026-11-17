@@ -1280,13 +1280,14 @@ def _new_feed(feed, c):
 # advantage_audience is still always set on new ad sets (0 or 1, from the draft).
 
 def _pin_device(tg):
-    """A copy of targeting with targeting_automation.individual_setting.device set: kept as it is, else 0 (off)."""
+    """A copy of targeting with targeting_automation.individual_setting.device and targeting_automation
+    .advantage_audience set: each kept as it is, else 0 (off)."""
     tg = json.loads(json.dumps(tg or {}))
     ta = tg.get("targeting_automation") if isinstance(tg.get("targeting_automation"), dict) else {}
     ind = ta.get("individual_setting") if isinstance(ta.get("individual_setting"), dict) else {}
     if ind.get("device") is None:
         ind["device"] = 0
-    tg["targeting_automation"] = {**ta, "individual_setting": ind}
+    tg["targeting_automation"] = {**ta, "advantage_audience": ta.get("advantage_audience") or 0, "individual_setting": ind}
     return tg
 
 
@@ -1315,15 +1316,16 @@ def _creative_params(cr, c, name):
     return _pin_showcase(p)
 
 
-def _identity(src_cr=None):
-    """page_id (+ instagram_user_id) for a new creative: from the source ad, else the pair most ads in the account use."""
+def _identity(src_cr=None, need_ig=False):
+    """page_id (+ instagram_user_id) for a new creative: from the source ad, else the pair most ads in the account use.
+    need_ig: only pairs with an Instagram account count (an Instagram boost), even when most ads have none."""
     if src_cr and src_cr.get("object_story_spec", {}).get("page_id"):
         o = src_cr["object_story_spec"]
         return {k: o[k] for k in ("page_id", "instagram_user_id") if o.get(k)}
     pairs = collections.Counter()
     for a in load()["ads"]:
         o = (a.get("creative") or {}).get("object_story_spec") or {}
-        if o.get("page_id"):
+        if o.get("page_id") and (o.get("instagram_user_id") or not need_ig):
             pairs[(o["page_id"], o.get("instagram_user_id"))] += 1
     if pairs:
         page, ig = pairs.most_common(1)[0][0]
@@ -1537,7 +1539,7 @@ def ops_for(c, items=None):
         else:
             where = f"ad set {c['adset_id']}"
         if c["channel"] == "instagram":  # an existing Instagram post as the ad (Meta: source_instagram_media_id)
-            ident = _identity()
+            ident = _identity(need_ig=True)
             if not ident.get("instagram_user_id"):
                 raise ValueError("no Instagram account found on the ads in this ad account")
             cr = _pin_showcase({"name": c["name"][:100] + " (Studio boost)", "object_id": ident["page_id"],

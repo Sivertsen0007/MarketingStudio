@@ -979,7 +979,7 @@ def start_scheduler(interval=30):
     with _sched_lock:
         if _sched.get("registered") and scheduler.running():
             return False
-        scheduler.register(JOB, _job, every=interval, enabled_default=True, can_disable=False, timeout=JOB_TIMEOUT,
+        scheduler.register(JOB, _job, every=interval, enabled_default=True, can_disable=False, timeout=JOB_TIMEOUT, resume=False,
                            label="SoMe: publish scheduled posts",
                            note='Posts only when "Let Studio on this Mac publish scheduled posts" is on in SoMe settings')
         scheduler.start()
@@ -1331,7 +1331,7 @@ def health(today=None):
                      "Connected." if li.connected() else "Not connected.", "See the README: LinkedIn developer app + Community Management API."))
     s = store.settings()
     rows.append(_row("SoMe scheduling", "Studio on this Mac", "Scheduler", True if s["local_scheduler"] else None,
-                     ("On: scheduled Instagram and LinkedIn posts go out while Studio is open" + ("" if _sched.get("thread") else " (the thread is not running yet)"))
+                     ("On: scheduled Instagram and LinkedIn posts go out while Studio is open" + ("" if scheduler_running() else " (the scheduler is not running yet)"))
                      if s["local_scheduler"] else "Off: Instagram and LinkedIn can't be scheduled (Facebook uses Meta's own scheduling).",
                      "Turn it on in SoMe settings if this Mac is on and Studio open at the times you schedule."))
     rows.append(_row("SoMe scheduling", "VPS publisher job", "Parked", None, "Parked: not available yet.",

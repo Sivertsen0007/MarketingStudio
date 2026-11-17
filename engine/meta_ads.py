@@ -720,8 +720,9 @@ def summarise(c, d=None, items=None):
                                 if c.get("age_min") or c.get("age_max") else "", _pl_text(c["placements"]) if c.get("placements") else "",
                                 f"optimisation {c['optimization_goal']}" if c.get("optimization_goal") else "",
                                 f"daily {float(c['daily_budget']):.2f}" if c.get("daily_budget") else "") if x]
+            state = "Active from the test start to its end" if c.get("activate_with_test") else "Paused"
             return (f'Meta new ad set "{c["name"]}" in campaign "{camp}": copy of ad set "{_name(d, "adset", c["from_adset"])}"'
-                    f'{" with " + "; ".join(diff) if diff else " (no change)"} (Paused)')
+                    f'{" with " + "; ".join(diff) if diff else " (no change)"} ({state})')
         return (f'Meta new ad set "{c["name"]}" in campaign "{camp}" ({b}; {", ".join(c.get("countries") or [])}; {age}; '
                 f'{_pl_text(c.get("placements"))}; Paused)')
     if t == "meta_new_ad":
@@ -736,7 +737,7 @@ def summarise(c, d=None, items=None):
             src.append(f'uploaded {m.get("kind", "file")} "{m.get("name", c["media_id"][:8])}"')
         if c.get("from_ad"):
             src.append(f'copy of "{_name(d, "ad", c["from_ad"])}"')
-        return f'Meta new ad "{c["name"]}" in ad set "{where}" ({", ".join(src)}, Paused)'
+        return f'Meta new ad "{c["name"]}" in ad set "{where}" ({", ".join(src)}, {"Active with the test" if c.get("activate_with_test") else "Paused"})'
     if t == "meta_boost_post":
         items = items if items is not None else _items()
         try:
@@ -913,8 +914,17 @@ def check(c, d=None, items=None):
             if c.get("end_date"):
                 _future_date(c["end_date"], "end date", problems, after=start)
             problems += _placement_problems(c.get("placements"))
+            if c.get("activate_with_test"):
+                if not src:
+                    problems.append("activate_with_test is only for a variant copied from an ad set (from_adset)")
+                if not c.get("end_date"):
+                    problems.append("activate_with_test needs the test's end_date (the variant runs only inside the test)")
         elif t == "meta_new_ad":
             _adset_facts(c.get("adset_id"), d, items)
+            if c.get("activate_with_test"):
+                parent = (items.get(_ref(c.get("adset_id")) or "") or {}).get("change") or {}
+                if not parent.get("activate_with_test"):
+                    problems.append("activate_with_test is only for ads in a new variant ad set that is itself activate_with_test")
             if not c.get("name"):
                 problems.append("the new ad needs a name")
             if not c.get("from_ad") and not c.get("media_id"):
@@ -1556,9 +1566,12 @@ def ops_for(c, items=None):
             where = f'new ad set "{(items if items is not None else _items()).get(aref, {}).get("change", {}).get("name", c["adset_id"])}"'
         else:
             where = f"ad set {c['adset_id']}"
-        base = {"kind": "new_ad", "phase": "new_ad", "adset": None if aref else str(c["adset_id"]), "adset_ref": aref, "name": c["name"]}
+        base = {"kind": "new_ad", "phase": "new_ad", "adset": None if aref else str(c["adset_id"]), "adset_ref": aref, "name": c["name"],
+                "status": "ACTIVE" if c.get("activate_with_test") else "PAUSED"}
+        if c.get("activate_with_test"):
+            base["spend"] = "new ad created Active: it delivers when its ad set runs (only inside the test window)"
         if not c.get("media_id"):
-            return [{**base, "line": f'new ad "{c["name"]}" (Paused) in {where}, copy of ad {c["from_ad"]}',
+            return [{**base, "line": f'new ad "{c["name"]}" ({base["status"].title()}) in {where}, copy of ad {c["from_ad"]}',
                      "creative": _creative_params(src_cr, c, c["name"] + " (Studio)"), "source_creative": src_cr["id"]}]
         m = media_info(c["media_id"])
         have = (m.get("uploads") or {}).get(act())
@@ -1674,7 +1687,32 @@ def ops_for(c, items=None):
 
 
 F_COPY = ("name,campaign_id,status,targeting,optimization_goal,billing_event,bid_strategy,bid_amount,promoted_object,"
-          "daily_budget,lifetime_budget,end_time,attribution_spec,destination_type")
+          "daily_budget,lifetime_budget,end_time,attribution_spec,destination_type,"
+          "regional_regulated_categories,regional_regulation_identities,dsa_beneficiary,dsa_payor")
+# Copied as they are: without them Meta refuses a new ad set that reaches regulated regions (e.g. Singapore, Malaysia,
+# Thailand need a universal beneficiary / payer declaration; the EU needs the DSA beneficiary and payor).
+COPY_AS_IS = ("bid_strategy", "bid_amount", "attribution_spec", "destination_type", "regional_regulated_categories",
+              "regional_regulation_identities", "dsa_beneficiary", "dsa_payor")
+
+
+def _set_age(tg, lo, hi):
+    """Apply an age change to targeting -> (targeting, text). With Advantage+ audience on, Meta treats the ages as a
+    suggestion (targeting.age_range) and only the minimum can be a hard limit (age_max stays 65): the suggestion is set,
+    and the hard minimum is only lowered when the suggestion starts below it. Without it, age_min / age_max are the limits."""
+    tg = json.loads(json.dumps(tg))
+    adv = bool((tg.get("targeting_automation") or {}).get("advantage_audience"))
+    cur = tg.get("age_range") or [tg.get("age_min", 18), tg.get("age_max", 65)]
+    lo, hi = int(lo or cur[0] or 18), int(hi or cur[1] or 65)
+    if adv:
+        tg["age_range"] = [lo, hi]
+        if lo < int(tg.get("age_min") or 18):
+            tg["age_min"] = lo
+        tg["age_max"] = 65
+        return tg, (f"age {lo}-{hi} as a suggestion (Advantage+ audience: Meta may go beyond it; "
+                    f"hard minimum {tg.get('age_min', 18)})")
+    tg.pop("age_range", None)
+    tg["age_min"], tg["age_max"] = lo, hi
+    return tg, f"age {lo}-{hi}"
 
 
 def _copy_adset_ops(c, items):
@@ -1693,11 +1731,9 @@ def _copy_adset_ops(c, items):
     if c.get("countries"):
         tg["geo_locations"] = {"countries": [x.upper() for x in c["countries"]]}
         changed.append(f'countries {", ".join(c["countries"])} (replaces every location of the original)')
-    for k in ("age_min", "age_max"):
-        if c.get(k):
-            tg[k] = int(c[k])
     if c.get("age_min") or c.get("age_max"):
-        changed.append(f'age {tg.get("age_min", 18)}-{tg.get("age_max", 65)}')
+        tg, txt = _set_age(tg, c.get("age_min"), c.get("age_max"))
+        changed.append(txt)
     if c.get("placements"):
         tg = _apply_placements(tg, c["placements"])
         changed.append(f'placements {_pl_text(c["placements"])}')
@@ -1706,8 +1742,8 @@ def _copy_adset_ops(c, items):
     goal = c.get("optimization_goal") or src.get("optimization_goal")
     p = {"name": c["name"], "status": "PAUSED", "billing_event": src.get("billing_event") or "IMPRESSIONS",
          "optimization_goal": goal, "targeting": _pin_device(tg)}
-    for k in ("bid_strategy", "bid_amount", "attribution_spec", "destination_type"):
-        if src.get(k) not in (None, "", []):
+    for k in COPY_AS_IS:
+        if src.get(k) not in (None, "", [], {}):
             p[k] = src[k]
     if c.get("optimization_goal") and c["optimization_goal"] != src.get("optimization_goal"):
         changed.append(f"optimisation {_st(src.get('optimization_goal'))} -> {_st(goal)}")
@@ -1725,10 +1761,17 @@ def _copy_adset_ops(c, items):
         p["promoted_object"] = src.get("promoted_object") or {"page_id": _page_for_account()}
     elif src.get("promoted_object") and goal == src.get("optimization_goal"):
         p["promoted_object"] = src["promoted_object"]
-    if c.get("start_date") and dt.date.fromisoformat(c["start_date"]) > dt.date.today():
-        p["start_time"] = f"{c['start_date']}T00:00:00+0000"
-    if c.get("end_date"):
-        p["end_time"] = f"{c['end_date']}T23:59:00+0000"
+    window = None
+    if c.get("activate_with_test"):  # runs only from the test's start to its end (meta_tests: same clock as the test)
+        import meta_tests  # noqa: PLC0415
+        window = {k: c.get(k) for k in ("start_date", "end_date")}
+        p["status"] = "ACTIVE"
+        p["start_time"], p["end_time"] = meta_tests._times(window)
+    else:
+        if c.get("start_date") and dt.date.fromisoformat(c["start_date"]) > dt.date.today():
+            p["start_time"] = f"{c['start_date']}T00:00:00+0000"
+        if c.get("end_date"):
+            p["end_time"] = f"{c['end_date']}T23:59:00+0000"
     spend = ""
     if not camp["cbo"]:
         if c.get("daily_budget"):
@@ -1746,9 +1789,13 @@ def _copy_adset_ops(c, items):
     else:
         p["campaign_id"] = str(cid)
     line = (f'new ad set "{c["name"]}" in campaign "{camp["name"]}", a copy of ad set "{src.get("name")}" with '
-            f'{"; ".join(changed) or "no change"}, created Paused')
+            f'{"; ".join(changed) or "no change"}, ' +
+            ("created Active, scheduled to deliver only from the test's start to its end" if window else "created Paused"))
+    if window:
+        spend = (spend.replace(" (Paused until you switch it on)", "") or "variant ad set") + \
+            " - created Active: it spends from the test start to its end"
     step = {"kind": "create", "phase": "new_adset", "edge": "adsets", "params": p, "refs": {"campaign_id": cref} if cref else {},
-            "line": line, "spend": spend}
+            "line": line, "spend": spend, **({"window": window} if window else {})}
     if cref:
         step["check_params"] = None
         step["line"] += " (Meta can only check it once the new campaign exists, so at push)"
@@ -1853,10 +1900,14 @@ def _do(s, ctx=None):
         params = dict(s["params"])
         for field, ref in (s.get("refs") or {}).items():
             params[field] = ctx[ref]
+        if s.get("window"):  # the test's own start / end, from the clock shared with the test in this push
+            import meta_tests  # noqa: PLC0415
+            params["start_time"], params["end_time"] = meta_tests._times(s["window"], ctx=ctx)
         new = post(f"{act()}/{s['edge']}", params)["id"]
         ctx[s["item"]] = new
         # created by Studio in this push: undo / rollback sets it to DELETED (never done to anything that existed before)
-        return {"line": s["line"], "id": new, "undo": {"status": "DELETED"}, "created": s["edge"][:-1]}
+        return {"line": s["line"], "id": new, "undo": {"status": "DELETED"}, "created": s["edge"][:-1],
+                "parent": params.get("campaign_id")}
     if s["kind"] == "new_ad":
         creative = json.loads(json.dumps(s["creative"]))
         rec = {}
@@ -1868,14 +1919,39 @@ def _do(s, ctx=None):
             rec["uploaded"] = {"media_id": s["media_id"], **ref}
         adset = ctx[s["adset_ref"]] if s.get("adset_ref") else s["adset"]
         new_cr = post(f"{act()}/adcreatives", creative)["id"]
-        ad = post(f"{act()}/ads", {"name": s["name"], "adset_id": adset, "status": "PAUSED", "creative": {"creative_id": new_cr}})["id"]
+        ad = post(f"{act()}/ads", {"name": s["name"], "adset_id": adset, "status": s.get("status") or "PAUSED",
+                                   "creative": {"creative_id": new_cr}})["id"]
         if s.get("item"):
             ctx[s["item"]] = ad  # a creative test in this push can point at it
-        return {"line": s["line"], "id": ad, "undo": {"status": "DELETED"}, "created": "ad", "created_ad": ad, "created_creative": new_cr, **rec}
+        return {"line": s["line"], "id": ad, "undo": {"status": "DELETED"}, "created": "ad", "created_ad": ad, "created_creative": new_cr,
+                "parent": adset, **rec}
     if s["kind"] in ("study", "study_end"):
         import meta_tests  # noqa: PLC0415
         return meta_tests.do(s, ctx)
     raise ValueError(s["kind"])
+
+
+def _keep(done):
+    """After a refusal: (kept, to reverse). A test made in this push can't be removed, so it stays, and so does every
+    object it uses: its cells' ad sets / campaigns / ads, the new campaign above a used ad set, the new ads inside a used
+    ad set or campaign. Everything else made in the push is reversed as usual."""
+    used = {str(x) for r in done if r.get("created") == "study" for x in r.get("uses") or []}
+    keep = {id(r) for r in done if r.get("undo") is None}  # tests made or ended: final
+    grew = True
+    while grew:
+        grew = False
+        for r in done:
+            if id(r) in keep or not r.get("created"):
+                continue
+            rid, parent = str(r["id"]), str(r.get("parent") or "")
+            if rid in used or parent in used:
+                keep.add(id(r))
+                for x in (rid, parent):
+                    if x and x not in used:
+                        used.add(x)
+                        grew = True
+                grew = True
+    return [r for r in done if id(r) in keep], [r for r in done if id(r) not in keep]
 
 
 def _reverse(done, tick=None):
@@ -1938,26 +2014,37 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
             break
     stamp = dt.datetime.now()
     items = [i for i in core.draft(acct())["items"] if i["id"] in {s["item"] for s in p["steps"]}]
-    if error and done:
+    kept, back = _keep(done) if error else (done, [])
+    if error and back:
         progress.phase(acct(), "reversing", "Meta refused a change: reversing the ones already made")
-    rolled = _reverse(done, lambda r, ok: progress.mark(acct(), r.get("item"), "reversed")) if error else []
+    rolled = _reverse(back, lambda r, ok: progress.mark(acct(), r.get("item"), "reversed")) if error else []
+    kept_items = {r.get("item") for r in kept}
     rec = {"id": f"{stamp:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4]}", "ts": stamp.isoformat(timespec="seconds"), "ok": not error,
-           "items": items, "ops": [] if error else done, "error": error, "rolled_back": [d["line"] for d in done] if error else [],
-           "rollback_errors": rolled}
+           "partial": bool(error and kept), "items": [i for i in items if i["id"] in kept_items] if error else items,
+           "ops": kept, "error": error, "rolled_back": [d["line"] for d in back], "rollback_errors": rolled}
     with open(_log(), "a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     if not error:
         core.remove(acct(), [i["id"] for i in items])
+    elif kept:  # what is live now is no longer a draft (pushing it again would make it twice)
+        core.remove(acct(), [i for i in kept_items if i])
     try:
         refresh_account()  # only this ad account
     except MetaError:
         pass
     uploaded = ctx.get("__uploaded")
     lib = " Uploaded images and videos stay in the ad account's media library (also after an undo)." if uploaded else ""
+    if error and kept:
+        msg = (f"Meta refused a change: {error}. Kept on Meta: {len(kept)} change(s), because a test made in this push "
+               f"can't be removed and keeps what it uses: {'; '.join(r['line'] for r in kept)}.")
+        if back:
+            msg += f" Reversed: {len(back) - len(rolled)} of {len(back)} other change(s)" + \
+                (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + "."
+        return {"ok": False, "partial": True, "push_id": rec["id"], "kept": len(kept), "message": msg + lib, "errors": None}
     if error:
         msg = f"Meta refused a change, so nothing was kept: {error}"
         if done:
-            msg += f" ({len(done)} change(s) already made were reversed" + (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + ")"
+            msg += f" ({len(done) - len(rolled)} change(s) already made were reversed" + (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + ")"
         return {"ok": False, "push_id": rec["id"], "message": msg + lib, "errors": None}
     return {"ok": True, "push_id": rec["id"], "applied": len(done), "message": f"Live on Meta: {len(done)} change(s).{lib}", "errors": None}
 
@@ -1971,17 +2058,30 @@ def history(limit=20):
     out = []
     for r in reversed(recs):
         out.append({"id": r["id"], "ts": r["ts"], "ok": r["ok"], "undo_of": r.get("undo_of"), "undone": r["id"] in undone,
-                    "summaries": [i["summary"] for i in r.get("items", [])] + ([f"Failed: {r['error']}"] if r.get("error") else []),
-                    "lines": [o["line"] for o in r.get("ops", [])],
-                    "can_undo": r["ok"] and not r.get("undo_of") and r["id"] not in undone
+                    "summaries": [i["summary"] for i in r.get("items", [])] + ([f"Failed: {r['error']}"] if r.get("error") else [])
+                    + ([f"Kept on Meta: {len(r['ops'])} change(s) a test uses"] if r.get("partial") else []),
+                    "lines": [o["line"] for o in r.get("ops", [])], "partial": bool(r.get("partial")),
+                    "undo_warning": _undo_warning(r.get("ops") or []),
+                    "can_undo": (r["ok"] or bool(r.get("partial"))) and not r.get("undo_of") and r["id"] not in undone
                     and any(o.get("undo") is not None for o in r.get("ops") or [])})
     return out[:limit]
+
+
+def _undo_warning(ops):
+    """Undo deletes variant objects a test made in the same push uses: say so before it runs."""
+    used = {str(x) for o in ops if o.get("created") == "study" for x in o.get("uses") or []}
+    hit = [o for o in ops if o.get("created") in ("adset", "campaign", "ad") and o.get("undo")
+           and (str(o["id"]) in used or str(o.get("parent") or "") in used)]
+    if not hit:
+        return ""
+    return (f"Undo deletes {len(hit)} object(s) the test made in this push uses: the test stays on Meta with those cells "
+            "empty. End the test first (End test in the Tests tab) if it should stop.")
 
 
 def undo(push_id):
     recs = [json.loads(l) for l in _log().read_text().splitlines() if l.strip()]
     rec = next((r for r in recs if r["id"] == push_id), None)
-    if not rec or not rec["ok"]:
+    if not rec or not (rec["ok"] or rec.get("partial")):
         raise ValueError("push not found")
     if any(r.get("undo_of") == push_id for r in recs):
         raise ValueError("already undone")
@@ -2004,6 +2104,9 @@ def undo(push_id):
     except MetaError:
         pass
     n = len(rec["ops"]) - len(errors)
+    warn = _undo_warning(rec["ops"])
+    if warn:
+        errors.append(warn)
     return {"ok": not errors, "message": f"Undone: {n} change(s) reversed." if not errors else f"Partly undone ({n} of {len(rec['ops'])}).",
             "not_undone": errors, "errors": None}
 

@@ -892,7 +892,7 @@ async function livePreview(){
     ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then Undo or fix ${bad.length > 1 ? "them" : "it"} in the Draft tab.</div>` : ""}
     ${isMeta() ? "" : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
     ${p.spend ? `<label class="tick"><input type="checkbox" id="lv_spend"> <span>${nSpend} change${nSpend > 1 ? "s" : ""} can raise spend. I know.</span></label>` : ""}
-    ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (removals). I know.</span></label>` : ""}
+    ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (${isMeta() ? "permanent changes" : "removals"}). I know.</span></label>` : ""}
     <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary>${details}</details>${TR ? TR.section(p.team) : ""}`;
   showDialog("Push to " + where, body, [histLink(), ...(isMeta() ? [] : [["Send to Editor instead", sendToEditor]]), ["Push live", livePush, "live"]]);
   const btn = $("#dlgF .live");
@@ -953,6 +953,7 @@ async function liveHistory(){
   showDialog("Live pushes", h.length ? h.map(r => `<div class="pv"><div><b>${esc(r.ts.replace("T", " "))}</b> ${r.undo_of ? "(undo)" : ""} ${r.ok ? "" : `<span class="flag perm">failed</span>`} ${r.undone ? `<span class="flag spend">undone</span>` : ""}</div>
     ${r.summaries.map(x => `<div>${esc(x)}</div>`).join("")}
     ${r.lines.map(l => `<div class="ln2">${esc(l)}</div>`).join("")}
+    ${r.undo_warning ? `<p class="hint">${esc(r.undo_warning)}</p>` : ""}
     ${r.can_undo ? `<button class="danger" data-undo="${r.id}" style="margin-top:6px">Undo</button>` : ""}</div>`).join("") : `<div class="empty">No live pushes yet.</div>`, [["Back to push", livePreview]]);
   document.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => liveUndo(b.dataset.undo));
 }

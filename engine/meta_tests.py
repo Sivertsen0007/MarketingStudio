@@ -25,6 +25,7 @@ from the ad set (from_adset) with the one change, a meta_new_ad copy of each of 
 """
 import datetime as dt
 import json
+from zoneinfo import ZoneInfo
 import re
 import threading
 import time
@@ -143,13 +144,14 @@ def _row(s, local=None):
     kind = lc.get("kind") or ("split" if s.get("type") == "SPLIT_TEST" else "")
     lcells = lc.get("cells") or []
     cells = [_cell_row(c, i, lcells[i] if i < len(lcells) else None) for i, c in enumerate((s.get("cells") or {}).get("data") or [])]
-    if not kind and cells and all(c["level"] == "ad" for c in cells):
-        kind = "creative"
+    if not kind and cells and (all(c["level"] == "ad" for c in cells)
+                               or (s.get("type") == "SPLIT_TEST_V2" and all(not c["ids"] for c in cells))):
+        kind = "creative"  # Ads Manager creative tests: Meta returns no ad sets or campaigns in their cells
     objs = (s.get("objectives") or {}).get("data") or []
     return {"id": s["id"], "name": s.get("name", ""), "type": s.get("type", ""),
             "label": TYPE_LABEL["creative"] if kind == "creative" else TYPE_LABEL.get(s.get("type"), s.get("type", "")),
             "kind": kind or "split", "description": s.get("description") or "", "status": status_of(s),
-            "start": (s.get("start_time") or "")[:16].replace("T", " "), "end": (s.get("end_time") or "")[:16].replace("T", " "),
+            "start": _local_time(s.get("start_time")), "end": _local_time(s.get("end_time")), "tz": str(account_tz()),
             "start_time": s.get("start_time"), "end_time": s.get("end_time"), "created": (s.get("created_time") or "")[:10],
             "cells": cells, "objectives": [{"id": o["id"], "name": o.get("name", ""), "type": o.get("type", ""),
                                             "primary": bool(o.get("is_primary"))} for o in objs],
@@ -312,7 +314,8 @@ def verdict(data):
     notes, thin, leader = [], False, None
     names = {i: n for c in cells for i, n in zip(c["ids"], c["names"])}
     if s["status"] == "Scheduled":
-        return {"verdict": f"Not started yet: the test starts {s['start']} (UTC).", "notes": [], "thin": True, "leader": None}
+        return {"verdict": f"Not started yet: the test starts {s['start']} ({s.get('tz', 'UTC')}).", "notes": [], "thin": True,
+                "leader": None}
     if s["status"] == "Cancelled":
         notes.append("This test was cancelled, so its numbers stop at the cancellation.")
     spend = sum(c.get("spend") or 0 for c in cells)
@@ -342,12 +345,16 @@ def verdict(data):
                 (f' ({res["winner_confidence"]:g}% confidence).' if res["winner_confidence"] is not None else ".")
             leader = res["winner"]
         elif not spend:
-            text, thin = "No delivery yet: nothing to compare.", True
+            text, thin = ("Ended without results: nothing was delivered, so there is nothing to compare."
+                          if s["status"] != "Running" else "No delivery yet: nothing to compare."), True
         else:
             priced = sorted([c for c in cells if c.get("cost_per_result")], key=lambda c: c["cost_per_result"])
             fewest = min((c.get("results") or 0) for c in cells) if cells else 0
             if len(priced) < 2:
-                text, thin = "Too early to call: not every cell has results yet.", True
+                empty = [c["name"] for c in cells if not c.get("cost_per_result")]
+                text = (f'Ended without results in {", ".join(empty)}: no comparison is possible.' if s["status"] != "Running"
+                        else "Too early to call: not every cell has results yet.")
+                thin = True
             else:
                 best, nxt = priced[0], priced[1]
                 diff = (nxt["cost_per_result"] - best["cost_per_result"]) / nxt["cost_per_result"] * 100
@@ -391,7 +398,7 @@ def _date(v, what, problems):
 
 
 def _dates(c, problems, warnings):
-    today = dt.date.today()
+    today = _today()
     start = _date(c["start_date"], "start date", problems) if c.get("start_date") else today
     if not c.get("end_date"):
         problems.append("the test needs an end date (YYYY-MM-DD)")
@@ -448,6 +455,7 @@ def check(c, d, items):
     if not str(c.get("name") or "").strip():
         problems.append("the test needs a name")
     _dates(c, problems, warnings)
+    problems += _clashes(c, items)
     if t == "meta_test_split":
         lvl = c.get("level")
         if lvl not in ("adset", "campaign"):
@@ -469,6 +477,7 @@ def check(c, d, items):
                     b = o.get("daily_budget") or o.get("lifetime_budget")
                     if b:
                         budgets.append(int(b))
+                warnings += _paused(lvl, oid, o, d, items, cell.get("name") or f"cell {i + 1}")
         pcts = [cell.get("percent") for cell in cells]
         if any(not isinstance(p, int) or p < MIN_PERCENT for p in pcts):
             problems.append(f"each cell needs a whole-number share of at least {MIN_PERCENT}%")
@@ -483,12 +492,13 @@ def check(c, d, items):
         if len(set(ads)) != len(ads):
             problems.append("the same ad is in the test twice")
         sets = set()
-        for a in ads:
+        for i, a in enumerate(ads):
             o = _obj_ok("ad", a, d, items, problems)
             if o and not o.get("new"):
                 sets.add(o.get("adset_id"))
             elif o:
                 sets.add(items[meta._ref(a)]["change"].get("adset_id"))
+            warnings += _paused("ad", a, o, d, items, f"Ad {i + 1}")
         if len(sets) > 1:
             warnings.append("the ads are in different ad sets: Meta's creative tests compare ads in one ad set and may refuse this")
         has_b, has_p = c.get("daily_budget") is not None, c.get("budget_percent") is not None
@@ -499,6 +509,52 @@ def check(c, d, items):
         elif has_p and not 1 <= float(c["budget_percent"]) <= 100:
             problems.append("budget_percent must be 1-100")
     return problems, warnings
+
+
+def _paused(level, oid, o, d, items, cell):
+    """Warnings for a cell object that would deliver nothing in the test: paused itself or above it (the ad set or
+    campaign), or a new object created Paused."""
+    if not o:
+        return []
+    r = meta._ref(oid)
+    what = {"adset": "ad set", "campaign": "campaign", "ad": "ad"}[level]
+    if r:
+        ch = (items.get(r) or {}).get("change") or {}
+        if ch.get("activate_with_test"):
+            return []
+        return [f'{cell}: the new {what} "{ch.get("name", oid)}" is created Paused, so it delivers nothing in the test '
+                "unless you switch it on (Duplicate an ad set with one change creates its variant Active for the test window)"]
+    chain = [(what, o)]
+    try:
+        if level == "ad":
+            s_ = meta._find(d, "adset", o.get("adset_id"))
+            chain += [("ad set", s_), ("campaign", meta._find(d, "campaign", s_.get("campaign_id")))]
+        elif level == "adset":
+            chain.append(("campaign", meta._find(d, "campaign", o.get("campaign_id"))))
+    except ValueError:
+        pass
+    for kind, x in chain:
+        if x.get("status") == "PAUSED" or x.get("effective_status") in ("PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"):
+            return [f'{cell}: {kind} "{x.get("name", "")}" is paused, so this cell delivers nothing in the test unless you switch it on']
+    return []
+
+
+def _clashes(c, items):
+    """Another test in the draft that uses the same object: Meta takes an object in one test at a time."""
+    mine = set(_obj_ids(c))
+    out = []
+    for it in items.values():
+        o = it["change"]
+        if o is c or o.get("type") not in ("meta_test_split", "meta_test_creative"):
+            continue
+        same = mine & set(_obj_ids(o))
+        if same:
+            out.append(f'{", ".join(sorted(same))} is also in the drafted test "{o.get("name")}": an object can be in one test at a time')
+    return out
+
+
+def _obj_ids(c):
+    return [o for x in c.get("cells") or [] for o in x.get("ids") or []] + list(c.get("ads") or [])
 
 
 def summarise(c, d, items):
@@ -553,17 +609,39 @@ def refs(c):
     return [meta._ref(o) for o in ids if meta._ref(o)]
 
 
+def account_tz():
+    """The ad account's time zone (Meta's timezone_name), UTC when unknown. Test dates are days in this zone."""
+    try:
+        name = (meta.load().get("account") or {}).get("timezone_name")
+        return ZoneInfo(name) if name else dt.timezone.utc
+    except Exception:  # noqa: BLE001 - an unknown zone or no cache: UTC
+        return dt.timezone.utc
+
+
+def _today():
+    return dt.datetime.now(account_tz()).date()
+
+
 def _epoch(day, end=False):
-    t = dt.datetime.combine(day, dt.time(23, 59) if end else dt.time(0, 0), dt.timezone.utc)
+    t = dt.datetime.combine(day, dt.time(23, 59) if end else dt.time(0, 0), account_tz())
     return int(t.timestamp())
 
 
-def _times(c, now=None):
-    """-> (start, end) as Unix seconds. A start of today (or none) means 15 minutes after the push."""
-    now = time.time() if now is None else now
-    start_day = dt.date.fromisoformat(c["start_date"]) if c.get("start_date") else dt.date.today()
-    start = _epoch(start_day) if start_day > dt.date.today() else int(now) + START_LEAD
+def _times(c, now=None, ctx=None):
+    """-> (start, end) as Unix seconds, days in the account's time zone. A start of today (or none) means 15 minutes
+    after the push. ctx: the push's shared clock, so a variant ad set and its test start at the same second."""
+    if now is None:
+        now = ctx.setdefault("__test_now", int(time.time())) if ctx is not None else time.time()
+    today = _today()
+    start_day = dt.date.fromisoformat(c["start_date"]) if c.get("start_date") else today
+    start = _epoch(start_day) if start_day > today else int(now) + START_LEAD
     return start, _epoch(dt.date.fromisoformat(c["end_date"]), end=True)
+
+
+def _local_time(v):
+    """Meta's ISO time -> 'YYYY-MM-DD HH:MM' in the account's time zone."""
+    ts = _ts(v)
+    return dt.datetime.fromtimestamp(ts, account_tz()).strftime("%Y-%m-%d %H:%M") if ts else ""
 
 
 def ops_for(c, items):
@@ -658,7 +736,7 @@ def do(s, ctx):
         for k in ("adsets", "campaigns", "ads"):
             if k in cell:
                 cell[k] = [ctx[meta._ref(o)] if meta._ref(o) else o for o in cell[k]]
-    start, end = _times(s["test"])
+    start, end = _times(s["test"], ctx=ctx)
     params.update(start_time=start, end_time=end)
     if params["type"] == "SPLIT_TEST_V2":
         params.update(cooldown_start_time=start, observation_end_time=end)
@@ -668,7 +746,7 @@ def do(s, ctx):
                     "cells": [{"name": c["name"], "level": level, "ids": c.get("ads") or c.get("adsets") or c.get("campaigns")}
                               for c in params["cells"]]})
     _mem.pop((meta.acct(), "list"), None)
-    return {"line": s["line"], "id": sid, "undo": None, "created": "study", "final": FINAL}
+    return {"line": s["line"], "id": sid, "undo": None, "created": "study", "final": FINAL, "uses": _cell_ids(params)}
 
 
 # ---------- building drafts (UI dialogs and MCP) ----------
@@ -691,7 +769,9 @@ def variant_changes(adset_id, change, test_name=None, variant_name=None, start_d
     if not ch:
         raise ValueError("say what the one change is")
     vname = variant_name or f'{src["name"]} - variant ({what})'
-    new_set = {"type": "meta_new_adset", "ref": "v1", "from_adset": src["id"], "campaign_id": src["campaign_id"], "name": vname}
+    # Active, scheduled to the test window: a Paused variant would deliver nothing in the test (needs the spend tick)
+    new_set = {"type": "meta_new_adset", "ref": "v1", "from_adset": src["id"], "campaign_id": src["campaign_id"], "name": vname,
+               "activate_with_test": True, "start_date": start_date, "end_date": end_date}
     if what == "audience":
         bad = set(ch) - {"countries", "age_min", "age_max"}
         if bad:
@@ -708,7 +788,7 @@ def variant_changes(adset_id, change, test_name=None, variant_name=None, start_d
         raise ValueError(f'ad set "{src["name"]}" has no ads to copy into the variant')
     out = [new_set]
     for a in ads:
-        ad = {"type": "meta_new_ad", "adset_id": "d-v1", "name": a["name"], "from_ad": a["id"]}
+        ad = {"type": "meta_new_ad", "adset_id": "d-v1", "name": a["name"], "from_ad": a["id"], "activate_with_test": True}
         if what == "creative":
             ad.update({k: ch[k] for k in ("primary_text", "headline", "description", "link", "cta", "media_id") if ch.get(k) is not None})
         out.append(ad)
@@ -765,5 +845,9 @@ CHANGE_REFERENCE = """Meta tests (A/B and creative tests; Meta calls them ad stu
      (2-7 ads, one per cell, ideally in one ad set; daily_budget = test budget per day, or "budget_percent":20 instead)
   {"type":"meta_test_end","study_id":".."}   (ends a running test now: final, can't be undone)
   A test can't be removed from Meta once made, and Meta can't test-run one first: Push live checks the objects with reads.
-  Variant: meta_new_adset takes "from_adset":"<ad set id>" to copy that ad set (targeting, optimisation, bidding, budget)
-  and change only the fields given (countries, age_min/age_max, placements, optimization_goal, conversion_event)."""
+  Variant: meta_new_adset takes "from_adset":"<ad set id>" to copy that ad set (targeting, optimisation, bidding, budget,
+  regional and DSA declarations) and change only the fields given (countries, age_min/age_max, placements,
+  optimization_goal, conversion_event). "activate_with_test":true (with start_date/end_date, also on its meta_new_ad
+  copies) creates it Active, scheduled to deliver only from the test start to its end; Push live needs the spend tick.
+  With Advantage+ audience on, an age change is a suggestion (age_range), not a hard limit.
+  Dates are days in the ad account's time zone."""

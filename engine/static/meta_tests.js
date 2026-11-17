@@ -49,7 +49,7 @@
       <button data-t-new="split">New A/B test</button><button data-t-new="variant">Duplicate an ad set with one change</button>
       <button data-t-new="creative">New creative test</button><button data-t-refresh="1">Refresh</button></div>`;
     if (!T.list.length){ el.innerHTML = head + `<div class="empty">No tests on this business yet.</div>`; return }
-    let h = head + `<table><thead><tr><th>Test</th><th>Type</th><th>Status</th><th>Start (UTC)</th><th>End (UTC)</th><th>Cells</th><th></th></tr></thead><tbody>`;
+    let h = head + `<table><thead><tr><th>Test</th><th>Type</th><th>Status</th><th>Start (${esc((T.list[0] || {}).tz || "UTC")})</th><th>End</th><th>Cells</th><th></th></tr></thead><tbody>`;
     for (const r of T.list){
       h += `<tr><td title="${esc(r.id)}">${esc(r.name)}${r.by_studio ? ` <span class="chip draft">Studio</span>` : ""}</td><td>${esc(r.label)}</td><td>${chip(r.status)}</td>
         <td>${esc(r.start)}</td><td>${esc(r.end)}</td><td>${cellsText(r)}</td>
@@ -80,7 +80,7 @@
 
   const dates = `<div class="row"><label>Start</label><input id="t_start" type="date" value="${today()}"></div>
     <div class="row"><label>End</label><input id="t_end" type="date" value="${plus(14)}"></div>
-    <p class="hint">Meta suggests 7 to 30 days. A test that starts today starts 15 minutes after the push.</p>`;
+    <p class="hint">Days in the ad account's time zone. Meta suggests 7 to 30 days. A test that starts today starts 15 minutes after the push.</p>`;
   const noteRow = `<div class="row"><label>Why (optional)</label><input id="t_note" placeholder="Shown in the draft and the changelog"></div>`;
   const honest = `<p class="hint">A test can't be removed from Meta once it is pushed, only ended, and Meta can't test-run it first: Push live checks the objects with reads, and Meta checks any new ad set or ad. Undo deletes the variant objects Studio created, not the test.</p>`;
   const picks = (rows, label) => `<div style="max-height:260px;overflow:auto;border:1px solid var(--line2);padding:6px">${rows.map(r =>
@@ -144,7 +144,7 @@
 
   async function newVariant(){
     const sets = await grid("adsets");
-    showDialog("Duplicate an ad set with one change", `<p class="hint">Studio copies the ad set and its ads (created <b>Paused</b>), changes one thing, and A/B tests the copy against the original.</p>
+    showDialog("Duplicate an ad set with one change", `<p class="hint">Studio copies the ad set and its ads, changes one thing, and A/B tests the copy against the original. The copy is created <b>Active</b>, scheduled to deliver only from the test's start to its end (a paused copy would get nothing in the test), so Push live asks you to accept the spend.</p>
       <div class="row"><label>Ad set</label><select id="t_set">${sets.map(r => `<option value="${esc(r.id)}" ${S.ag === String(r.id) ? "selected" : ""}>${esc(r.campaign + " / " + r.ad_set)}</option>`).join("")}</select></div>
       <div class="row"><label>The one change</label><select id="t_what"><option value="audience">Audience</option><option value="placement">Placement</option><option value="creative">Creative</option><option value="optimisation">Optimisation</option></select></div>
       <div id="t_fields">${CHANGE_FIELDS.audience}</div>

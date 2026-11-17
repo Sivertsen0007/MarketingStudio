@@ -902,7 +902,8 @@ def _push(acct, enable_new=False, accept_spend=False, accept_permanent=False, on
         for o, r in zip(ops, responses):
             created = next(iter(r.values()), {}).get("resourceName") if r else None
             rec["ops"].append({"line": o["line"], "op": o["op"], "undo": o.get("undo"), "undo_note": o.get("undo_note", ""),
-                               "resource": created, "permanent": o.get("permanent", False)})
+                               "resource": created, "permanent": o.get("permanent", False),
+                               **({"undo_spend": o["undo_spend"]} if o.get("undo_spend") else {})})
         core.remove(acct, [i["id"] for i in rec["items"]])
     with open(_log(acct), "a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -935,22 +936,26 @@ def history(acct, limit=20):
     return out[:limit]
 
 
-def undo(acct, push_id):
+def undo(acct, push_id, accept_spend=False):
     res = None
     try:
-        res = _undo(acct, push_id)
+        res = _undo(acct, push_id, accept_spend)
         return res
     finally:
         progress.finish(acct, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
 
 
-def _undo(acct, push_id):
+def _undo(acct, push_id, accept_spend=False):
     recs = [json.loads(l) for l in _log(acct).read_text().splitlines() if l.strip()]
     rec = next((r for r in recs if r["id"] == push_id), None)
     if not rec or not rec["ok"]:
         raise ValueError("push not found")
     if any(r.get("undo_of") == push_id for r in recs):
         raise ValueError("already undone")
+    on = [o["line"] for o in rec["ops"] if o.get("undo_spend")]  # [audiences] e.g. membership days put back
+    if on and not accept_spend:  # nothing is sent: the UI asks, then calls again with accept_spend
+        return {"ok": False, "needs_spend": True, "spend": on, "not_undone": [], "errors": None,
+                "message": f"Not undone - this undo can raise spend ({len(on)} change(s)); accept to undo."}
     _refuse_trial_undo(acct, rec)
     ops, notes = [], []
     for o in reversed(rec["ops"]):

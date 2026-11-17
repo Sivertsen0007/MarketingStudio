@@ -69,7 +69,7 @@
   }
 
   // ---- rule editor rows (URL rules; Meta also pixel events) ----
-  function ruleRow(ops, r){
+  function ruleRow(ops, r){  // create dialogs only
     r = r || {op: "contains", value: ""};
     const op = r.field === "event" ? "event" : r.op;
     return `<div class="ln a-rule"><select class="a-op">${ops.map(([k, l]) => `<option value="${k}" ${k === op ? "selected" : ""}>${h(l)}</option>`).join("")}</select>
@@ -92,48 +92,53 @@
   const send = async (changes) => { try { await addChanges(changes, v("f_note")); dlg.close() } catch(e) { toast(e.message) } };
 
   // ---- Google ----
-  function gWebsite(r){
-    const edit = !!r;
-    showDialog(edit ? `Edit list: ${r.name}` : "New website list", `<p class="hint">People who visit pages that match. Push live only (Editor can't take audience lists).</p>
-      <div class="row"><label>Name</label><input id="a_name" value="${h(edit ? r.name : "")}"></div>
-      ${!edit || r.rules_editable ? `<div class="row"><label>Visitors who match</label><select id="a_match"><option value="any">any rule</option><option value="all" ${edit && r.match === "all" ? "selected" : ""}>every rule</option></select></div>
-      ${ruleBox("a_inc", URL_OPS, edit ? r.rules : null)}
-      <p class="hint">Leave out people who visited (optional):</p>${ruleBox("a_exc", URL_OPS, edit ? r.exclude : null)}`
-        : `<p class="hint">Rules: ${h(r.rule)}. This list has ${h(r.rules_why || "rules Studio can't rebuild")}; the name, description and days can change here.</p>`}
-      <div class="row"><label>Membership (days)</label><input id="a_days" type="number" min="1" max="540" value="${h(edit ? r.membership_days : 30)}"> <span class="hint">1-540</span></div>
-      ${edit ? "" : `<label class="tick"><input type="checkbox" id="a_pre" checked> <span>Fill it with recent visitors (Google uses up to the last 30 days, Display only)</span></label>`}
-      <div class="row"><label>Description</label><input id="a_desc" value="${h(edit ? r.description : "")}"></div>${noteRow}`,
-      [[edit ? "Save to draft" : "Add to draft", () => {
-        const canRules = !!document.getElementById("a_inc") && (!edit || r.rules_editable), rules = canRules ? readRules("a_inc") : [], exclude = canRules ? readRules("a_exc") : [];
+  function gWebsite(){
+    showDialog("New website list", `<p class="hint">People who visit pages that match. Push live only (Editor can't take audience lists). Rules are set now: later edits change only the name, description and days.</p>
+      <div class="row"><label>Name</label><input id="a_name"></div>
+      <div class="row"><label>Visitors who match</label><select id="a_match"><option value="any">any rule</option><option value="all">every rule</option></select></div>
+      ${ruleBox("a_inc", URL_OPS)}
+      <p class="hint">Leave out people who visited (optional):</p>${ruleBox("a_exc", URL_OPS)}
+      <div class="row"><label>Membership (days)</label><input id="a_days" type="number" min="1" max="540" value="30"> <span class="hint">1-540</span></div>
+      <label class="tick"><input type="checkbox" id="a_pre" checked> <span>Fill it with recent visitors (Google uses up to the last 30 days, Display only)</span></label>
+      <div class="row"><label>Description</label><input id="a_desc"></div>${noteRow}`,
+      [["Add to draft", () => {
         if (!v("a_name")) return toast("Give the list a name");
-        if (!edit) return send([{type: "user_list", action: "create", kind: "website", name: v("a_name"), rules, exclude, match: v("a_match"),
-                                 lifespan: +v("a_days"), prepopulate: checked("a_pre"), ...(v("a_desc") ? {description: v("a_desc")} : {})}]);
+        send([{type: "user_list", action: "create", kind: "website", name: v("a_name"), rules: readRules("a_inc"), exclude: readRules("a_exc"),
+               match: v("a_match"), lifespan: +v("a_days"), prepopulate: checked("a_pre"), ...(v("a_desc") ? {description: v("a_desc")} : {})}]);
+      }, "primary"]]);
+    wireRuleButtons(URL_OPS);
+  }
+  // Editing an existing list: name, description and membership days only. Its rules / members are shown read-only.
+  function gEdit(r){
+    showDialog(`Edit list: ${r.name}`, `<p class="hint">Rules: ${h(r.rule || "-")}</p>
+      <p class="hint">Rules and members can't be changed on an existing list; make a new list for other rules.</p>
+      <div class="row"><label>Name</label><input id="a_name" value="${h(r.name)}"></div>
+      <div class="row"><label>Membership (days)</label><input id="a_days" type="number" min="1" max="540" value="${h(r.membership_days)}"> <span class="hint">1-540</span></div>
+      <div class="row"><label>Description</label><input id="a_desc" value="${h(r.description)}"></div>${noteRow}`,
+      [["Save to draft", () => {
+        if (!v("a_name")) return toast("Give the list a name");
         const c = {type: "user_list", action: "edit", list: r.name};
         if (v("a_name") !== r.name) c.new_name = v("a_name");
         if (+v("a_days") !== r.membership_days) c.lifespan = +v("a_days");
         if (v("a_desc") !== (r.description || "")) c.description = v("a_desc");
-        // rules only when the user changed them (a rename never rewrites a list's rules)
-        if (canRules && JSON.stringify([rules, exclude, v("a_match")]) !== JSON.stringify([r.rules, r.exclude, r.match])){ c.rules = rules; c.exclude = exclude; c.match = v("a_match") }
         Object.keys(c).length > 3 ? send([c]) : dlg.close();
       }, "primary"]]);
-    wireRuleButtons(URL_OPS);
   }
   function listPicker(id, chosen){
-    const opts = A.data.rows.filter(x => !x.customer_list).map(x => `<option ${chosen && chosen.includes(x.name) ? "selected" : ""}>${h(x.name)}</option>`).join("");
+    const opts = A.data.rows.filter(x => !x.customer_list && x.kind !== "combined").map(x => `<option ${chosen && chosen.includes(x.name) ? "selected" : ""}>${h(x.name)}</option>`).join("");
     return `<select id="${id}" multiple size="6" style="width:100%">${opts}</select>`;
   }
   const picked = id => [...document.getElementById(id).selectedOptions].map(o => o.value);
-  function gCombined(r){
-    const edit = !!r, cb = (r && r.combine) || {};
-    showDialog(edit ? `Edit combined list: ${r.name}` : "New combined list", `<p class="hint">Customer lists can't be combined (Studio doesn't use customer data). Combine lists: people on all of the first, or any of the second, and none of the third. Lists made in this same push can be combined from the next push.</p>
-      ${edit ? "" : `<div class="row"><label>Name</label><input id="a_name"></div>`}
-      <div class="row"><label>On all of</label>${listPicker("a_all", cb.all)}</div>
-      <div class="row"><label>On any of</label>${listPicker("a_any", cb.any)}</div>
-      <div class="row"><label>Not on</label>${listPicker("a_none", cb.none)}</div>${noteRow}`,
-      [[edit ? "Save to draft" : "Add to draft", () => {
-        const c = edit ? {type: "user_list", action: "edit", list: r.name} : {type: "user_list", action: "create", kind: "combined", name: v("a_name")};
+  function gCombined(){
+    showDialog("New combined list", `<p class="hint">Customer lists and other combined lists can't go in. Combine lists: people on all of the first, or any of the second, and none of the third. Lists made in this same push can be combined from the next push. Members are set now: later edits change only the name, description and days.</p>
+      <div class="row"><label>Name</label><input id="a_name"></div>
+      <div class="row"><label>On all of</label>${listPicker("a_all")}</div>
+      <div class="row"><label>On any of</label>${listPicker("a_any")}</div>
+      <div class="row"><label>Not on</label>${listPicker("a_none")}</div>${noteRow}`,
+      [["Add to draft", () => {
+        const c = {type: "user_list", action: "create", kind: "combined", name: v("a_name")};
         for (const k of ["all", "any", "none"]){ const p = picked("a_" + k); if (p.length) c[k] = p }
-        if (!edit && !c.name) return toast("Give the list a name");
+        if (!c.name) return toast("Give the list a name");
         send([c]);
       }, "primary"]]);
   }
@@ -146,31 +151,36 @@
   }
 
   // ---- Meta ----
-  async function mWebsite(r){
-    let cur = null;
-    if (r){ try { cur = await api("/api/audiences/detail?" + qs({acct: S.acct, id: r.id})) } catch(e) { return toast(e.message) } }
-    const edit = !!r, rules = cur && cur.rules;
-    showDialog(edit ? `Edit audience: ${r.name}` : "New website audience", `<p class="hint">People the pixel saw on matching pages or firing an event (for example SelectCabin). Created on Meta only when you push live.</p>
-      <div class="row"><label>Name</label><input id="a_name" value="${h(edit ? cur.name : "")}"></div>
-      ${!edit || r.rules_editable && rules ? `<div class="row"><label>People who match</label><select id="a_match"><option value="any">any rule</option><option value="all" ${rules && rules.match === "all" ? "selected" : ""}>every rule (same visit)</option></select></div>
-      ${ruleBox("a_inc", META_OPS, rules && rules.rules)}<p class="hint">Leave out (optional):</p>${ruleBox("a_exc", META_OPS, rules && rules.exclude)}`
-        : edit ? `<p class="hint">${r.rules_editable ? "This audience's rule has parts Studio can't rebuild: change the rule in Ads Manager." : "Only the name, description and retention can change here."}</p>` : ""}
-      ${edit && r.type_code === "LOOKALIKE" ? "" : `<div class="row"><label>Retention (days)</label><input id="a_days" type="number" min="1" max="${!edit || r.type_code === "WEBSITE" ? 180 : 730}" value="${h(edit ? cur.retention_days : 30)}"></div>`}
-      ${edit ? "" : `<label class="tick"><input type="checkbox" id="a_pre" checked> <span>Include people from before today (up to the retention)</span></label>`}
-      <div class="row"><label>Description</label><input id="a_desc" value="${h(edit ? cur.description : "")}"></div>${noteRow}`,
-      [[edit ? "Save to draft" : "Add to draft", () => {
-        const inc = document.getElementById("a_inc") ? readRules("a_inc", true) : null, exc = document.getElementById("a_exc") ? readRules("a_exc", true) : null;
+  function mWebsite(){
+    showDialog("New website audience", `<p class="hint">People the pixel saw on matching pages or firing an event (for example SelectCabin). Created on Meta only when you push live. Rules and retention are set now: later edits change only the name and description.</p>
+      <div class="row"><label>Name</label><input id="a_name"></div>
+      <div class="row"><label>People who match</label><select id="a_match"><option value="any">any rule</option><option value="all">every rule (same visit)</option></select></div>
+      ${ruleBox("a_inc", META_OPS)}<p class="hint">Leave out (optional):</p>${ruleBox("a_exc", META_OPS)}
+      <div class="row"><label>Retention (days)</label><input id="a_days" type="number" min="1" max="180" value="30"> <span class="hint">1-180</span></div>
+      <label class="tick"><input type="checkbox" id="a_pre" checked> <span>Include people from before today (up to the retention)</span></label>
+      <div class="row"><label>Description</label><input id="a_desc"></div>${noteRow}`,
+      [["Add to draft", () => {
         if (!v("a_name")) return toast("Give the audience a name");
-        if (!edit) return send([{type: "meta_audience", action: "create", kind: "website", name: v("a_name"), rules: inc, exclude: exc, match: v("a_match"),
-                                 retention_days: +v("a_days"), prefill: checked("a_pre"), ...(v("a_desc") ? {description: v("a_desc")} : {})}]);
+        send([{type: "meta_audience", action: "create", kind: "website", name: v("a_name"), rules: readRules("a_inc", true), exclude: readRules("a_exc", true),
+               match: v("a_match"), retention_days: +v("a_days"), prefill: checked("a_pre"), ...(v("a_desc") ? {description: v("a_desc")} : {})}]);
+      }, "primary"]]);
+    wireRuleButtons(META_OPS);
+  }
+  // Editing an existing audience: name and description only. Its rule and retention are shown read-only.
+  async function mEdit(r){
+    let cur;
+    try { cur = await api("/api/audiences/detail?" + qs({acct: S.acct, id: r.id})) } catch(e) { return toast(e.message) }
+    showDialog(`Edit audience: ${r.name}`, `<p class="hint">Rule: ${h(cur.rule || r.lookalike || "-")}${cur.retention_days ? ` · Retention: ${h(cur.retention_days)} days` : ""}</p>
+      <p class="hint">Rules, retention and sources can't be changed on an existing audience; make a new audience for other rules.</p>
+      <div class="row"><label>Name</label><input id="a_name" value="${h(cur.name)}"></div>
+      <div class="row"><label>Description</label><input id="a_desc" value="${h(cur.description)}"></div>${noteRow}`,
+      [["Save to draft", () => {
+        if (!v("a_name")) return toast("Give the audience a name");
         const c = {type: "meta_audience", action: "edit", id: r.id};
         if (v("a_name") !== cur.name) c.name = v("a_name");
         if (v("a_desc") !== (cur.description || "")) c.description = v("a_desc");
-        if (document.getElementById("a_days") && +v("a_days") !== cur.retention_days) c.retention_days = +v("a_days");
-        if (inc && JSON.stringify([inc, exc, v("a_match")]) !== JSON.stringify([rules.rules, rules.exclude, rules.match])){ c.rules = inc; c.exclude = exc; c.match = v("a_match") }
         Object.keys(c).length > 3 ? send([c]) : dlg.close();
       }, "primary"]]);
-    wireRuleButtons(META_OPS);
   }
   function mEngagement(){
     const srcOpts = Object.entries(ENG).map(([k, x]) => `<option value="${k}">${h(x[0])}</option>`).join("");
@@ -244,7 +254,7 @@
         if (b.dataset.aReload){ A.data = null; draw(el); await load(); return draw(el) }
         if (b.dataset.aNew) return add(b.dataset.aNew);
         const r = byId(b.dataset.aEdit || b.dataset.aAttach || b.dataset.aLal || b.dataset.aRm); if (!r) return;
-        if (b.dataset.aEdit) return google() ? (r.kind === "combined" ? gCombined(r) : gWebsite(r)) : mWebsite(r);
+        if (b.dataset.aEdit) return google() ? gEdit(r) : mEdit(r);
         if (b.dataset.aAttach) return google() ? gAttach(r) : mAttach(r);
         if (b.dataset.aLal) return mLookalike(r.id);
         if (b.dataset.aRm) return remove(r);

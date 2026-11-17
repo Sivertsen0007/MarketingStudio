@@ -78,8 +78,8 @@ class GFake:
         if "FROM user_list WHERE user_list.name = " in q:
             name = q.split("user_list.name = '", 1)[1].rsplit("'", 1)[0].replace("\\'", "'")
             return [{"userList": json.loads(json.dumps(u))} for u in LISTS if u["name"] == name]
-        if "FROM user_list WHERE user_list.type = CRM_BASED" in q:
-            return [{"userList": {"id": u["id"], "name": u["name"]}} for u in LISTS if u["type"] == "CRM_BASED"]
+        if "FROM user_list WHERE user_list.type IN (CRM_BASED, LOGICAL)" in q:
+            return [{"userList": {"id": u["id"], "type": u["type"]}} for u in LISTS if u["type"] in ("CRM_BASED", "LOGICAL")]
         if "FROM user_list WHERE user_list.type = LOGICAL" in q:
             return [{"userList": COMBO}]
         if q.startswith("SELECT user_list.id, user_list.name FROM user_list"):
@@ -231,7 +231,7 @@ class GoogleLive(GBase):
         self.assertFalse(p["ok"])
         self.assertIn("already exists", p["items"][0]["problems"][0])
         p = self.preview([{"type": "user_list", "action": "create", "kind": "combined", "name": "Both", "all": ["Egypt visitors"],
-                           "none": ["Shared remarketing"]}])
+                           "none": ["Shared remarketing"]}])  # two lists, neither a customer nor a combined list
         self.assertTrue(p["ok"], p)
         rules = self.g.mutates[-1][0][0]["userListOperation"]["create"]["logicalUserList"]["rules"]
         self.assertEqual(rules, [{"operator": "ALL", "ruleOperands": [{"userList": RES(11)}]},
@@ -245,31 +245,33 @@ class GoogleLive(GBase):
         self.assertIn("push it first", p["items"][1]["problems"][0])
         self.assertEqual(len(self.g.mutates), n, "nothing sent to Google while a problem is open")
 
-    def test_edit_mask_and_undo_values(self):
+    def test_edit_is_name_description_days_only(self):
         p = self.preview([{"type": "user_list", "action": "edit", "list": "Egypt visitors", "new_name": "Egypt (all)", "lifespan": 60,
-                           "rules": [{"op": "contains", "value": "/egypt"}, {"op": "contains", "value": "/red-sea"}]}])
+                           "description": "d"}])
         self.assertTrue(p["ok"], p)
         self.assertTrue(p["spend"], "longer membership is flagged")
         op = self.g.mutates[-1][0][0]["userListOperation"]
-        self.assertEqual(op["updateMask"].split(","), ["name", "membershipLifeSpan"] +
-                         [f"ruleBasedUserList.flexibleRuleUserList.{k}" for k in audiences.FLEX_FIELDS])
-        plan = live.plan(A)
-        undo = plan["ops"][0]["undo"]["userListOperation"]["update"]
+        self.assertEqual(op["updateMask"].split(","), ["name", "description", "membershipLifeSpan"])
+        self.assertEqual(set(op["update"]), {"resourceName", "name", "description", "membershipLifeSpan"})
+        undo = live.plan(A)["ops"][0]["undo"]["userListOperation"]["update"]
         self.assertEqual((undo["name"], undo["membershipLifeSpan"]), ("Egypt visitors", "30"))
-        self.assertEqual(undo["ruleBasedUserList"]["flexibleRuleUserList"]["exclusiveOperands"], [], "old empty field written back")
-        self.assertEqual(undo["ruleBasedUserList"]["flexibleRuleUserList"]["inclusiveOperands"],
-                         WEB["ruleBasedUserList"]["flexibleRuleUserList"]["inclusiveOperands"])
 
+    def test_undo_of_days_needs_the_tick(self):
+        core.add(A, [{"type": "user_list", "action": "edit", "list": "Egypt visitors", "lifespan": 10}])  # shorter: no tick to push
+        res = live.push(A)
+        self.assertTrue(res["ok"], res)
+        n = len(self.g.mutates)
+        out = live.undo(A, res["push_id"])
+        self.assertTrue(out.get("needs_spend"), out)
+        self.assertEqual(len(self.g.mutates), n, "nothing sent before the tick")
+        self.assertTrue(live.undo(A, res["push_id"], accept_spend=True)["ok"])
+        core.add(A, [{"type": "user_list", "action": "edit", "list": "Unused list", "new_name": "Unused 2"}])
+        res = live.push(A)
+        self.assertTrue(live.undo(A, res["push_id"])["ok"], "undoing a rename needs no tick")
     def test_edit_refusals(self):
         for lst, want in (("Customer list one", "customer data"), ("Shared remarketing", "read and target only")):
             p = self.preview([{"type": "user_list", "action": "edit", "list": lst, "new_name": "x"}])
             self.assertIn(want, " ".join(p["items"][0]["problems"]))
-        p = self.preview([{"type": "user_list", "action": "edit", "list": "Combined one", "any": ["Egypt visitors", "Unused list"]}])
-        self.assertTrue(p["ok"], p)
-        self.assertEqual(self.g.mutates[-1][0][0]["userListOperation"]["updateMask"], "logicalUserList.rules")
-        p = self.preview([{"type": "user_list", "action": "edit", "list": "Combined one", "rules": [{"op": "contains", "value": "x"}]}])
-        self.assertIn("not a website list", " ".join(p["items"][0]["problems"]))
-
     def test_remove_checked_live_then_push_and_undo(self):
         core.add(A, [{"type": "user_list", "action": "remove", "list": "Unused list"}])  # unused in the cache ...
         self.g.camp_users[RES(12)] = [{"campaign": {"name": "Camp Z"}, "campaignCriterion": {"negative": True}}]  # ... used live now
@@ -417,28 +419,15 @@ class MetaReading(MBase):
         self.assertIn("customer data", r["c1"]["note"])
         self.assertEqual(r["l1"]["lookalike"], "1% of Page visitors")
         self.assertEqual((r["w1"]["retention"], r["w1"]["type"]), ("180 days", "Website"))
-        self.assertTrue(r["w1"]["rules_editable"] and not r["e1"]["rules_editable"])
+        self.assertFalse(r["w1"]["rules_editable"] or r["e1"]["rules_editable"], "rules are never edited on existing audiences")
         g = {x["id"]: x for x in meta.rows(DATA, "audiences")}
         self.assertEqual(g["w1"]["used_by"], 'ad set "Set one"')
 
-    def test_rule_rows_roundtrip(self):
-        c = {"rules": MWEB["rules"], "exclude": MWEB["exclude"], "match": "any"}
-        rule = ma.website_rule(c, "px1", 30)
-        back = ma.rule_rows(rule)
-        self.assertEqual(back["rules"], [{"field": "url", "op": "contains", "value": "/egypt"}, {"field": "event", "value": "SelectCabin"}])
-        self.assertEqual(back["exclude"], [{"field": "url", "op": "contains", "value": "/booking"}])
-        self.assertEqual(ma.rule_rows({"inclusions": {"rules": [{"filter": {"filters": [{"field": "referrer", "operator": "eq", "value": "x"}]}}]}}), None)
-        am = {"inclusions": {"operator": "or", "rules": [{"event_sources": [{"type": "pixel", "id": 1}], "retention_seconds": 86400, "filter": {
-            "operator": "and", "filters": [{"operator": "or", "filters": [{"field": "url", "operator": "i_contains", "value": "/a"},
-                                                                          {"field": "url", "operator": "i_contains", "value": "/b"}]},
-                                           {"field": "url", "operator": "i_contains", "value": ""}]}, "template": "VISITORS_BY_URL"}]}}
-        self.assertEqual(ma.rule_rows(am), {"rules": [{"field": "url", "op": "contains", "value": "/a"}, {"field": "url", "op": "contains", "value": "/b"}],
-                                            "exclude": [], "match": "any"}, "the shape Ads Manager saves (seen live)")
-        mixed = json.loads(json.dumps(am))
-        mixed["inclusions"]["rules"][0]["filter"]["filters"].append({"field": "event", "operator": "eq", "value": "Lead"})
-        self.assertIsNone(ma.rule_rows(mixed), "(A or B) and an event: not something Studio can rebuild")
+    def test_detail_shows_rules_read_only(self):
         d = ma.detail("w1", meta)
-        self.assertTrue(d["rules_editable"])
+        self.assertFalse(d["rules_editable"])
+        self.assertIn('url contains "/egypt"', d["rule"])
+        self.assertIn("pixel, 30 days", d["rule"])
         self.assertEqual(ma.detail("c1", meta)["customer_list"], True)
         self.assertNotIn("c1", [g[0] for g in self.f.gets], "a customer list is never read")
 
@@ -490,10 +479,8 @@ class MetaChecks(MBase):
         self.assertIn("customer data", " ".join(it["problems"]), "customer lists are read-only")
 
     def test_edit_checks(self):
-        self.assertEqual(self.add1({"type": "meta_audience", "action": "edit", "id": "w1", "retention_days": 60})["problems"], [])
-        for c, want in (({"id": "l1", "retention_days": 30}, "renamed"), ({"id": "e1", "rules": [{"field": "url", "op": "contains", "value": "x"}]},
-                                                                           "only website"), ({"id": "w1"}, "nothing to change"),
-                        ({"id": "c1", "name": "x"}, "customer data")):
+        self.assertEqual(self.add1({"type": "meta_audience", "action": "edit", "id": "w1", "name": "New name"})["problems"], [])
+        for c, want in (({"id": "w1"}, "nothing to change"), ({"id": "c1", "name": "x"}, "customer data")):
             p = self.add1({"type": "meta_audience", "action": "edit", **c})["problems"]
             self.assertTrue(any(want in x for x in p), (c, p))
 
@@ -534,29 +521,15 @@ class MetaLive(MBase):
         self.assertTrue(out["ok"], out)
         self.assertEqual(sorted(self.f.deletes), ["new1", "new2", "new3"])
 
-    def test_edit_push_and_undo_writes_old_rule(self):
-        meta.add([{"type": "meta_audience", "action": "edit", "id": "w2", "retention_days": 90,
-                   "rules": [{"field": "url", "op": "equals", "value": "https://example.org/"}]}])
+    def test_edit_push_and_undo_is_name_only(self):
+        meta.add([{"type": "meta_audience", "action": "edit", "id": "w1", "name": "Renamed", "description": "d"}])
         p = meta.preview()
-        self.assertTrue(p["ok"], p)
-        self.assertFalse(p["spend"], "not used by any ad set: no spend flag")
+        self.assertTrue(p["ok"] and not p["spend"], p)
         res = meta.push()
         self.assertTrue(res["ok"], res)
-        path, params, v = self.f.posts[-1]
-        self.assertEqual((path, v), ("w2", False))
-        r = json.loads(params["rule"])["inclusions"]["rules"][0]
-        self.assertEqual((r["retention_seconds"], r["filter"]["filters"]), (90 * 86400, [{"field": "url", "operator": "eq", "value": "https://example.org/"}]))
-        meta.undo(res["push_id"])
-        self.assertEqual(self.f.posts[-1], ("w2", {"rule": json.dumps(WRULE)}, False))
-
-    def test_retention_only_edit_keeps_rule(self):
-        meta.add([{"type": "meta_audience", "action": "edit", "id": "e1", "retention_days": 180}])
-        self.assertFalse(meta.push()["ok"], "e1 is in use (a lookalike seed): needs the tick")
-        meta.push(accept_spend=True)
-        rule = json.loads(self.f.posts[-1][1]["rule"])
-        self.assertEqual(rule["inclusions"]["rules"][0]["filter"]["filters"][0]["value"], "page_visited")
-        self.assertEqual(rule["inclusions"]["rules"][0]["retention_seconds"], 180 * 86400)
-
+        self.assertEqual(self.f.posts[-1], ("w1", {"name": "Renamed", "description": "d"}, False))
+        self.assertTrue(meta.undo(res["push_id"])["ok"], "no tick: who is in the audience didn't change")
+        self.assertEqual(self.f.posts[-1], ("w1", {"name": "Site visitors", "description": ""}, False))
     def test_delete_checked_live_and_final(self):
         meta.add([{"type": "meta_audience", "action": "remove", "id": "w2"}])
         self.f.live_adsets = [{"id": "s9", "name": "New set", "effective_status": "ACTIVE", "targeting": {"excluded_custom_audiences": [{"id": "w2"}]}}]
@@ -640,7 +613,7 @@ class Routes(MBase):
                 st, body = call("/api/audiences?acct=meta")
                 self.assertEqual((st, json.loads(body)["platform"]), (200, "meta"))
                 st, body = call("/api/audiences/detail?acct=meta&id=w1")
-                self.assertEqual((st, json.loads(body)["rules_editable"]), (200, True))
+                self.assertEqual((st, json.loads(body)["rules_editable"]), (200, False))
                 st, body = call("/api/audiences?acct=ml")
                 self.assertEqual((st, json.loads(body)["platform"]), (200, "google"))
                 st, body = call("/static/audiences.js")
@@ -664,11 +637,9 @@ class ReviewFixes(GBase):
     """a08 review: customer lists never combined; rules Studio can't rebuild are never rewritten."""
 
     def test_customer_list_never_combined(self):
-        for c in ({"type": "user_list", "action": "create", "kind": "combined", "name": "Mix", "any": ["Egypt visitors", "Customer list one"]},
-                  {"type": "user_list", "action": "edit", "list": "Combined one", "any": ["Egypt visitors", "Customer list one"]}):
-            with self.assertRaises(ValueError) as ex:
-                core.add(A, [c])
-            self.assertIn("customer list", str(ex.exception))
+        with self.assertRaises(ValueError) as ex:
+            core.add(A, [{"type": "user_list", "action": "create", "kind": "combined", "name": "Mix", "any": ["Egypt visitors", "Customer list one"]}])
+        self.assertIn("customer list", str(ex.exception))
         self.assertEqual(core.draft(A)["items"], [])
         # the push checks it live too (a stale cache, or a draft made elsewhere)
         with mock.patch.object(audiences, "crm_member_refusals", lambda a, c: []):
@@ -677,29 +648,17 @@ class ReviewFixes(GBase):
         self.assertIn("customer list", " ".join(p["items"][0]["problems"]))
         self.assertFalse(any(apply is False and "Mix" in json.dumps(o) for o, apply in self.g.mutates), "never sent to Google")
 
-    def test_rules_with_custom_parameters_stay_read_only(self):
+    def test_rules_with_custom_parameters_shown_honestly(self):
         LISTS.append(PARAM)
         base = {**BASE, "rows": {**BASE["rows"], "user_lists": BASE["rows"]["user_lists"] + [ul_row(PARAM)]}}
         try:
             with mock.patch.object(gapi, "base", lambda *a, **k: base):
                 r = next(x for x in audiences.rows(A)["rows"] if x["name"] == "Param list")
                 self.assertTrue(r["editable"])
-                self.assertFalse(r["rules_editable"])
-                self.assertEqual((r["rules"], r["exclude"]), ([], []), "never shown as URL rules")
                 self.assertIn('custom rule "ecomm_pagetype"', r["rule"])
                 p = self.preview([{"type": "user_list", "action": "edit", "list": "Param list", "new_name": "Param list 2"}])
                 self.assertTrue(p["ok"], p)
-                op = self.g.mutates[-1][0][0]["userListOperation"]
-                self.assertEqual(op["updateMask"], "name", "a rename touches the name only")
-                p = self.preview([{"type": "user_list", "action": "edit", "list": "Param list", "new_name": "Param list 2",
-                                   "rules": [{"op": "contains", "value": "/a"}], "exclude": [], "match": "any"}])
-                self.assertFalse(p["ok"])
-                self.assertIn("change them in Google Ads", " ".join(p["items"][0]["problems"]))
-            and_group = {"inclusiveRuleOperator": "OR", "inclusiveOperands": [{"rule": {"ruleItemGroups": [{"ruleItems": [
-                {"name": "url__", "stringRuleItem": {"operator": "CONTAINS", "value": "/a"}},
-                {"name": "url__", "stringRuleItem": {"operator": "CONTAINS", "value": "/b"}}]}]}}]}
-            self.assertFalse(audiences.rules_rebuildable(and_group)[0], "AND groups are not flattened")
-            self.assertTrue(audiences.rules_rebuildable(WEB["ruleBasedUserList"]["flexibleRuleUserList"])[0])
+                self.assertEqual(self.g.mutates[-1][0][0]["userListOperation"]["updateMask"], "name", "a rename touches the name only")
         finally:
             LISTS.remove(PARAM)
 
@@ -745,33 +704,17 @@ OPS_LIST = {**WEB, "resourceName": RES(18), "id": "18", "name": "Ops list", "rul
 class Round3(GBase):
     """a08 review round 3: one operator form, rename-only saves send no rules, customer lists checked by id."""
 
-    def test_every_operator_round_trips_and_rename_sends_no_rules(self):
-        LISTS.append(OPS_LIST)
-        base = {**BASE, "rows": {**BASE["rows"], "user_lists": BASE["rows"]["user_lists"] + [ul_row(OPS_LIST)]}}
+    def test_every_operator_one_form_on_create(self):
         js = (HERE / "static/audiences.js").read_text()
-        try:
-            with mock.patch.object(gapi, "base", lambda *a, **k: base):
-                r = next(x for x in audiences.rows(A)["rows"] if x["name"] == "Ops list")
-                self.assertTrue(r["rules_editable"])
-                self.assertEqual([x["op"] for x in r["rules"]], [audiences.OP_LABEL[o] for o in ALL_OPS])
-                for x in r["rules"]:
-                    self.assertIn(f'["{x["op"]}", ', js, "the UI has an option with exactly this key")
-                    self.assertIn(x["op"], audiences.URL_OPS)
-                # what the dialog reads back on a rename-only save: the same rows
-                p = self.preview([{"type": "user_list", "action": "edit", "list": "Ops list", "new_name": "Ops 2",
-                                   "rules": [{"op": x["op"], "value": x["value"]} for x in r["rules"]], "exclude": r["exclude"], "match": r["match"]}])
-                self.assertTrue(p["ok"], p)
-                op = self.g.mutates[-1][0][0]["userListOperation"]
-                self.assertEqual(op["updateMask"], "name", "unchanged rules are dropped (backstop)")
-                self.assertNotIn("ruleBasedUserList", op["update"])
-                # a real change keeps each unchanged rule's own lookback
-                rules = [{"op": x["op"], "value": x["value"]} for x in r["rules"]] + [{"op": "contains", "value": "/new"}]
-                self.preview([{"type": "user_list", "action": "edit", "list": "Ops list", "rules": rules}])
-                f = self.g.mutates[-1][0][0]["userListOperation"]["update"]["ruleBasedUserList"]["flexibleRuleUserList"]
-                self.assertEqual([o["lookbackWindowDays"] for o in f["inclusiveOperands"]], [str(10 + i) for i in range(8)] + ["30"])
-        finally:
-            LISTS.remove(OPS_LIST)
-
+        for key, api in audiences.URL_OPS.items():
+            self.assertIn(f'["{key}", ', js, "the UI offers exactly the engine's key")
+            self.assertEqual(audiences.OP_LABEL[api], key)
+        rules = [{"op": k, "value": f"/{k}"} for k in audiences.URL_OPS]
+        p = self.preview([{**WEBSITE, "rules": rules, "exclude": []}])
+        self.assertTrue(p["ok"], p)
+        f = self.g.mutates[-1][0][0]["userListOperation"]["create"]["ruleBasedUserList"]["flexibleRuleUserList"]
+        self.assertEqual([o["rule"]["ruleItemGroups"][0]["ruleItems"][0]["stringRuleItem"]["operator"] for o in f["inclusiveOperands"]],
+                         ["CONTAINS", "EQUALS", "STARTS_WITH", "ENDS_WITH", "NOT_CONTAINS", "NOT_EQUALS", "NOT_STARTS_WITH", "NOT_ENDS_WITH"])
     def test_customer_list_checked_by_resolved_id(self):
         import sqlite3
         db = sqlite3.connect(":memory:")
@@ -794,7 +737,7 @@ class Round3(GBase):
         with mock.patch.object(live, "query", broken):
             p = self.preview([{"type": "user_list", "action": "create", "kind": "combined", "name": "Mix", "any": ["Egypt visitors", "Unused list"]}])
         self.assertFalse(p["ok"])
-        self.assertIn("can't read which lists are customer lists", " ".join(p["items"][0]["problems"]))
+        self.assertIn("can't read which lists are customer or combined lists", " ".join(p["items"][0]["problems"]))
         core.clear(A)
         with mock.patch.object(gapi, "base", mock.Mock(side_effect=RuntimeError("no data"))):
             with self.assertRaises(ValueError):
@@ -814,26 +757,110 @@ class MetaRound3(MBase):
             self.assertEqual(len(self.f.posts), n, "nothing sent without the tick")
             self.assertTrue(meta.undo(res["push_id"], accept_spend=True)["ok"])
 
-    def test_audience_edit_in_use_needs_the_tick_both_ways(self):
-        self.add1({"type": "meta_audience", "action": "edit", "id": "w1", "retention_days": 7})  # shorter, but w1 is in use
-        p = meta.preview()
-        self.assertTrue(p["spend"])
-        self.assertFalse(meta.push()["ok"], "needs the tick")
-        res = meta.push(accept_spend=True)
-        self.assertTrue(res["ok"], res)
-        n = len(self.f.posts)
-        self.assertTrue(meta.undo(res["push_id"]).get("needs_spend"))
-        self.assertEqual(len(self.f.posts), n)
-        core.clear(meta.acct())
-        self.add1({"type": "meta_audience", "action": "edit", "id": "w2", "name": "Renamed"})  # a rename: no tick
-        self.assertFalse(meta.preview()["spend"])
 
-    def test_meta_unchanged_rules_not_sent(self):
-        self.add1({"type": "meta_audience", "action": "edit", "id": "w2", "name": "Renamed",
-                   "rules": [{"field": "url", "op": "contains", "value": "/egypt"}], "exclude": [], "match": "any"})
+
+G_RULE_EDITS = [{"rules": [{"op": "contains", "value": "/x"}]}, {"exclude": [{"op": "contains", "value": "/x"}]}, {"match": "all"},
+                {"any": ["Egypt visitors", "Unused list"]}, {"all": ["Unused list"]}, {"none": ["Unused list"]}, {"all_visitors": True}]
+M_RULE_EDITS = [{"rules": [{"field": "url", "op": "contains", "value": "/x"}]}, {"exclude": [{"field": "url", "op": "contains", "value": "/x"}]},
+                {"match": "all"}, {"retention_days": 7}, {"source": "page"}, {"event": "visited"}, {"form_ids": ["1"]}, {"seed_id": "e1"},
+                {"ratio": 2}]
+
+
+class NoRuleEdits(GBase):
+    """Rule editing on existing audiences is cut: every edit path refuses rule fields, on both platforms."""
+
+    def test_google_every_path(self):
+        for extra in G_RULE_EDITS:
+            c = {"type": "user_list", "action": "edit", "list": "Combined one" if any(k in extra for k in ("any", "all", "none")) else "Egypt visitors",
+                 "new_name": "x", **extra}
+            core.clear(A)
+            with self.assertRaises(ValueError) as ex:  # the UI's POST /api/draft/add and add_to_draft both go through core.add
+                core.add(A, [c])
+            self.assertIn("rules can't be changed on an existing audience; create a new one", str(ex.exception), extra)
+            with mock.patch.object(core, "resolve", lambda a: A), self.assertRaises(ValueError):
+                mcp_server.call("audience_add_to_draft", {"account": "ml", "changes": [c]})
+            with mock.patch.object(core, "resolve", lambda a: A), self.assertRaises(ValueError):
+                mcp_server.call("add_to_draft", {"account": "ml", "changes": [c]})
+            self.assertEqual(audiences.check(c)[0], ["rules can't be changed on an existing audience; create a new one"])
+            # a draft that got in some other way (team sync, an older Studio) is refused at push, nothing sent
+            n = len(self.g.mutates)
+            with self.assertRaises(ValueError):
+                audiences.ops(live.Ids(A, "api"), c)
+            self.assertEqual(len(self.g.mutates), n)
+        self.assertEqual(core.draft(A)["items"], [])
+
+    def test_ui_payload(self):
+        import http.client
+        import threading
+        from http.server import ThreadingHTTPServer
+        import server
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), server.H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            with mock.patch.object(core, "resolve", lambda a: A):
+                c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+                c.request("POST", "/api/draft/add", json.dumps({"acct": "ml", "changes": [
+                    {"type": "user_list", "action": "edit", "list": "Egypt visitors", "new_name": "E2", "rules": [{"op": "contains", "value": "/egypt"}]}]}),
+                    {"Content-Type": "application/json", "X-Studio-Press": server.PRESS})
+                r = c.getresponse()
+                body = r.read().decode()
+                self.assertNotEqual(r.status, 200)
+                self.assertIn("rules can't be changed on an existing audience", body)
+            self.assertEqual(core.draft(A)["items"], [])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_nested_combined_refused(self):
+        with self.assertRaises(ValueError) as ex:
+            core.add(A, [{"type": "user_list", "action": "create", "kind": "combined", "name": "Nest", "any": ["Combined one", "Unused list"]}])
+        self.assertIn("can't contain another one", str(ex.exception))
+        with mock.patch.object(audiences, "crm_member_refusals", lambda a, c: []):  # at push, by resolved id
+            p = self.preview([{"type": "user_list", "action": "create", "kind": "combined", "name": "Nest", "any": ["Combined one", "Unused list"]}])
+        self.assertIn("can't contain another one", " ".join(p["items"][0]["problems"]))
+        self.assertFalse(any("Nest" in json.dumps(o) for o, _ in self.g.mutates))
+
+
+class MetaNoRuleEdits(MBase):
+    def test_meta_every_path(self):
+        for extra in M_RULE_EDITS:
+            c = {"type": "meta_audience", "action": "edit", "id": "w2", "name": "x", **extra}
+            core.clear(meta.acct())
+            with self.assertRaises(ValueError) as ex:
+                meta.add([c])
+            self.assertIn("rules can't be changed on an existing audience; create a new one", str(ex.exception), extra)
+            with mock.patch.object(meta, "use", lambda k: "act_123"):
+                for tool in ("audience_add_to_draft", "add_to_draft"):
+                    with self.assertRaises(ValueError):
+                        mcp_server.call(tool, {"account": "meta", "changes": [c]})
+            self.assertEqual(ma.check(c, DATA)[0], ["rules can't be changed on an existing audience; create a new one"])
+            with self.assertRaises(ValueError):
+                ma.ops_for(c, meta)
+        self.assertEqual(self.f.posts, [])
+        self.assertEqual(core.draft(meta.acct())["items"], [])
+
+    def test_undo_of_create_checks_ad_sets_live(self):
+        meta.add([MWEB])
         res = meta.push()
         self.assertTrue(res["ok"], res)
-        self.assertEqual(self.f.posts[-1], ("w2", {"name": "Renamed"}, False))
+        made = [p for p, x, v in self.f.posts if p.endswith("/customaudiences")]
+        self.assertEqual(len(made), 1)
+        self.f.live_adsets = [{"id": "s5", "name": "Now uses it", "effective_status": "ACTIVE", "targeting": {"custom_audiences": [{"id": "new1"}]}}]
+        out = meta.undo(res["push_id"])
+        self.assertFalse(out["ok"])
+        self.assertIn('ad set "Now uses it"', out["message"])
+        self.assertEqual(self.f.deletes, [], "not deleted")
+
+        def broken(path, **params):
+            raise meta.MetaError({"message": "busy"})
+        with mock.patch.object(meta, "get_all", broken):
+            out = meta.undo(res["push_id"])
+        self.assertFalse(out["ok"])
+        self.assertIn("can't read the ad sets", out["message"])
+        self.assertEqual(self.f.deletes, [])
+        self.f.live_adsets = []
+        self.assertTrue(meta.undo(res["push_id"])["ok"])
+        self.assertEqual(self.f.deletes, ["new1"])
 
 
 class Text(unittest.TestCase):

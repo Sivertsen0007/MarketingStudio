@@ -38,8 +38,9 @@ Draft change (one JSON object):
    "form_ids":[...] (lead_form: the lead form ids), "source_id"?: Page / Instagram business profile id}
   {"type":"meta_audience","action":"create","kind":"lookalike","name":"...","seed_id":"<audience id>","ratio":1..10
    (percent) or "from":0..9,"to":1..10}
-  {"type":"meta_audience","action":"edit","id":"<audience id>","name"?,"description"?,"retention_days"?,
-   "rules"/"exclude"/"match"? (website)}
+  {"type":"meta_audience","action":"edit","id":"<audience id>","name"?,"description"?}
+     (an edit changes only the name and description: rules, retention and sources are set when an audience is made;
+      to change them, make a new audience)
   {"type":"meta_audience","action":"remove","id":"<audience id>"}
 Attach / detach on ad sets: meta_targeting with audiences_add / audiences_remove / excluded_add / excluded_remove.
 """
@@ -71,6 +72,15 @@ EVENT_WORDS = {"engaged": "engaged with", "visited": "visited", "messaged": "mes
 SUBTYPE = {"WEBSITE": "Website", "ENGAGEMENT": "Engagement", "IG_BUSINESS": "Instagram engagement", "LOOKALIKE": "Lookalike",
            "CUSTOM": "Customer list", "VIDEO": "Video viewers", "OFFLINE_CONVERSION": "Offline", "APP": "App activity"}
 EDITABLE = ("WEBSITE", "ENGAGEMENT", "IG_BUSINESS", "VIDEO", "LOOKALIKE")
+EDIT_FIELDS = ("name", "description")
+NO_RULE_EDIT = "rules can't be changed on an existing audience; create a new one"
+RULE_FIELDS = ("rules", "exclude", "match", "retention_days", "all_visitors", "prefill", "source", "event", "source_id", "form_ids",
+               "video_ids", "seed_id", "ratio", "from", "to", "kind", "rule", "event_sources", "lookalike_spec")
+
+
+def rule_fields(c):
+    """Anything but the name and description on an edit (refused)."""
+    return [k for k in RULE_FIELDS if k in c and c[k] not in (None, "", [], False)]
 NO_CUSTOMER_DATA = "Studio doesn't upload, read or change customer data (customer lists are read-only here)"
 NO_COUNTRY = "Studio never sends a country or location for a lookalike: the ad set's location decides where it is used"
 CUSTOMER_KEYS = ("schema", "payload", "emails", "phones", "members", "customer_file_source", "users", "hashed")
@@ -147,7 +157,7 @@ def rows(d):
                                   else f"{round(float(ratio) * 100)}% of " if ratio else "") + seed if st == "LOOKALIKE" else "",
                     "used_by": used.get(str(a["id"]), []), "status": status.get("description", ""),
                     "status_ok": status.get("code") in (None, 200),
-                    "editable": st in EDITABLE, "rules_editable": st == "WEBSITE",
+                    "editable": st in EDITABLE, "rules_editable": False,
                     "read_only_why": NO_CUSTOMER_DATA if crm else ("" if st in EDITABLE else "Studio can't edit this kind of audience"),
                     "customer_list": crm, "note": NO_CUSTOMER_DATA if crm else "",
                     "seed_ok": st not in ("LOOKALIKE", "CUSTOM")})
@@ -212,19 +222,10 @@ def check(c, d):
             return problems, warnings
         if a.get("subtype") not in EDITABLE:
             return ["Studio can't edit this kind of audience"], []
-        if not any(c.get(k) not in (None, "", []) for k in ("name", "description", "retention_days", "rules", "exclude", "match")):
-            problems.append("nothing to change: give name, description, retention_days or rules")
-        if a.get("subtype") == "LOOKALIKE" and any(c.get(k) not in (None, "", []) for k in ("retention_days", "rules", "exclude", "match")):
-            problems.append("a lookalike can only be renamed or get a new description (make a new one for another size or seed)")
-        if any(c.get(k) not in (None, "", []) for k in ("rules", "exclude", "match")) and a.get("subtype") != "WEBSITE":
-            problems.append("only website audiences get new rules from Studio")
-        _days(c, WEBSITE_DAYS if a.get("subtype") == "WEBSITE" else ENGAGEMENT_DAYS, problems, False)
-        if c.get("rules") is not None:
-            if not c["rules"]:
-                problems.append("rules: give at least one rule")
-            _rules_problems(c["rules"], "rule", problems)
-        if c.get("exclude"):
-            _rules_problems(c["exclude"], "exclude rule", problems)
+        if rule_fields(c):
+            return [NO_RULE_EDIT], []
+        if not any(c.get(k) not in (None, "", []) for k in EDIT_FIELDS):
+            problems.append("nothing to change: give name or description")
         return problems, warnings
     kind = c.get("kind")
     if kind not in KINDS:
@@ -296,7 +297,8 @@ def _ratio(c):
 def refusals(changes, d):
     """Removing an audience that something uses is refused before it reaches the draft (users named)."""
     used = users(d)
-    out = []
+    out = [f'audience {c.get("id")}: {NO_RULE_EDIT}' for c in changes
+           if c.get("type") == TYPE and c.get("action") == "edit" and rule_fields(c)]
     for c in changes:
         if c.get("type") == TYPE and c.get("action") == "remove" and used.get(str(c.get("id"))):
             a = _find(d, c["id"]) or {}
@@ -333,9 +335,7 @@ def summarise(c, d):
         nm = a.get("name", c.get("id"))
         if action == "remove":
             return f'Meta delete audience "{nm}"'
-        bits = [f'rename to "{c["name"]}"' if c.get("name") else "", f"{c['retention_days']} days" if c.get("retention_days") else "",
-                "new rules" if c.get("rules") is not None or c.get("exclude") is not None else "",
-                "new description" if c.get("description") is not None else ""]
+        bits = [f'rename to "{c["name"]}"' if c.get("name") else "", "new description" if c.get("description") is not None else ""]
         return f'Meta edit audience "{nm}": ' + ", ".join(b for b in bits if b)
     if c.get("kind") == "lookalike":
         lo, hi = _ratio(c)
@@ -384,53 +384,25 @@ def engagement_rule(c, source_id):
         "filter": {"operator": "and", "filters": [{"field": "event", "operator": "eq", "value": events[c["event"]]}]}}]}}
 
 
-def _with_days(rule, days):
-    """The same rule with every retention_seconds set to `days`."""
-    r = json.loads(json.dumps(rule))
-    for part in ("inclusions", "exclusions"):
-        for x in (r.get(part) or {}).get("rules") or []:
-            x["retention_seconds"] = int(days) * DAY
-    return r
+def rule_summary(rule):
+    """A read-only, plain-text view of any audience rule (never parsed back into a rule)."""
+    def flt(f):
+        if f.get("filters") is not None:
+            return "(" + f" {f.get('operator', 'and')} ".join(flt(x) for x in f["filters"]) + ")"
+        if f.get("field") == "url" and f.get("operator") == "i_contains" and f.get("value") == "":
+            return "any page"
+        op = {"i_contains": "contains", "eq": "is", "i_not_contains": "doesn't contain"}.get(f.get("operator"), f.get("operator", ""))
+        return f'{f.get("field", "")} {op} "{f.get("value", "")}"'
 
-
-def rule_rows(rule):
-    """A website rule Studio can rebuild -> {rules, exclude, match}, or None when it has anything else in it."""
-    def parse(block):
-        rs = (block or {}).get("rules") or []
-        out, match = [], "any"
-        for x in rs:
-            raw = (x.get("filter") or {}).get("filters") or []
-            groups = [f for f in raw if f.get("filters") is not None]  # Ads Manager nests "any of these URLs" as a group
-            fs = [f for f in raw if f.get("filters") is None and not (f.get("field") == "url" and f.get("operator") == "i_contains"
-                                                                       and f.get("value") == "")]  # i_contains "" = any URL
-            if groups:
-                if len(groups) > 1 or fs or any(g.get("filters") is not None for g in groups[0]["filters"]):
-                    return None, None
-                fs = groups[0]["filters"]
-                op = groups[0].get("operator")
-                if op not in ("or", "and"):
-                    return None, None
-            else:
-                op = "and"
-            if op == "and" and len(fs) > 1:
-                if len(rs) > 1:
-                    return None, None
-                match = "all"
-            for f in fs:
-                if f.get("field") == "event" and f.get("operator") == "eq":
-                    out.append({"field": "event", "value": f.get("value")})
-                elif f.get("field") == "url" and f.get("operator") in URL_LABEL:
-                    if f.get("value") == "" and f.get("operator") == "i_contains":
-                        continue
-                    out.append({"field": "url", "op": URL_LABEL[f["operator"]], "value": f.get("value")})
-                else:
-                    return None, None
-        return out, match
-    inc, match = parse(rule.get("inclusions"))
-    exc, _ = parse(rule.get("exclusions"))
-    if inc is None or exc is None:
-        return None
-    return {"rules": inc, "exclude": exc, "match": match}
+    def block(b):
+        out = []
+        for x in (b or {}).get("rules") or []:
+            src = ", ".join(str(e.get("type", "")) for e in x.get("event_sources") or [])
+            days = int(x.get("retention_seconds") or 0) // DAY
+            out.append(f"[{src}{f', {days} days' if days else ''}] " + " and ".join(flt(f) for f in (x.get("filter") or {}).get("filters") or []))
+        return f" {(b or {}).get('operator', 'or')} ".join(out)
+    inc, exc = block((rule or {}).get("inclusions")), block((rule or {}).get("exclusions"))
+    return inc + (f"; not {exc}" if exc else "")
 
 
 # ---------- live steps (no Meta call before Push live) ----------
@@ -479,7 +451,9 @@ def ops_for(c, meta):
             raise ValueError(f'audience "{a.get("name")}" is in use, so it can\'t be removed. Used by: ' + "; ".join(who) + ". Detach it there first")
         return [{"kind": "audience_delete", "phase": "audience_delete", "id": str(c["id"]), "permanent": True,
                  "line": f'delete audience "{a.get("name")}" (final: a deleted audience can\'t be brought back)'}]
-    cur = meta.get(str(c["id"]), fields="name,description,subtype,rule,retention_days")
+    if rule_fields(c):  # every path (UI, MCP, add_to_draft, a draft synced from elsewhere) ends here
+        raise ValueError(NO_RULE_EDIT)
+    cur = meta.get(str(c["id"]), fields="name,description")
     new, old, bits = {}, {}, []
     if c.get("name") and c["name"] != cur.get("name"):
         new["name"], old["name"] = c["name"], cur.get("name", "")
@@ -487,49 +461,11 @@ def ops_for(c, meta):
     if c.get("description") is not None and c["description"] != cur.get("description", ""):
         new["description"], old["description"] = c["description"], cur.get("description", "")
         bits.append("description")
-    rule = _rule(cur)
-    asked = any(c.get(k) is not None for k in ("rules", "exclude", "match"))
-    if asked and rule:  # backstop: rules equal to the stored ones (after normalising) are never sent
-        have0 = rule_rows(rule)
-        if have0 is not None:
-            want = {"rules": c["rules"] if c.get("rules") is not None else have0["rules"],
-                    "exclude": c["exclude"] if c.get("exclude") is not None else have0["exclude"], "match": c.get("match") or have0["match"]}
-            norm = lambda x: [(r.get("field", "url"), r.get("op") if r.get("field", "url") == "url" else None, str(r.get("value"))) for r in x or []]  # noqa: E731
-            if norm(want["rules"]) == norm(have0["rules"]) and norm(want["exclude"]) == norm(have0["exclude"]) and \
-                    (len(want["rules"]) <= 1 or want["match"] == have0["match"]):
-                c = {k: v for k, v in c.items() if k not in ("rules", "exclude", "match")}
-                asked = False
-    if asked or c.get("retention_days"):
-        if not rule:
-            raise ValueError("this audience has no rule Studio can change")
-        days = int(c.get("retention_days") or cur.get("retention_days") or 30)
-        if asked:
-            have = rule_rows(rule)
-            if have is None:
-                raise ValueError("this audience's rule has parts Studio can't rebuild: change it in Ads Manager")
-            merged = {"rules": c["rules"] if c.get("rules") is not None else have["rules"],
-                      "exclude": c["exclude"] if c.get("exclude") is not None else have["exclude"],
-                      "match": c.get("match") or have["match"]}
-            pixel = next((s.get("id") for x in (rule.get("inclusions") or {}).get("rules") or []
-                          for s in x.get("event_sources") or [] if s.get("type") == "pixel"), None) or meta._pixel()
-            nr = website_rule(merged, pixel, days)
-            bits.append("rules")
-        else:
-            nr = _with_days(rule, days)
-        if c.get("retention_days") and days > 90 and any(e.get("type") in ("lead", "ig_lead_generation") for x in (rule.get("inclusions") or {}).get("rules") or []
-                                                         for e in x.get("event_sources") or []):
-            raise ValueError("lead form audiences keep people for at most 90 days")
-        if c.get("retention_days"):
-            bits.append(f'{cur.get("retention_days")} -> {days} days')
-        new["rule"], old["rule"] = json.dumps(nr), json.dumps(rule)
     if not new:
         raise ValueError(f'audience "{cur.get("name")}" already looks like this')
-    # Conservative: when the audience is in use, any change to who is in it (retention or rules) needs the spend tick,
-    # for the push and for its undo, whichever way it goes.
-    reach = "rule" in new and bool(users(d).get(str(c["id"])))
-    tick = "changes who is in an audience that ad sets use (can reach more people)" if reach else ""
+    # name and description only: who is in the audience doesn't change, so no spend tick either way
     return [{"kind": "audience_update", "id": str(c["id"]), "params": new, "undo": old,
-             "line": f'audience "{cur.get("name")}": ' + "; ".join(bits), "spend": tick, "undo_spend": tick}]
+             "line": f'audience "{cur.get("name")}": ' + "; ".join(bits)}]
 
 
 def check_step(s):
@@ -546,7 +482,7 @@ def do(s, meta):
         return {"line": s["line"], "id": new, "undo": "delete-audience", "created": "customaudience"}
     if s["kind"] == "audience_update":
         meta.post(s["id"], s["params"])
-        return {"line": s["line"], "id": s["id"], "undo": s["undo"], **({"undo_spend": s["undo_spend"]} if s.get("undo_spend") else {})}
+        return {"line": s["line"], "id": s["id"], "undo": s["undo"]}
     if s["kind"] == "audience_delete":
         meta.delete(s["id"])
         return {"line": s["line"], "id": s["id"], "undo": None, "final": "a deleted audience can't be brought back"}
@@ -554,6 +490,23 @@ def do(s, meta):
 
 
 STEP_KINDS = ("audience_create", "audience_update", "audience_delete")
+
+
+def delete_refusal(ops, meta):
+    """Before an undo deletes audiences Studio made: read the ad sets live; refuse (with the ad set names) when one uses
+    any of them, or when the ad sets can't be read. '' = fine."""
+    made = [str(o["id"]) for o in ops if o.get("undo") == "delete-audience"]
+    if not made:
+        return ""
+    try:
+        sets = meta.get_all(f"{meta.act()}/adsets", fields="id,name,effective_status,targeting{custom_audiences,excluded_custom_audiences}")
+    except Exception:  # noqa: BLE001
+        return "Not undone - Studio can't read the ad sets to check that no ad set uses the audience it would delete; try again"
+    who = users({"adsets": sets, "audiences": []})
+    used = [f"audience {aid}: " + "; ".join(who[aid]) for aid in made if who.get(aid)]
+    if used:
+        return "Not undone - an audience this push made is now used by an ad set, so it isn't deleted. Detach it first: " + " | ".join(used)
+    return ""
 
 
 # ---------- ad set targeting: attach / detach (meta_targeting) ----------
@@ -611,7 +564,7 @@ def targeting_words(c, d):
 
 
 def detail(aid, meta):
-    """One audience with its rule as Studio rows (for the edit dialog). One read."""
+    """One audience with its rule as read-only text (for the edit dialog). One read."""
     d = meta.load()
     a = _find(d, aid)
     if not a:
@@ -619,6 +572,5 @@ def detail(aid, meta):
     if a.get("subtype") == "CUSTOM":
         return {"id": str(aid), "name": a.get("name", ""), "customer_list": True, "note": NO_CUSTOMER_DATA}
     cur = meta.get(str(aid), fields="name,description,subtype,rule,retention_days")
-    rr = rule_rows(_rule(cur)) if cur.get("subtype") == "WEBSITE" else None
     return {"id": str(aid), "name": cur.get("name", ""), "description": cur.get("description", ""), "subtype": cur.get("subtype"),
-            "retention_days": cur.get("retention_days"), "rules": rr, "rules_editable": rr is not None}
+            "retention_days": cur.get("retention_days"), "rule": rule_summary(_rule(cur)), "rules_editable": False}

@@ -459,7 +459,7 @@ class H(BaseHTTPRequestHandler):
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{acct}", body, lambda only: live.preview(
                 acct, bool(body.get("enable_new")), only=only)),
             "/api/live/push": live_push,
-            "/api/live/undo": lambda: _after_live(acct, live.undo(acct, body["push_id"])),
+            "/api/live/undo": lambda: _after_live(acct, live.undo(acct, body["push_id"], bool(body.get("accept_spend")))),
             "/api/google/refresh": lambda: _then(gapi.refresh(acct, body.get("days"), body.get("start"), body.get("end")),
                                                  lambda: _alerts_after("google", acct)),
             "/api/draft/add": lambda: core.add(acct, body["changes"], body.get("by", "you"), body.get("note")),

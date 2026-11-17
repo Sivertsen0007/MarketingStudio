@@ -2017,7 +2017,10 @@ def undo(push_id, accept_spend=False):
     on = undo_spend(ops)
     if on and not accept_spend:  # nothing is sent: the UI asks, then calls again with accept_spend
         return {"ok": False, "needs_spend": True, "spend": on, "not_undone": [], "errors": None,
-                "message": f"Not undone - this undo switches {len(on)} thing(s) back on, which can raise spend; accept to undo."}
+                "message": f"Not undone - this undo can raise spend ({len(on)} change(s): switched back on or wider targeting); accept to undo."}
+    refused = meta_audiences.delete_refusal(ops, sys.modules[__name__])  # [audiences] never delete an audience an ad set now uses
+    if refused:
+        return {"ok": False, "message": refused, "not_undone": [refused], "errors": None}
     progress.start(a, "undo", [(n, "Undo: " + o["line"], 1) for n, o in enumerate(ops)], "sending", "Reversing on Meta, one change at a time")
     idx = {id(o): n for n, o in enumerate(ops)}
     try:
@@ -2089,7 +2092,8 @@ Audiences (meta_audience; created / changed on Meta only at Push live, never che
    "form_ids":[..] (lead_form: lead form ids)}   (video viewer audiences: not available yet)
   {"type":"meta_audience","action":"create","kind":"lookalike","name":"..","seed_id":"<audience id>","ratio":1 (1-10 %)}
      or "from":1,"to":3 for a 1-3% band. Never a country: the ad set's location decides. Seed needs 100+ people.
-  {"type":"meta_audience","action":"edit","id":"..","name":"..","description":"..","retention_days":60,"rules":[..]}
+  {"type":"meta_audience","action":"edit","id":"..","name":"..","description":".."}   (name and description only: rules,
+     retention and sources can't be changed on an existing audience; create a new one)
   {"type":"meta_audience","action":"remove","id":".."}   (final; refused while an ad set or lookalike uses it)
 Customer lists (subtype CUSTOM) and lead forms are read only. Personal data: UK GDPR check needed before any upload/download.
   Studio never uploads customer lists and never downloads leads.

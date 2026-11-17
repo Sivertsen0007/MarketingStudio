@@ -46,6 +46,25 @@ out["state"] = team_live.state()""")
         self.assertIn("Join a team first", r["prefs"])
         self.assertEqual(r["state"], {"joined": False, "removed": False})
 
+    def test_own_alert_lands_on_my_bell_only(self):
+        a, sa = self.member("Ada")
+        b, _ = self.member("Bea")
+        r = self.nt(a, """
+out = {"sent": team_notify.send_alert("ML (Google Ads): Spend today is 132%", {"rule": "r1"}),
+       "list": team_notify.notifications()}""")
+        self.assertEqual(r["sent"], "sent")
+        n = r["list"]["notifications"][0]
+        self.assertEqual((n["kind"], n["area"], n["data"]["rule"]), ("alert", "ads", "r1"))
+        self.assertIn("Spend today is 132%", n["text"])
+        r = self.nt(b, "out = team_notify.notifications()")
+        self.assertEqual([x["kind"] for x in r["notifications"]], [])
+        r = self.nt(a, """
+team_notify.save_prefs({"rules": {"alert": False}})
+out = team_notify.send_alert("again")""")
+        self.assertEqual(r, "off")
+        r = self.nt(self.home(), "out = team_notify.send_alert('solo')")
+        self.assertEqual(r, "solo")
+
     def test_mention_on_the_bell_and_read_in_step(self):
         a, sa = self.member("Nia")
         b, sb = self.member("Ned")

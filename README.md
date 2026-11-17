@@ -24,7 +24,7 @@
 | | |
 |---|---|
 | **Start** | [What it is](#what-it-is) · [Install](#install) · [First run: Setup](#first-run-setup) · [Updates](#updates) |
-| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
+| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Alerts](#alerts) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
 | **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email platform](#email-platform) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
@@ -120,7 +120,7 @@ have, so nobody else can push code into your copy.
 | Part | What it does |
 |---|---|
 | **Overview** (top left) | Switches between the dashboard and the editor |
-| **Ads · Pacing · Email · SEO · SoMe · Activity** | The areas |
+| **Ads · Pacing · Alerts · Email · SEO · SoMe · Activity** | The areas |
 | **Account picker** | Google Ads accounts and Meta ad accounts. Meta accounts can be added in Settings |
 | **↻** | Re-reads the current account from the API |
 | **Refresh data ▾** | Fetch again per source: one Google account, one Meta account, Email, SEO, SoMe, Activity, Pacing, rates, or all |
@@ -226,6 +226,27 @@ an over/under flag with the amount, today's daily budgets and the spend per day 
 - Targets are this Mac's own, or the team's when an owner or admin shares them (team setting *Ad spend targets*).
 - A daily **Budget pacing check** (Settings, off by default) reads spend and flags accounts drifting from their target.
   It never changes a budget, and it only runs while Refresh data is automatic.
+
+---
+
+## Alerts
+
+**Alerts** (next to Pacing, or the **Alerts** button in the top bar with the number still to look at) watches Google Ads
+and Meta for you. Nothing is ever changed: alerts only read.
+
+- **Rules** per account (or every account), per campaign, per Meta ad set, or account-wide: a metric (spend, clicks,
+  impressions, conversions, CPC, CTR, CPA, ROAS, spend vs the daily budget), a comparison (above / below a number, or up /
+  down by a % on the previous comparable period), a window (today, yesterday, last 7 days), a minimum volume so small
+  numbers don't fire, and a quiet period so the same alert doesn't repeat. Three checks need no number: no impressions on
+  an active campaign for 24 hours, disapproved ads, and Meta ad sets stuck in *learning limited*. Five starter rules are
+  there for you, switched off.
+- **When**: hourly for spend, clicks, impressions, CPC, CTR, budget and delivery; daily at 09:00 for conversions, CPA and
+  ROAS (Google conversions can take up to 15 hours to arrive). Both run only while Refresh data is automatic; with manual
+  data press **Check now**, and Studio also checks after you refresh Google, Meta, Pacing or All.
+- **Where**: the Alerts tab (acknowledge, snooze for hours to a week), a macOS notification, and in a team your own team
+  notifications (bell, email or webhook as you set them in Team > Notifications; rule *My own Ads alerts*). Alerts never
+  go to anyone else.
+- Meta: one call per account and check, and checks pause when Meta's usage headers say Studio is close to its limit.
 
 ---
 
@@ -577,6 +598,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | SoMe | `social_calendar`, `social_list_drafts`, `social_add_draft` |
 | Activity | `activity_summary`, `activity_rows` (who made each change is always left out) |
 | Pacing | `pacing_status` (targets, spend, forecast, flags, recommendations), `pacing_add_to_draft` (budget changes into the draft only) |
+| Alerts | `alerts_list` (rules and recent alerts), `alert_rule_add` (a rule in Studio's local config) |
 | Calendar | `calendar_list`, `library_list`, `team_settings_get` (read only) |
 
 ---
@@ -597,7 +619,8 @@ Marketing Studio.app
     ├── overview.py, fx.py the dashboard; display-currency rates (ECB)
     ├── datapolicy.py, datasources.py   when data may be fetched again
     ├── pacing.py          budget pacing: spend, forecast, targets, draft budget recommendations
-    ├── areas/             Pacing, Email, SEO, SoMe, Activity
+    ├── alerts.py          Ads alerts: rules, read-only checks, history, delivery
+    ├── areas/             Pacing, Alerts, Email, SEO, SoMe, Activity
     ├── mcp_server.py      the MCP server for Claude (stdio)
     ├── updater.py         in-app updates from GitHub Releases
     └── vendor_hub/        small API clients (Meta Graph, Google Ads REST)

@@ -9,6 +9,7 @@ What pings a member (rules, per member, GET/PUT /api/v1/notify/prefs):
     pending_changed   someone changed an item you have pending (your last write to it was tagged with a changeset and
                       you have not pushed / published it since)
     claim             a claim on something you own (an owner scope that covers it, or an item you created)
+    alert             your own Studio alerts (Ads alerts from your Mac: POST /api/v1/notify/alert, only ever to yourself)
   follow (off by default, per area ads / email / seo / social)
     push / publish / send_to_editor in that area
   Edits never ping anyone (only the pending case above).
@@ -41,7 +42,7 @@ from urllib.parse import quote, urlsplit
 
 from .store import ApiError, MANAGERS, iso, need_int
 
-ALWAYS = ("review_requested", "mention", "review_decided", "pending_changed", "claim")
+ALWAYS = ("review_requested", "mention", "review_decided", "pending_changed", "claim", "alert")
 URGENT = ("review_requested", "mention")  # always instant on the bell, whatever the bell's timing
 FOLLOW_KINDS = ("push", "publish", "send_to_editor")
 AREAS = ("ads", "email", "seo", "social")
@@ -55,6 +56,8 @@ BACKOFF = 30.0            # seconds after the first failure, doubling, capped at
 BACKOFF_MAX = 3600.0
 RATE = {"email": (12, 3600.0), "webhook": (30, 3600.0)}  # messages per member per window; the rest waits, then goes as one digest
 TEST_RATE = (5, 600.0)    # POST /notify/test per member
+ALERT_RATE = (60, 3600.0)  # POST /notify/alert per member
+ALERT_DATA_MAX = 2000     # bytes of JSON kept with an alert
 DIGEST_SHOWN = 30         # lines in one digest message
 KEEP_DAYS = 90            # notifications older than this are deleted
 LIST_MAX = 200
@@ -994,6 +997,30 @@ class Notifier:
         return {"ok": True}
 
 
+    def alert(self, actor, body):
+        """POST /notify/alert {text, data?}: one of the member's own Studio alerts (Ads alerts checked on their Mac) as a
+        notification to that member only, delivered like any other (bell, and email / webhook per their prefs). It can
+        never reach anyone else: the member is always the caller."""
+        if not isinstance(body, dict):
+            raise ApiError(400, "body must be an object")
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ApiError(400, "text is required")
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        if len(json.dumps(data)) > ALERT_DATA_MAX:
+            data = {}
+        now = self.store.now()
+        key = (actor["id"], "alert")
+        if not self.rate.ok(key, ALERT_RATE[0], ALERT_RATE[1], now):
+            raise ApiError(429, "too many alerts this hour, try again later")
+        self.rate.add(key, now)
+        with self.store.tx() as db:
+            actor = self.store._fresh_actor(db, actor)
+            r = self._add(db, actor["id"], "alert", None, "ads", None, None, text.strip(), data)
+        self._announce([r] if r else [])
+        return {"ok": True, "sent": bool(r), "id": r[1] if r else None}
+
+
 FOOTER = "You get this because of your notification settings in Marketing Studio (Team tab > Notifications)."
 
 
@@ -1032,10 +1059,16 @@ def r_test(h, query, body):
     return h.team.notifier.test(ctx["member"], body)
 
 
+def r_alert(h, query, body):
+    ctx = h.authed(query)
+    return h.team.notifier.alert(ctx["member"], body)
+
+
 def routes(make):
     """make(method, path, fn) -> a ROUTES entry (app._r)."""
     return [make("GET", r"/api/v1/notify/prefs", r_prefs_get),
             make("PUT", r"/api/v1/notify/prefs", r_prefs_put),
             make("POST", r"/api/v1/notify/test", r_test),
+            make("POST", r"/api/v1/notify/alert", r_alert),
             make("GET", r"/api/v1/notifications", r_list),
             make("POST", r"/api/v1/notifications/read", r_read)]

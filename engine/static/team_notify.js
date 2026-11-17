@@ -23,7 +23,8 @@
     return d.toDateString() === new Date().toDateString() ? hm : `${d.getDate()} ${d.toLocaleString("en-GB", {month:"short"})} ${hm}`;
   }
   const RULES = {review_requested:"Reviews asked of me", mention:"@mentions of me", review_decided:"My requests approved or sent back",
-                 pending_changed:"Someone changes an item I have pending", claim:"Someone claims something I own"};
+                 pending_changed:"Someone changes an item I have pending", claim:"Someone claims something I own",
+                 alert:"My own Ads alerts (from Alerts on this Mac)"};
   const AREAS = {ads:"Ads", email:"Email", seo:"SEO", social:"SoMe"};
   const TIMING = {instant:"Right away", hourly:"Hourly digest", daily:"Daily digest"};
 

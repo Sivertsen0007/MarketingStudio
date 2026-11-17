@@ -12,7 +12,7 @@ import importlib
 import pkgutil
 import traceback
 
-ORDER = ("pacing", "email", "seo", "social", "activity")
+ORDER = ("pacing", "alerts", "email", "seo", "social", "activity")
 
 
 def load():

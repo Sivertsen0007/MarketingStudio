@@ -24,7 +24,7 @@
 | | |
 |---|---|
 | **Start** | [What it is](#what-it-is) · [Install](#install) · [First run: Setup](#first-run-setup) · [Updates](#updates) |
-| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Alerts](#alerts) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
+| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Alerts](#alerts) · [Creatives](#creatives) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
 | **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email platform](#email-platform) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
@@ -120,10 +120,10 @@ have, so nobody else can push code into your copy.
 | Part | What it does |
 |---|---|
 | **Overview** (top left) | Switches between the dashboard and the editor |
-| **Ads · Pacing · Alerts · Email · SEO · SoMe · Activity** | The areas |
+| **Ads · Pacing · Alerts · Creatives · Email · SEO · SoMe · Activity** | The areas |
 | **Account picker** | Google Ads accounts and Meta ad accounts. Meta accounts can be added in Settings |
 | **↻** | Re-reads the current account from the API |
-| **Refresh data ▾** | Fetch again per source: one Google account, one Meta account, Email, SEO, SoMe, Activity, Pacing, rates, or all |
+| **Refresh data ▾** | Fetch again per source: one Google account, one Meta account, Email, SEO, SoMe, Activity, Pacing, Creatives, rates, or all |
 | **Push** | Turns blue with a count when the draft has changes. Opens the push summary |
 | **Connections** | Read-only health check of every connection (tokens, API versions, access, rate limits) |
 | **Setup** | Keys and sign-in |
@@ -247,6 +247,30 @@ and Meta for you. Nothing is ever changed: alerts only read.
   notifications (bell, email or webhook as you set them in Team > Notifications; rule *My own Ads alerts*). Alerts never
   go to anyone else.
 - Meta: one call per account and check, and checks pause when Meta's usage headers say Studio is close to its limit.
+
+---
+
+## Creatives
+
+**Creatives** (next to Alerts, or *Creatives (this account)* under MANAGE) shows how each headline, description, image, logo
+and video performs for one Google Ads or Meta account over a date range (7, 14, 30 or 90 days, or your own dates).
+
+- **Per asset**: the same text, image or video in many ads adds up into one row, with impressions, clicks, CTR, cost,
+  conversions, CPA, and value and ROAS when the platform reports a value. Click a row for the ads it ran in. *Per ad and
+  asset* shows one row each. Sort by any column, filter by asset type or text, and rows under the low-volume threshold
+  (500 impressions, changeable) are flagged: too little data to judge.
+- **Google Ads**: *Ad assets* covers Search responsive search ads, Demand Gen and video ads; *Performance Max assets* covers
+  asset groups. Google's own asset labels are mostly *Pending* or *Not applicable*, so Studio shows the numbers instead.
+- **Meta**: *Assets* splits the ads that use several texts or media (flexible and Advantage+ creative) by primary text,
+  headline, description, image, video, call to action and link, one Meta breakdown per read. Every other ad is in *Ad by
+  ad* with its thumbnail, primary text and headline, and the video numbers (plays, ThruPlays, 25 to 100% watched, average
+  watch time). If Meta says Studio is close to its limit the read stops early; **Fetch the rest** later reads only what is missing.
+- **Actions** only go into the account's draft, with the change types the draft already has: *Pause ad*, *Replace text*
+  and *Remove text* for Search ads (the ad keeps its other texts), Performance Max text assets and Meta text options, and
+  *Pause ad* or *Replace text* for single Meta ads. Images, videos and Demand Gen are read-only here. Check, preview and
+  Push live as usual.
+- Read once and kept until you press **Refresh** (or the Refresh menu's *Creatives* line): two Google searches per
+  account; for Meta one insights read, the ads' creatives (from the Ads data when it has them) and up to seven breakdowns.
 
 ---
 
@@ -599,6 +623,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Activity | `activity_summary`, `activity_rows` (who made each change is always left out) |
 | Pacing | `pacing_status` (targets, spend, forecast, flags, recommendations), `pacing_add_to_draft` (budget changes into the draft only) |
 | Alerts | `alerts_list` (rules and recent alerts), `alert_rule_add` (a rule in Studio's local config) |
+| Creatives | `creative_performance` (asset and ad performance for a date range, read-only) |
 | Calendar | `calendar_list`, `library_list`, `team_settings_get` (read only) |
 
 ---
@@ -620,7 +645,8 @@ Marketing Studio.app
     ├── datapolicy.py, datasources.py   when data may be fetched again
     ├── pacing.py          budget pacing: spend, forecast, targets, draft budget recommendations
     ├── alerts.py          Ads alerts: rules, read-only checks, history, delivery
-    ├── areas/             Pacing, Alerts, Email, SEO, SoMe, Activity
+    ├── creatives.py       creative and asset performance; row actions into the draft
+    ├── areas/             Pacing, Alerts, Creatives, Email, SEO, SoMe, Activity
     ├── mcp_server.py      the MCP server for Claude (stdio)
     ├── updater.py         in-app updates from GitHub Releases
     └── vendor_hub/        small API clients (Meta Graph, Google Ads REST)

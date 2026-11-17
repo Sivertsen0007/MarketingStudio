@@ -7,13 +7,15 @@ WordPress (public/REST GET), Frankfurter rates. Nothing is pushed, sent, schedul
 Sources:  google (account: ml, mluk or a customer id; none = every Google account)
           meta   (account: a Meta key from the account list, e.g. meta; none = every Meta account)
           email, seo (account / parts: gsc, ga4, wp; none = all three), social, activity, fx, overview (days),
-          pacing (account: an ad account id or key; none = every ad account), all
+          pacing (account: an ad account id or key; none = every ad account),
+          creatives (account: an ad account id or key; none = every ad account; days / start / end, default 30 days), all
 """
 import datetime as dt
 import json
 import time
 
 import core
+import creatives
 import datapolicy
 import fx
 import gapi
@@ -94,6 +96,7 @@ def status():
         pf = []
     rows.append({"source": "pacing", "account": None, "label": "Pacing",
                  "fetched_at": min(pf) if pf and all(pf) else None})
+    rows.append({"source": "creatives", "account": None, "label": "Creatives", "fetched_at": creatives.fetched_at()})
     try:
         rows.append({"source": "fx", "account": None, "label": "Exchange rates", "fetched_at": (fx._read_cache() or {}).get("fetched_at")})
     except Exception:  # noqa: BLE001
@@ -124,6 +127,7 @@ def refresh(source, account=None, **ctx):
             except Exception as ex:  # noqa: BLE001 - one source failing must not stop the rest
                 out.append({"source": s, "error": str(ex)[:300]})
         datapolicy.invalidate("overview", at=t0)
+        datapolicy.invalidate(creatives.SOURCE, at=t0)  # Creatives: read again when next shown (not now: up to 9 Meta calls each)
         return {"results": out, "status": status()}
     if source == "google":
         keys = [account] if account else [a["key"] for a in _google_accounts()]
@@ -169,6 +173,11 @@ def refresh(source, account=None, **ctx):
     elif source == "pacing":
         r = pacing.refresh(account)
         out.append({"source": "pacing", "accounts": r["accounts"], "errors": [f"{e['name']}: {e['error']}" for e in r["errors"]]})
+    elif source == "creatives":
+        d = ctx.get("days") if str(ctx.get("days") or "") in {str(x) for x in creatives.DAYS} else None
+        r = creatives.refresh(account, d, ctx.get("start"), ctx.get("end"))
+        out.append({"source": "creatives", "accounts": r["accounts"], "window": r["window"],
+                    "errors": [f"{e['name']}: {e['error']}" for e in r["errors"]]})
     elif source == "fx":
         out.append({"source": "fx", "fetched_at": fx.info(force=True).get("fetched_at")})
     elif source == "overview":
@@ -176,7 +185,7 @@ def refresh(source, account=None, **ctx):
         o = overview.build(days, "own", force=True)
         out.append({"source": "overview", "days": o["days"], "errors": o.get("errors", [])})
     else:
-        raise ValueError("source must be all, google, meta, email, seo, social, activity, fx, overview or pacing")
+        raise ValueError("source must be all, google, meta, email, seo, social, activity, fx, overview, pacing or creatives")
     if source in ("email", "seo", "social"):
         datapolicy.invalidate("overview")
     return {"results": out}

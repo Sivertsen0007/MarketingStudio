@@ -24,7 +24,7 @@
 | | |
 |---|---|
 | **Start** | [What it is](#what-it-is) · [Install](#install) · [First run: Setup](#first-run-setup) · [Updates](#updates) |
-| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Alerts](#alerts) · [Creatives](#creatives) · [Video ads](#video-ads-demand-gen-and-youtube) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
+| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Alerts](#alerts) · [Creatives](#creatives) · [Meta tests](#meta-tests) · [Audiences](#audiences) · [Video ads](#video-ads-demand-gen-and-youtube) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
 | **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email platform](#email-platform) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
@@ -127,7 +127,7 @@ have, so nobody else can push code into your copy.
 | **Push** | Turns blue with a count when the draft has changes. Opens the push summary |
 | **Connections** | Read-only health check of every connection (tokens, API versions, access, rate limits) |
 | **Setup** | Keys and sign-in |
-| **Settings** | Saved views, Meta ad accounts, display currency, data refresh |
+| **Settings** | Saved views, Meta ad accounts, display currency, data refresh (manual or automatic) and background jobs |
 | **Legend** | *Live*, *In draft*, *Problem*, *Warning*: the colours you see in the grid |
 
 The app opens full-size and remembers its window. The standard Edit menu works (copy, paste, undo, find), **Cmd+R** reloads,
@@ -217,13 +217,16 @@ an over/under flag with the amount, today's daily budgets and the spend per day 
 
 - **Forecast**: spend so far + today's expected spend + the rest of the month at a run-rate. The run-rate is the last 7
   completed days, adjusted for the day of the week (learned from the last 28 days). Paused campaigns add nothing more, and
-  a daily budget caps each remaining day. Days follow each account's own time zone.
+  a daily budget caps each remaining day. Days follow each account's own time zone. A live campaign with no spend in the
+  last 28 days has no run-rate yet, so it shows *not enough data* instead of a number, and is left out of the account's forecast.
 - **Recommendations** are "set the daily budget to X" per campaign (Meta: per campaign with a campaign budget, per ad set
   otherwise). They only go into the account's draft when you press **Add to draft**: check, preview and Push live as
   usual (team approval applies, undo works). Meta changes move at most 20% per step (changeable) because big budget
   changes restart learning; ad sets in learning are flagged. Google may spend up to 2x the daily budget on one day and
   about 30.4x in a month; shared and total budgets are left alone.
-- Targets are this Mac's own, or the team's when an owner or admin shares them (team setting *Ad spend targets*).
+- Targets are this Mac's own and stay on this Mac. They only reach your team when an owner or admin presses **Share
+  targets with the team**; after that their edits change the team's targets, and **Stop sharing targets** gives everyone
+  their own back.
 - A daily **Budget pacing check** (Settings, off by default) reads spend and flags accounts drifting from their target.
   It never changes a budget, and it only runs while Refresh data is automatic.
 
@@ -269,8 +272,39 @@ and video performs for one Google Ads or Meta account over a date range (7, 14, 
   and *Remove text* for Search ads (the ad keeps its other texts), Performance Max text assets and Meta text options, and
   *Pause ad* or *Replace text* for single Meta ads. Images, videos and Demand Gen are read-only here. Check, preview and
   Push live as usual.
+- Text changes start from what the platform has now: Studio reads the ad's current texts (Google) or text options (Meta)
+  again before it writes the draft change, so nothing changed since the last refresh is undone. A replaced text appears
+  once; Performance Max replacements respect Google's minimum and maximum per asset group, and a removal that would drop
+  under the minimum is skipped with the reason. Lengths are counted the way Google counts them (double-width characters
+  count as 2).
+- The totals above the table add up the rows you see, so they follow the search and filters.
 - Read once and kept until you press **Refresh** (or the Refresh menu's *Creatives* line): two Google searches per
   account; for Meta one insights read, the ads' creatives (from the Ads data when it has them) and up to seven breakdowns.
+  If Meta stops answering half way, what was read is kept and **Fetch the rest** reads the remainder. The 90-day range
+  follows the account's time zone.
+
+---
+
+## Meta tests
+
+**Tests** (a tab in a Meta ad account) lists the A/B and creative tests on the business that owns the account, with results
+per cell (spend, CTR, results, cost per result) and a plain verdict; creative tests show Meta's high performers and how
+sure Meta is about them.
+
+- **New test**: an A/B test between existing ad sets or campaigns, or a creative test of 2 to 7 existing ads. **End test**
+  ends one early. Both go into the draft like any other change, and only Push live sends them.
+- A test can't be removed once made, only ended, and ending is final, so Push live asks you to accept that first. Meta can't
+  try a test out before it exists, so Push live checks its objects and dates with reads.
+- Studio never switches anything on for a test; paused objects in a cell get a warning. Dates are in the ad account's time zone.
+- Read once and kept until you press **Refresh** in the tab. The token needs access to the business (see [Meta](#meta)).
+
+---
+
+## Audiences
+
+- **Google Ads**: *Audiences* under MANAGE lists the audience lists on each campaign. Attach lists, detach them, or switch a
+  campaign between observation and targeting; each is a draft change that goes live with Push live.
+- **Meta**: *Audiences* lists the ad account's custom and lookalike audiences with their size. It is read-only.
 
 ---
 
@@ -299,7 +333,9 @@ or change Video campaigns, so Studio makes video ads on YouTube as **Demand Gen*
   in the Videos tab, gated like a push (your team's approval when your team requires it, and the why note). It is never part
   of Push live, and Claude can't start it. Large files resume after a dropped connection. Google then processes the video;
   *Check status* shows its YouTube id, ready for a video ad. A file picked in the page is copied into Studio's data folder and
-  deleted after the upload; files over 10 GB are given by their full path instead.
+  deleted after the upload, when you remove the upload from the draft, or when Google refuses the file. Copies left behind
+  are cleared a week later when Studio starts. Files over 10 GB are given by their full path instead. Studio never follows a
+  redirect during an upload, so your sign-in only ever goes to Google Ads.
 - **Your own brand channel** is not an upload target in Studio: Google only uploads there with the sign-in of a Google user who
   manages that channel (never a service account), and Studio has no YouTube channel sign-in. Upload to the brand channel in
   YouTube or Google Ads and add the video here by its link. Linking a channel to the Ads account is done in Google Ads.
@@ -495,14 +531,8 @@ rate-limit usage. Each line says how to fix it.
 
 Meta apps start with *development access* (low rate limits). Apply for **Full access** to the Marketing API in App Review when you use Studio daily.
 
-**Tests (A/B and creative tests).** The **Tests** tab in a Meta ad account lists the tests on the business that owns it,
-with results per cell (spend, CTR, results, cost per result) and a plain verdict; creative tests show Meta's high
-performers with their confidence. New tests (between existing ad sets or campaigns, or 2 to 7 existing ads) and
-ending a test go into the draft like any other change. Meta can't test-run a test before it exists, so Push live checks
-its objects with reads (and its dates again), and asks you to accept that it is permanent: a test can't be removed once
-made, only ended, and ending is final. Studio never switches anything on for a test; paused objects in a cell get a
-warning. Duplicating an ad set with one change is not available yet. Dates are in the ad account's time zone.
-The token needs access to that business (`business_management`), or set `META_BUSINESS_ID` in the environment.
+**Tests** ([Meta tests](#meta-tests)) need the token to have access to the business that owns the ad account
+(`business_management`), or set `META_BUSINESS_ID` in the environment.
 
 ### Google Ads
 
@@ -718,6 +748,10 @@ Studio fetches each source **once** and keeps it until you ask for fresh data: *
 for one source or all of them. Nothing is fetched in the background on a timer, on page load or when you switch tabs. The exceptions:
 a period you have never fetched is fetched once, and after **Push live** or **Undo** that account is read again so you see the live values.
 The subbar shows when the data you are looking at was fetched.
+
+That is the default, **Manual**. In **Settings > Background jobs**, *Data refresh* can be set to **Automatic**: cached data
+then expires on its own, and the background jobs that fetch data (the alert checks, the daily pacing check) run on their
+schedule. Switch it back to Manual at any time; nothing is fetched automatically unless you turn this on.
 
 ## Safety rails
 

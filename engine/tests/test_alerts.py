@@ -241,7 +241,8 @@ class Meta(unittest.TestCase):
         path, params = get.calls[0]
         self.assertEqual(path, "act_555")
         f = params["fields"]
-        self.assertIn("adsets.limit(500){", f)
+        self.assertIn('adsets.limit(500).effective_status(["ACTIVE","PAUSED","CAMPAIGN_PAUSED","IN_PROCESS","WITH_ISSUES"]){', f)
+        self.assertIn('campaigns.limit(500).effective_status(["ACTIVE","PAUSED","IN_PROCESS","WITH_ISSUES"]){', f)  # no archive
         self.assertIn("learning_stage_info", f)
         self.assertIn('insights.level(campaign).time_increment(1).time_range({"since":"2026-11-03","until":"2026-11-17"})', f)
         self.assertNotIn("ads.limit", f)  # no disapproved rule

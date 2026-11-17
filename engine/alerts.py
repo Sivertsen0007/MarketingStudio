@@ -439,8 +439,10 @@ def fetch_google(acct, need, query=None, now=None):
 
 # ---------------------------------------------------------------- reading Meta (one GET per check)
 
-M_CAMPS = "campaigns.limit(500){id,name,effective_status,daily_budget,lifetime_budget,created_time,start_time}"
-M_SETS = "adsets.limit(500){id,name,campaign_id,effective_status,daily_budget,learning_stage_info,created_time,start_time}"
+M_CAMPS = ('campaigns.limit(500).effective_status(["ACTIVE","PAUSED","IN_PROCESS","WITH_ISSUES"])'
+           "{id,name,effective_status,daily_budget,lifetime_budget,created_time,start_time}")
+M_SETS = ('adsets.limit(500).effective_status(["ACTIVE","PAUSED","CAMPAIGN_PAUSED","IN_PROCESS","WITH_ISSUES"])'
+          "{id,name,campaign_id,effective_status,daily_budget,learning_stage_info,created_time,start_time}")
 M_ADS = 'ads.limit(200).effective_status(["DISAPPROVED"]){id,name,campaign_id,adset_id}'
 M_INS = ('insights.level({level}).time_increment(1).time_range({{"since":"{since}","until":"{until}"}}).limit(2000)'
          "{{{level}_id,spend,clicks,impressions,actions,action_values}}")

@@ -737,6 +737,9 @@ def _pmax_asset_ops(ids, c, enable_new):
         have.setdefault(r["asset"].get("textAsset", {}).get("text", ""), r)
     texts = c.get("texts", [c.get("text")])
     out = []
+    # earlier pmax_asset items of this same push on this asset group and field (a replace is an add plus a remove):
+    # the minimum and maximum are checked on what the asset group holds after them, not on what it holds now
+    led = ids.__dict__.setdefault("_pmax", {}).setdefault((ag, ftype), {"added": 0, "added_on": 0, "removed": 0, "removed_on": 0})
     if c.get("remove"):
         enabled = sum(1 for r in cur if r["assetGroupAsset"]["status"] == "ENABLED" and r["assetGroupAsset"].get("source") != "AUTOMATICALLY_CREATED")
         gone = 0
@@ -752,10 +755,15 @@ def _pmax_asset_ops(ids, c, enable_new):
             op["permanent"] = True
             op["undo_note"] = "undo links the same text again; its history in the asset group starts over"
             out.append(op)
-        if enabled - gone < minimum:
-            raise ValueError(f'"{c["asset_group"]}" would keep {enabled - gone} enabled {label}s; Performance Max needs at least {minimum}')
+        left = enabled - led["removed_on"] + led["added_on"] - gone
+        if left < minimum:
+            raise ValueError(f'"{c["asset_group"]}" would keep {left} enabled {label}s; Performance Max needs at least {minimum}'
+                             + ("" if enable_new else " (new texts go in paused unless you switch new items on)"))
+        led["removed_on"] += gone
+        led["removed"] += sum(1 for t in texts if have[t]["assetGroupAsset"].get("source") != "AUTOMATICALLY_CREATED")
         return out
     mine = sum(1 for r in cur if r["assetGroupAsset"].get("source") != "AUTOMATICALLY_CREATED")
+    mine += led["added"] - led["removed"]
     if mine + len(texts) > maximum:
         raise ValueError(f'"{c["asset_group"]}" has {mine} {label}s; Performance Max allows {maximum} - remove some first')
     status = "ENABLED" if enable_new else "PAUSED"
@@ -766,6 +774,8 @@ def _pmax_asset_ops(ids, c, enable_new):
         out.append(_create("assetOperation", {"resourceName": a_res, "textAsset": {"text": txt}}, f'new text asset "{txt}"', undoable=False))
         out.append(_create("assetGroupAssetOperation", {"assetGroup": ag, "asset": a_res, "fieldType": ftype, "status": status},
                            f'add {label} "{txt}" to "{c["asset_group"]}" ({status})'))
+    led["added"] += len(texts)
+    led["added_on"] += len(texts) if enable_new else 0
     return out
 
 def _asset(x, kind):

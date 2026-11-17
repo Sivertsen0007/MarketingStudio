@@ -20,7 +20,8 @@ The protocol (Google's Upload videos guide, API v26):
 Then Google processes the video (state PENDING -> UPLOADED -> PROCESSED, or FAILED / REJECTED); status() reads it with
 GAQL. Once PROCESSED it has a YouTube video id for a video_asset or a Demand Gen video ad.
 
-The session URL carries the bearer token, so it is only ever sent to https://googleads.googleapis.com.
+The session URL carries the bearer token, so it is only ever sent to https://googleads.googleapis.com, and no request
+here follows an HTTP redirect (a redirect would carry the token to wherever it points): a 3xx answer stops the upload.
 An upload can't be undone from Studio: removing it (RemoveYouTubeVideoUpload) deletes the video from YouTube too and is
 done in Google Ads.
 """
@@ -33,12 +34,30 @@ import progress
 
 HOST = "googleads.googleapis.com"
 CHUNK = 8 * 1024 * 1024  # rounded to Google's chunk granularity
+GRAN_MAX = 64 * 1024 * 1024  # the most granularity Studio takes from Google's header (one chunk is held in memory)
+STAGE_KEEP_DAYS = 7  # staged copies older than this are swept at start-up (unless a draft item still points at one)
+RESOURCE = re.compile(r"^customers/\d+/youTubeVideoUploads/[\d~]+$", re.ASCII)  # ASCII: \d is never another script's digit
 RETRIES = 3
 TIMEOUT = 300
 
 
 class UploadError(RuntimeError):
-    pass
+    """final: Google refused the file itself (or closed the session), so trying the same bytes again won't help."""
+
+    def __init__(self, msg, final=False):
+        super().__init__(msg)
+        self.final = final
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Every request here carries the bearer token: a redirect is never followed, it stops the upload."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise UploadError(f"Google answered with a redirect ({code}); Studio doesn't follow redirects with your sign-in, "
+                          "so nothing more was sent")
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def _api():
@@ -64,8 +83,8 @@ def _safe_session(url):
 
 
 def _open(req, timeout=TIMEOUT):
-    """urllib.request.urlopen; tests replace it."""
-    return urllib.request.urlopen(req, timeout=timeout)
+    """Open a request without following redirects (_NoRedirect); tests replace it."""
+    return _OPENER.open(req, timeout=timeout)
 
 
 def _headers(extra):
@@ -109,11 +128,12 @@ def begin(cid, title, description, size, disclosure=None):
         gran = int(r.headers.get("x-goog-upload-chunk-granularity") or 0)
     except ValueError:
         gran = 0
-    return _safe_session(url), gran
+    return _safe_session(url), min(max(gran, 0), GRAN_MAX)
 
 
 def _chunk_size(gran):
-    if gran and gran > 0:
+    gran = min(gran or 0, GRAN_MAX)
+    if gran > 0:
         return max(gran, (CHUNK // gran) * gran)
     return CHUNK
 
@@ -153,7 +173,7 @@ def send(url, path, size, gran, on_progress=None):
                 raise
             except urllib.error.HTTPError as e:
                 if e.code < 500 and e.code not in (408, 429):
-                    raise UploadError("Google refused the upload: " + _err(e)) from None
+                    raise UploadError("Google refused the upload: " + _err(e), final=True) from None
                 tries += 1
                 offset = _resume(url, tries, e)
             except (urllib.error.URLError, OSError, TimeoutError) as e:
@@ -167,18 +187,16 @@ def _resume(url, tries, why):
     time.sleep(min(2 ** tries, 20))
     got, status, _ = _query(url)
     if status == "final":
-        raise UploadError("Google closed the upload session; start the upload again")
+        raise UploadError("Google closed the upload session; start the upload again", final=True)
     return got
 
 
 def status(acct, resource):
     """Processing state of an upload (GAQL, read-only): {state, video_id}."""
     cid = core.resolve(acct)
-    if not str(resource or "").startswith(f"customers/{cid}/youTubeVideoUploads/"):
-        raise ValueError("not an upload of this account")
-    tail = resource.rsplit("/", 1)[1]
-    if not tail.replace("~", "").isdigit():
-        raise ValueError("not an upload of this account")
+    resource = str(resource or "")
+    if not RESOURCE.fullmatch(resource) or not resource.startswith(f"customers/{cid}/"):
+        raise ValueError("not an upload of this account")  # fully matched before it goes into GAQL
     rows = _api().query(cid, "SELECT you_tube_video_upload.resource_name, you_tube_video_upload.video_id, you_tube_video_upload.state "
                              f"FROM you_tube_video_upload WHERE you_tube_video_upload.resource_name = '{resource}'")
     u = rows[0]["youTubeVideoUpload"] if rows else {}
@@ -223,13 +241,71 @@ def stage(stream, length, name):
     return {"file": str(path), "name": Path(str(name)).name, "size": length}
 
 
-def _unstage(path):
+def _staged(path):
+    """The resolved path when `path` is a file inside the staging folder (symlinks resolved), else None."""
     try:
-        p = Path(path).resolve()
-        if stage_dir().resolve() in p.parents and p.is_file():
+        p = Path(str(path)).expanduser().resolve()
+        return p if stage_dir().resolve() in p.parents and p.is_file() else None
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def _unstage(path):
+    """Delete Studio's own staged copy. A file anywhere else (one the user pointed at) is never touched."""
+    p = _staged(path)
+    if p:
+        try:
             p.unlink()
-    except OSError:
-        pass
+        except OSError:
+            pass
+        return True
+    return False
+
+
+def release(acct, removed, keep=None):
+    """Draft items left the draft (removed, cleared, uploaded): delete their staged copies, unless another item still
+    in that draft (`keep`, else read here) points at the same file. -> how many files were deleted."""
+    files = [i["change"].get("file") for i in removed
+             if isinstance(i, dict) and isinstance(i.get("change"), dict) and i["change"].get("type") == "video_upload"]
+    files = [f for f in files if f and _staged(f)]
+    if not files:
+        return 0
+    if keep is None:
+        try:
+            keep = core.draft(acct)["items"]
+        except Exception:  # noqa: BLE001 - can't tell what is still used: keep the files (the start-up sweep gets them)
+            return 0
+    used = {_staged(i["change"].get("file")) for i in keep if isinstance(i, dict) and isinstance(i.get("change"), dict)
+            and i["change"].get("type") == "video_upload"}
+    return sum(1 for f in files if _staged(f) not in used and _unstage(f))
+
+
+def sweep(days=STAGE_KEEP_DAYS, now=None):
+    """At engine start: delete staged copies (and stray .part files) older than `days` that no Ads draft points at.
+    Only files directly inside the staging folder are looked at. -> the names deleted."""
+    d = stage_dir()
+    if not d.is_dir():
+        return []
+    root = d.resolve()
+    cutoff = (now or time.time()) - days * 86400
+    used = ""
+    for f in core.STUDIO_DIR.glob("draft_*.json"):
+        try:
+            used += f.read_text(errors="replace")
+        except OSError:
+            pass
+    gone = []
+    for p in d.iterdir():
+        try:
+            if p.is_symlink() or not p.is_file() or p.resolve().parent != root or p.stat().st_mtime >= cutoff:
+                continue
+            if p.name in used:
+                continue
+            p.unlink()
+            gone.append(p.name)
+        except OSError:
+            continue
+    return gone
 
 
 def history(acct, limit=50):
@@ -280,7 +356,7 @@ def upload(acct, item_id, body=None):
             raise UploadError("Google finished the upload but didn't say where it is")
         progress.sent(key)
         rec.update(ok=True, resource=resource)
-        core.remove(cid, [item["id"]])
+        core.remove(cid, [item["id"]])  # also deletes a staged copy (release), unless another item uses the same file
         _unstage(path)
         res = {"ok": True, "resource": resource, "applied": 1,
                "message": f"Uploaded {shown}: Google is processing it (unlisted, on the account's Google-managed channel). "
@@ -288,7 +364,12 @@ def upload(acct, item_id, body=None):
         return res
     except (UploadError, urllib.error.URLError, OSError) as ex:
         rec["error"] = str(ex)[:500]
-        res = {"ok": False, "message": f"Not uploaded: {ex}"}
+        msg = f"Not uploaded: {ex}"
+        if getattr(ex, "final", False) and _staged(path):
+            # Google refused the bytes themselves: Studio's copy is no use any more (a file the user pointed at stays)
+            _unstage(path)
+            msg += ". Studio's copy of the file was deleted: pick the file again to retry"
+        res = {"ok": False, "message": msg}
         return res
     finally:
         with open(_log(cid), "a") as f:

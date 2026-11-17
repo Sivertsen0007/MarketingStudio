@@ -563,6 +563,7 @@ class H(BaseHTTPRequestHandler):
             "/api/settings/currency": lambda: set_display_currency(body.get("currency")),
             "/api/settings/fx/refresh": lambda: {**fx.info(force=True), "display_currency": display_currency()},
             "/api/settings/scheduler": lambda: scheduler.set_enabled(body["name"], bool(body.get("enabled"))),
+            "/api/settings/data_policy": lambda: datapolicy.set_mode(body.get("mode")),
             "/api/settings/health/check": lambda: {"summary": health.summary(health.check_all(save=True)), **(health.cached() or {})},
         }
         if self.path in routes:
@@ -586,19 +587,7 @@ class H(BaseHTTPRequestHandler):
         def no_editor():
             raise ValueError("Meta has no Editor: use Push live")
 
-        def video_upload():
-            # the user's Upload button only (never Push live, never MCP): one draft item, gated like a push
-            if not PUSH_LOCK.acquire(blocking=False):
-                raise ValueError("a push or upload is already running")
-            try:
-                return team_reviews.single_action("ads", f"ads:{acct}", str(body["id"]), body, "Uploaded a video to YouTube",
-                                                  lambda: youtube_upload.upload(acct, body["id"], body))
-            finally:
-                PUSH_LOCK.release()
-
         routes = {
-            "/api/videos/refresh": lambda: demandgen.library(acct, refresh=True),
-            "/api/videos/upload": video_upload,
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{meta.acct()}", body,
                                                                    lambda only: meta.preview(only=only)),
             "/api/live/push": live_push,
@@ -650,6 +639,10 @@ def main():
         traceback.print_exc()
     try:  # alerts: hourly and daily checks, held while Refresh data is manual (then: Check now, or after a Refresh)
         alerts.register_jobs()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    try:  # staged video copies older than a week that no draft item points at (youtube_upload.sweep)
+        youtube_upload.sweep()
     except Exception:  # noqa: BLE001
         traceback.print_exc()
     try:  # Studio's background jobs (scheduler.py): one thread, only here (never on import)

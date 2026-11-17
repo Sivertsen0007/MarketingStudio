@@ -410,7 +410,7 @@ def _check_live_only(c, acct=None):
         rows = [{f"{label} {i}": t for i, t in enumerate(texts, 1)}]
         if not c.get("remove"):
             if f[0] == "LONG_HEADLINE":  # gae.lint already knows the Headline / Description limits
-                problems += [f"{label} {i}: {len(t)} chars > {f[1]}" for i, t in enumerate(texts, 1) if len(t) > f[1]]
+                problems += [f"{label} {i}: {gae.width(t)} chars > {f[1]}" for i, t in enumerate(texts, 1) if gae.width(t) > f[1]]
             problems += [p.split(": ", 1)[1] if p.startswith("row ") else p for p in gae.lint(rows)]
             if len(set(texts)) != len(texts):
                 problems.append("the same text is listed twice")
@@ -439,8 +439,8 @@ def check(change, acct=None):
     problems = [p.split(": ", 1)[1] if p.startswith("row ") else p for p in gae.lint(rows)]
     if change.get("type") == "sitelink" and change.get("edit"):  # gae.plan_rows skips edits, so check the new text here
         for k, lim in (("new_text", 25), ("line1", 35), ("line2", 35)):
-            if len(change.get(k) or "") > lim:
-                problems.append(f"{k}: {len(change[k])} chars > {lim}")
+            if gae.width(change.get(k) or "") > lim:
+                problems.append(f"{k}: {gae.width(change[k])} chars > {lim}")
         rows = [{k: change[k] for k in ("new_text", "line1", "line2") if change.get(k)}]
         problems += [p.split(": ", 1)[1] for p in gae.lint(rows)]
     return problems, _warn(rows)
@@ -492,12 +492,30 @@ def _summary(c):
 
 def remove(acct, ids):
     with draftstore.tx(_coll(acct), STUDIO_DIR) as t:
-        return sum(1 for i in set(ids) if t.delete(i))
+        gone = [r["data"] for r in (t.get(i) for i in set(ids)) if r]
+        n = sum(1 for i in set(ids) if t.delete(i))
+        left = [r["data"] for r in t.items()]
+    _release_staged(acct, gone, left)
+    return n
 
 
 def clear(acct):
     with draftstore.tx(_coll(acct), STUDIO_DIR) as t:
-        return sum(1 for i in t.ids() if t.delete(i))
+        gone = [r["data"] for r in t.items()]
+        n = sum(1 for i in t.ids() if t.delete(i))
+    _release_staged(acct, gone, [])
+    return n
+
+
+def _release_staged(acct, gone, left):
+    """A video_upload item left the draft: delete the copy Studio staged for it (youtube_upload.release)."""
+    if not any(isinstance(i, dict) and (i.get("change") or {}).get("type") == "video_upload" for i in gone):
+        return
+    try:
+        import youtube_upload  # noqa: PLC0415 - it imports core
+        youtube_upload.release(acct, gone, left)
+    except Exception:  # noqa: BLE001 - removing from the draft never fails because of a staging file
+        pass
 
 
 def validate(acct):

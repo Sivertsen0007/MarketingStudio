@@ -178,9 +178,12 @@ function draw(){
   const s = ($("#crSearch").value || "").toLowerCase(), field = $("#crField").value, hide = $("#crHideLow").checked;
   let rows = v.rows.filter(r => (!field || r.field === field) && (!hide || !r.low_volume)
     && (!s || [r.text, r.headline, r.primary_text, r.video_title, (r.campaigns || []).join(" "), r.members.map(m => (m.ad_name || "") + " " + (m.where || "")).join(" ")].join(" ").toLowerCase().includes(s)));
-  const cc = cols(v, rows);
+  const cc = cols(v, v.rows);  // columns from every row, so filtering never shifts the headers
   if (C.sort){ const k = C.sort, d = C.dir; rows = rows.slice().sort((a, b) => (a[k] == null) - (b[k] == null) || d * ((a[k] ?? 0) - (b[k] ?? 0))) }
-  const t = v.totals;
+  // totals of the rows shown (search, asset type and hide-low filters included), the same way the server adds them up
+  const t = rows.reduce((a, r) => { for (const k of ["impressions", "clicks", "cost", "conversions"]) a[k] += Number(r[k] || 0); return a },
+                        {impressions: 0, clicks: 0, cost: 0, conversions: 0});
+  t.ctr = t.impressions ? t.clicks / t.impressions * 100 : null;
   const tot = `<div class="cr-tot"><span>${num(rows.length)} row${rows.length === 1 ? "" : "s"} of ${num(v.count)}</span><span>Impressions <b>${num(t.impressions)}</b></span><span>Clicks <b>${num(t.clicks)}</b></span>
     <span>CTR <b>${t.ctr == null ? "-" : num(t.ctr, 2) + "%"}</b></span><span>Cost <b>${h(money(t.cost, v.currency))}</b></span><span>Conversions <b>${num(t.conversions, 2)}</b></span>
     <span class="cr-sub" style="margin:0">Totals add up every asset row, so the same click counts once per asset it showed with.</span></div>`;

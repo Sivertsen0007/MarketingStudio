@@ -342,19 +342,19 @@ def _check_texts(c, rows, new):
             w.append(f"{k.replace('_', ' ')}: Google recommends at least {RECOMMENDED}")
         label = {"headlines": "Short headline", "long_headlines": "Long headline", "descriptions": "Video description"}[k]
         for i, x in enumerate(vals, 1):
-            if len(x) > chars:
-                p.append(f"{label} {i}: {len(x)} chars > {chars}")
+            if core.gae.width(x) > chars:
+                p.append(f"{label} {i}: {core.gae.width(x)} chars > {chars}")
             rows.append({f"{label} {i}": x})
     if c.get("business_name") is not None or new:
         bn = str(c.get("business_name") or "")
         if not bn.strip():
             p.append("business_name is missing")
-        elif len(bn) > BUSINESS_NAME:
-            p.append(f"business name: {len(bn)} chars > {BUSINESS_NAME}")
+        elif core.gae.width(bn) > BUSINESS_NAME:
+            p.append(f"business name: {core.gae.width(bn)} chars > {BUSINESS_NAME}")
         rows.append({"Business name": bn})
     for k in ("breadcrumb1", "breadcrumb2"):
-        if c.get(k) and len(str(c[k])) > BREADCRUMB:
-            p.append(f"{k}: {len(str(c[k]))} chars > {BREADCRUMB}")
+        if c.get(k) and core.gae.width(str(c[k])) > BREADCRUMB:
+            p.append(f"{k}: {core.gae.width(str(c[k]))} chars > {BREADCRUMB}")
     return p, w
 
 

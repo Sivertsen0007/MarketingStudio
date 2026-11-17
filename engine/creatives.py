@@ -33,8 +33,11 @@ Draft actions (draft(); the user's Add to draft buttons, never automatic):
   Google Search RSA asset   replace_text / remove_text -> {"type":"rsa","edit":true,"local_id":<ad id>,
                             "headlines":[..],"descriptions":[..]} (the ad's current text is read fresh, one GAQL
                             search, so an edit only swaps the one text); pause_ad -> rsa edit status paused
-  Google PMax text asset    remove_text -> pmax_asset remove; replace_text -> pmax_asset remove + pmax_asset add
-  Meta asset-feed text      replace_text / remove_text -> meta_feed_copy (the ad's text lists with that one changed)
+  Google PMax text asset    remove_text -> pmax_asset remove (skipped when the asset group would drop under Google's
+                            minimum); replace_text -> pmax_asset add + remove (remove first when the group is full).
+                            The counts are read now (one GAQL search) and checked again at the preview.
+  Meta asset-feed text      replace_text / remove_text -> meta_feed_copy (the ad's text lists as Meta has them now,
+                            one GET filtered by id, with that one changed)
   Meta ad                   pause_ad -> meta_status paused; replace_text (primary text or headline) -> meta_copy
   Everything else (images, videos, Demand Gen, call to action, links) is read-only here.
 """
@@ -152,9 +155,18 @@ def _https(url):
     return u if u.startswith("https://") else ""
 
 
-def window(days=None, start=None, end=None, today=None):
+def window(days=None, start=None, end=None, today=None, tz=None):
     """-> {key, label, g_cond, meta} for a date range: days (7, 14, 30, 90) or start + end (YYYY-MM-DD).
-    Ranges end yesterday (complete days), like the platforms' own "last N days"."""
+    Ranges end yesterday (complete days), like the platforms' own "last N days". today: the account's today; else
+    today in tz (the account's time zone, an IANA name), else the Mac's. Google's LAST_N_DAYS and Meta's date presets
+    already use the account's time zone; the 90-day range is spelled out in dates, so fetch_google redoes it in the
+    account's zone (google_window)."""
+    if today is None and tz:
+        try:
+            from zoneinfo import ZoneInfo  # noqa: PLC0415
+            today = dt.datetime.now(ZoneInfo(tz)).date()
+        except Exception:  # noqa: BLE001 - unknown zone: the Mac's date
+            today = None
     today = today or dt.date.today()
     if start or end:
         try:
@@ -213,11 +225,39 @@ def _g_metrics(m):
             "conversions": _f(m.get("conversions")), "value": _f(m.get("conversionsValue")), "views": _int(m.get("videoTrueviewViews"))}
 
 
+def _google_tz(cid, query):
+    """The Google account's time zone: from Pacing's cache when it has the account (no call), else one GAQL search."""
+    try:
+        import pacing  # noqa: PLC0415
+        tz = (pacing.cached(str(cid)) or {}).get("tz")
+        if tz:
+            return tz
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        rows = query(cid, "SELECT customer.time_zone FROM customer LIMIT 1")
+        return ((rows or [{}])[0].get("customer") or {}).get("timeZone") or None
+    except Exception:  # noqa: BLE001 - unknown: the Mac's date
+        return None
+
+
+def google_window(cid, win, query):
+    """A day-count range spelled out in dates (90 days) is computed from the account's today, not the Mac's."""
+    if win.get("days") and not str(win.get("g_cond", "")).startswith("segments.date DURING"):
+        tz = _google_tz(cid, query)
+        if tz:
+            w = window(win["days"], tz=tz)
+            return {**win, "g_cond": w["g_cond"], "tz": tz}
+    return win
+
+
 def fetch_google(cid, win, query=None):
-    """One Google account's asset rows for a date range: two read-only GAQL searches."""
+    """One Google account's asset rows for a date range: two read-only GAQL searches (three for 90 days when the
+    account's time zone isn't cached yet)."""
     if query is None:
         import live  # noqa: PLC0415
         query = live.query
+    win = google_window(cid, win, query)
     cur = ""
     ads = []
     for r in query(cid, G_ADS.format(cond=win["g_cond"])):
@@ -345,7 +385,7 @@ def _breakdowns(act, win, feed_ids, which, read):
                 rows += read(f"{act}/insights", level="ad", breakdowns=bd, limit=500, **win["meta"],
                              filtering=[{"field": "ad.id", "operator": "IN", "value": feed_ids[k:k + 100]}],
                              fields=M_BD_INS + ("," + M_VIDEO if bd == "video_asset" else ""))
-        except (MetaBusy, meta_ads.MetaError) as ex:
+        except (MetaBusy, meta_ads.MetaError, OSError) as ex:
             missing = list(which[i:])
             warnings.append(_stopped(ex, missing))
             break
@@ -416,9 +456,19 @@ def _read_ads(act, ads, known, read):
                 ads[i].update(read=True, why_not="Meta no longer returns this ad (deleted)")
 
 
-def _stopped(ex, missing):
+def _resumable(ex):
+    """A stop that a later Fetch the rest can pick up: Meta's back-off line, a rate limit, a hiccup on Meta's side or no
+    answer at all (network). Anything else (a bad token, a refused field) is raised."""
     import meta_ads  # noqa: PLC0415
-    if isinstance(ex, meta_ads.MetaError) and not ex.rate_limited:
+    if isinstance(ex, (MetaBusy, OSError)):
+        return True
+    if isinstance(ex, meta_ads.MetaError):
+        return ex.rate_limited or ex.transient or (ex.code is None and ex.status is None)  # get_once: no answer
+    return False
+
+
+def _stopped(ex, missing):
+    if not _resumable(ex):
         raise ex
     what = ", ".join("the ads' creatives" if b == "ads" else M_FIELD[b].lower() for b in missing)
     return f"Stopped before {what}: {ex}. Press Fetch the rest later (only those are read)."
@@ -444,7 +494,7 @@ def fetch_meta(act, win, get=None, busy=_meta_busy, known=None):
             "breakdowns": {}, "missing": [], "warnings": []}
     try:
         _read_ads(act, ads, _meta_known(act) if known is None else known, read)
-    except (MetaBusy, meta_ads.MetaError) as ex:
+    except (MetaBusy, meta_ads.MetaError, OSError) as ex:
         snap["missing"] = ["ads"] + list(BREAKDOWNS)
         snap["warnings"] = [_stopped(ex, ["ads"])]
         snap["calls"] = calls[0]
@@ -469,7 +519,7 @@ def fill_missing(snap, win, get=None, busy=_meta_busy, known=None):
         if "ads" in missing:
             _read_ads(snap["act"], snap["ads"], _meta_known(snap["act"]) if known is None else known, read)
             missing.remove("ads")
-    except (MetaBusy, meta_ads.MetaError) as ex:
+    except (MetaBusy, meta_ads.MetaError, OSError) as ex:
         snap.update(missing=missing, warnings=[_stopped(ex, ["ads"])], calls=int(snap.get("calls") or 0) + calls[0])
         return snap
     feed_ids = sorted(i for i, a in snap["ads"].items() if a["feed"])
@@ -625,7 +675,10 @@ def _members(snap, view):
         for i, ad in ads.items():
             met = snap["ad_metrics"].get(i) or {}
             text = ad["primary_text"] or ad["headline"] or ("" if ad.get("read") and ad["feed"] else ad["name"])
-            label = ("Flexible " + ad["format"].lower()).strip() if ad["feed"] else ad["format"] or "Ad"
+            # the asset type of an ad only once its creative is read: before that it is "Not read yet", not a guess
+            # ("Ad") that changes to the real format after Fetch the rest
+            label = ("Not read yet" if not ad.get("read") else ("Flexible " + (ad["format"] or "ad").lower()).strip() if ad["feed"]
+                     else ad["format"] or "Ad")
             out.append({"gkey": ("m", "ads", i), "field": label.lower().replace(" ", "_"), "field_label": label, "kind": "ad", "text": text,
                         "headline": ad["headline"], "primary_text": ad["primary_text"], "image_url": ad["thumbnail"],
                         "ad_id": i, "owner_id": i, "ad_name": ad["name"], "campaign": ad["campaign"], "adset": ad["adset"],
@@ -757,11 +810,13 @@ def _rsa_lists(cid, ad_ids, query=None):
 
 
 def _check_text(new, limit, what):
+    """limit: Google's, counted as Google does (double-width characters count 2, gae.width)."""
     new = str(new or "").strip()
     if not new:
         raise ValueError("give the new text")
-    if limit and len(new) > limit:
-        raise ValueError(f"{what}: {len(new)} characters, the limit is {limit}")
+    if limit and core.gae.width(new) > limit:
+        raise ValueError(f"{what}: {core.gae.width(new)} characters, the limit is {limit}"
+                         + (" (double-width characters count as 2)" if core.gae.width(new) != len(new) else ""))
     return new
 
 
@@ -787,6 +842,8 @@ def _google_changes(row, action, new, members, view, cid, query):
         lst, limit, least = RSA_TEXT[row["field"]]
         if action == "replace_text":
             new = _check_text(new, limit, row["field_label"])
+            if _norm(new) == old:
+                raise ValueError("the new text is the same as the old one")
         live_lists = _rsa_lists(cid, sorted({m["ad_id"] for m in members}), query)
         once = {}
         for m in members:  # one change per ad (an ad can hold the same text twice, e.g. with other spacing)
@@ -810,7 +867,9 @@ def _google_changes(row, action, new, members, view, cid, query):
                 if any(_norm(x["text"]) == _norm(new) for x in items):
                     skipped.append({"name": m["where"], "why": "the ad already has the new text"})
                     continue
-                items = [dict(x, text=new) if i in hit else x for i, x in enumerate(items)]
+                # the first copy becomes the new text (keeping its pin); further copies of the old text (the same text
+                # with other spacing) are dropped, so the ad never ends up with the new text twice
+                items = [dict(x, text=new) if i == hit[0] else x for i, x in enumerate(items) if i == hit[0] or i not in hit]
             c = {"type": "rsa", "edit": True, "campaign": m["campaign"], "ad_group": m["ad_group"], "local_id": int(m["ad_id"]),
                  "headlines": cur["headlines"], "descriptions": cur["descriptions"]}
             c[lst] = items
@@ -821,19 +880,74 @@ def _google_changes(row, action, new, members, view, cid, query):
         new = _check_text(new, PMAX_MAX[row["field"]], row["field_label"])
         if _norm(new) == old:
             raise ValueError("the new text is the same as the old one")
-    seen = set()
+    _, _, least, most = core.PMAX_FIELDS[f]
+    groups = []
     for m in members:
-        if m["asset_group_id"] in seen:
-            continue
-        seen.add(m["asset_group_id"])
+        if m["asset_group_id"] not in {g["asset_group_id"] for g in groups}:
+            groups.append(m)
+    counts = _pmax_counts(cid, [g["asset_group_id"] for g in groups], row["field"], query)
+    for m in groups:
         base = {"type": "pmax_asset", "campaign": m["campaign"], "asset_group": m["asset_group"], "field": f}
-        changes.append(({**base, "remove": True, "texts": [row["text"]]}, m))
-        if action == "replace_text":
-            changes.append(({**base, "texts": [new]}, m))
+        n = counts.get(m["asset_group_id"])  # {enabled, mine} now, or None when it couldn't be read
+        rm, add = ({**base, "remove": True, "texts": [row["text"]]}, m), ({**base, "texts": [new]}, m)
+        if action == "remove_text":
+            if n is not None and n["enabled"] - 1 < least:
+                skipped.append({"name": m["where"], "why": f"the asset group would keep {n['enabled'] - 1} enabled "
+                                                           f"{f.replace('_', ' ')}s; Performance Max needs at least {least}"})
+                continue
+            changes.append(rm)
+        elif n is not None and n["mine"] >= most:
+            changes += [rm, add]  # full: take the old one out first, so the new one fits
+        else:
+            changes += [add, rm]  # add first, so the asset group never drops under its minimum on the way
     return changes, skipped
 
 
-def _meta_changes(row, action, new, members, view, snap, text_field=None):
+def _pmax_counts(cid, group_ids, field, query=None):
+    """Text assets of one field type per asset group now (one read-only GAQL search): {group id: {enabled, mine}}.
+    enabled: enabled ones not created by Google; mine: every one not created by Google. {} when it can't be read."""
+    if not group_ids:
+        return {}
+    if query is None:
+        import live  # noqa: PLC0415
+        query = live.query
+    try:
+        ids = ", ".join(str(int(g)) for g in group_ids)
+        rows = query(cid, "SELECT asset_group.id, asset_group_asset.status, asset_group_asset.source FROM asset_group_asset "
+                          f"WHERE asset_group.id IN ({ids}) AND asset_group_asset.field_type = {field} "
+                          "AND asset_group_asset.status != 'REMOVED'")
+    except Exception:  # noqa: BLE001 - the preview checks the counts again
+        return {}
+    out = {}
+    for r in rows or []:
+        g = str((r.get("assetGroup") or {}).get("id") or "")
+        link = r.get("assetGroupAsset") or {}
+        if not g or not link:
+            continue
+        n = out.setdefault(g, {"enabled": 0, "mine": 0})
+        if link.get("source") != "AUTOMATICALLY_CREATED":
+            n["mine"] += 1
+            n["enabled"] += link.get("status") == "ENABLED"
+    return out
+
+
+def _meta_feed_now(ad_ids, get=None):
+    """The ads' asset feed text lists as they are on Meta now (one read-only GET, filtered by id): {ad id: {bodies,
+    titles, descriptions}}. A replace / remove writes the whole list, so it must start from Meta's current one."""
+    import meta_ads  # noqa: PLC0415
+    get = get or meta_ads.get
+    out = {}
+    ids = sorted(str(i) for i in ad_ids)
+    for k in range(0, len(ids), 100):
+        page = get(f"{meta_ads.act()}/ads", fields="id,creative{asset_feed_spec}", limit=100,
+                   filtering=[{"field": "id", "operator": "IN", "value": ids[k:k + 100]}])
+        for a in (page or {}).get("data") or []:
+            feed = (a.get("creative") or {}).get("asset_feed_spec") or {}
+            out[str(a.get("id"))] = {lst: [b.get("text", "") for b in feed.get(lst) or []] for lst in ("bodies", "titles", "descriptions")}
+    return out
+
+
+def _meta_changes(row, action, new, members, view, snap, text_field=None, get=None):
     changes, skipped = [], []
     if action == "pause_ad":
         for i in sorted({m["owner_id"] for m in members}):
@@ -853,9 +967,16 @@ def _meta_changes(row, action, new, members, view, snap, text_field=None):
     old = _norm(row["text"])
     if action == "replace_text":
         new = _check_text(new, None, row["field_label"])
-    for i in sorted({m["owner_id"] for m in members}):
+        if _norm(new) == old:
+            raise ValueError("the new text is the same as the old one")
+    owners = sorted({m["owner_id"] for m in members})
+    now = _meta_feed_now(owners, get)
+    for i in owners:
         ad = snap["ads"].get(i) or {}
-        items = list((ad.get("lists") or {}).get(lst) or [])
+        if i not in now:
+            skipped.append({"name": ad.get("name", i), "why": "Meta didn't return the ad now (deleted?)"})
+            continue
+        items = list(now[i].get(lst) or [])
         hit = [k for k, x in enumerate(items) if _norm(x) == old]
         if not hit:
             skipped.append({"name": ad.get("name", i), "why": "the ad no longer has this text"})
@@ -869,20 +990,33 @@ def _meta_changes(row, action, new, members, view, snap, text_field=None):
             if any(_norm(x) == _norm(new) for x in items):
                 skipped.append({"name": ad.get("name", i), "why": "the ad already has the new text"})
                 continue
-            items = [new if k in hit else x for k, x in enumerate(items)]
+            items = [new if k == hit[0] else x for k, x in enumerate(items) if k == hit[0] or k not in hit]
         changes.append(({"type": "meta_feed_copy", "level": "ad", "id": i, lst: items}, {"ad_id": i}))
     return changes, skipped
 
 
+def _rsa_target(o):
+    """The one ad an RSA edit names (Google's ad_id, else the grid's local_id), or "" when it names the ad group only."""
+    v = o.get("ad_id") if o.get("ad_id") not in (None, "") else o.get("local_id")
+    return "" if v in (None, "") else str(v)
+
+
 def _clash(platform, items, c):
-    """Is there already a draft item that this change would fight with (same ad / same text list)?"""
+    """Is there already a draft item that this change would fight with (same ad / same text list)? An RSA edit without
+    an ad id (local_id or ad_id) covers every RSA of its ad group, so it clashes with any edit of an ad there."""
     for it in items:
         o = it.get("change") or {}
         if o.get("type") != c["type"]:
             continue
-        if platform == "google" and c["type"] == "rsa" and str(o.get("local_id")) == str(c["local_id"]) \
-                and bool(o.get("headlines")) == bool(c.get("headlines")):
-            return True
+        if platform == "google" and c["type"] == "rsa":
+            texts = lambda x: bool(x.get("headlines") or x.get("descriptions"))  # noqa: E731
+            if texts(o) != texts(c):
+                continue
+            a, b = _rsa_target(o), _rsa_target(c)
+            if (a and b and a == b) or ((not a or not b) and _norm(o.get("campaign")).lower() == _norm(c.get("campaign")).lower()
+                                        and _norm(o.get("ad_group")).lower() == _norm(c.get("ad_group")).lower()):
+                return True
+            continue
         if platform == "google" and c["type"] == "pmax_asset" and o.get("asset_group") == c["asset_group"] \
                 and o.get("field") == c["field"] and bool(o.get("remove")) == bool(c.get("remove")) and o.get("texts") == c.get("texts"):
             return True
@@ -895,9 +1029,10 @@ ACTIONS = ("pause_ad", "replace_text", "remove_text")
 
 
 def add_to_draft(account, view, key, action, new_text=None, ad_ids=None, days=None, start=None, end=None, grouped=True,
-                 text_field=None, by="you", note=None, query=None):
+                 text_field=None, by="you", note=None, query=None, meta_get=None):
     """One row of the Creatives view -> changes in the account's Ads draft (never pushed). ad_ids: only these ads /
-    asset groups of the row (default every one that allows the action). -> {added, skipped, draft_account}"""
+    asset groups of the row (default every one that allows the action). query / meta_get: the read-only readers for
+    the fresh reads a text change starts from (tests pass fakes). -> {added, skipped, draft_account}"""
     if action not in ACTIONS:
         raise ValueError(f"action must be one of {', '.join(ACTIONS)}")
     a = find_account(account)
@@ -918,7 +1053,7 @@ def add_to_draft(account, view, key, action, new_text=None, ad_ids=None, days=No
     else:
         import meta_ads  # noqa: PLC0415
         meta_ads.use(a["key"])
-        changes, skipped = _meta_changes(row, action, new_text, members, v["view"], snap, text_field)
+        changes, skipped = _meta_changes(row, action, new_text, members, v["view"], snap, text_field, meta_get)
         dkey = meta_ads.acct()
     items = core.draft(dkey)["items"]
     keep = []

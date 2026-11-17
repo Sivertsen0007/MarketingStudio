@@ -1096,7 +1096,9 @@ const ADD = {
 ADD.videos = () => window.Videos ? Videos.add() : toast("Videos didn't load: see the Studio log"); // [videos]
 $("#addBtn").onclick = () => isMeta() ? (META_ADD[S.kind] ? META_ADD[S.kind]() : toast(`${V()[S.kind].label} are read-only in Studio`)) : ADD[S.kind] ? ADD[S.kind]() : toast(`Adding ${V()[S.kind].label.toLowerCase()} isn't supported here yet`);
 
-function counter(inp, max){ const c = inp.parentElement.querySelector(".cnt"); const f = () => { c.textContent = inp.value.length + "/" + max; c.classList.toggle("over", inp.value.length > max) }; inp.oninput = f; f() }
+// Google Ads counts double-width (East Asian wide / full-width) characters as 2 towards its limits (gae.width)
+const gw = s => { let n = 0; for (const ch of String(s || "")){ const c = ch.codePointAt(0); n += (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF && c !== 0x303F) || (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFF00 && c <= 0xFF60) || (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x1F300 && c <= 0x1F64F) || (c >= 0x20000 && c <= 0x3FFFD) ? 2 : 1 } return n };
+function counter(inp, max){ const c = inp.parentElement.querySelector(".cnt"); const f = () => { const n = gw(inp.value); c.textContent = n + "/" + max; c.classList.toggle("over", n > max) }; inp.oninput = f; f() }
 function rsaDialog(r, isNew){
   const hl = r.headlines.length ? r.headlines : Array.from({length:3}, () => ({text:"", pin:0}));
   const ds = r.descriptions.length ? r.descriptions : Array.from({length:2}, () => ({text:"", pin:0}));
@@ -1900,6 +1902,9 @@ async function settingsDialog(){
   const b = $("#dlgB");
   loadJobs();
   b.onchange = async e => {
+    if (e.target.id === "dataPolicy"){ const m = e.target.value;
+      try { await api("/api/settings/data_policy", {mode:m}); toast(m === "auto" ? "Data refreshes automatically now" : "Data refreshes only when you press Refresh"); loadJobs(); loadDataStatus() }
+      catch(err) { toast(err.message); loadJobs() } return }
     if (e.target.id === "dispCur"){ try { await api("/api/settings/currency", {currency:e.target.value}); await loadFx(); toast(S.disp === "own" ? "Showing each account's own currency" : "Showing money in " + S.disp); reshowMoney() } catch(err) { toast(err.message) } return }
     const k = e.target.dataset.gsrc; if (!k) return;
     try { await api("/api/settings/google/source", {acct:k, source:e.target.value}); toast("Saved"); if (k === S.acct){ S.gsrc = null; poll(true); loadTree() } } catch(err) { toast(err.message) } };
@@ -1928,10 +1933,13 @@ async function loadJobs(){
   const el = $("#jobRows"); if (!el) return;
   let st; try { st = await api("/api/scheduler") } catch(e) { el.innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
   const when = v => v ? esc(String(v).replace("T", " ").slice(0, 16)) : "never";
-  const res = j => j.running ? "running now" : j.last_status === "ok" ? "OK" : j.last_status === "held" ? "held (manual data policy)" : j.last_status ? esc(j.last_status) : "not run yet";
+  const res = j => j.running ? "running now" : j.last_status === "ok" ? "OK" : j.last_status === "held" ? "held (data refresh is manual)" : j.last_status ? esc(j.last_status) : "not run yet";
   el.className = "";
-  el.innerHTML = (st.jobs.length ? st.jobs.map(j => `<div class="set-row"><div class="grow"><div>${esc(j.label)}</div>
-      <div class="sub">${esc(j.schedule)} · last run ${when(j.last_run)}: ${res(j)}${j.enabled ? " · next " + when(j.next_run) : ""}${j.refresh ? " · fetches data, so it runs only when the data policy is auto" : ""}</div>
+  const auto = st.policy === "auto";
+  el.innerHTML = `<div class="set-row"><div class="grow"><div>Data refresh</div><div class="sub">Manual (default): Studio fetches each source once, then only when you press Refresh for it. Automatic: cached data expires on its own and the jobs below that fetch data run on their schedule (Google, Meta and the other platforms are then asked without a click).</div></div>
+      <select id="dataPolicy"><option value="manual" ${auto ? "" : "selected"}>Manual</option><option value="auto" ${auto ? "selected" : ""}>Automatic</option></select></div>`
+    + (st.jobs.length ? st.jobs.map(j => `<div class="set-row"><div class="grow"><div>${esc(j.label)}</div>
+      <div class="sub">${esc(j.schedule)} · last run ${when(j.last_run)}: ${res(j)}${j.enabled ? " · next " + when(j.next_run) : ""}${j.refresh ? (auto ? " · fetches data (Data refresh is automatic)" : " · fetches data, so it waits until Data refresh is automatic") : ""}</div>
       ${j.last_error && j.last_status !== "ok" ? `<div class="sub" style="color:var(--bad)">${esc(j.last_error)}</div>` : ""}${j.note ? `<div class="sub">${esc(j.note)}</div>` : ""}</div>
       ${j.can_disable ? `<label class="sub"><input type="checkbox" data-job="${esc(j.name)}" ${j.enabled ? "checked" : ""}> On</label>` : `<span class="sub">always on</span>`}</div>`).join("")
     : `<p class="hint">No background jobs yet.</p>`)

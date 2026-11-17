@@ -4,8 +4,9 @@ Mode (settings.json key "data_policy", default "manual"):
   manual  once something is cached it is kept until the user presses Refresh (or Push live / Undo refreshes that one
           account). No time-based expiry, no background re-fetch, no fetch on page load or tab switch. When nothing is
           cached yet (first time, or a date range never fetched), it is fetched once.
-  auto    the old behaviour: each cache's own time limit (ttl), with background re-fetch where the caller does that.
-          There is no UI for auto yet; it exists so one can be added later.
+  auto    each cache's own time limit (ttl), with background re-fetch where the caller does that, and the scheduler's
+          jobs that fetch data (scheduler.py refresh=True) run on their schedule. Chosen by the user in Settings >
+          Background jobs ("Data refresh"); set_mode() saves it.
 
 Every cache check asks fresh(source, age, ttl, filled_at). A Refresh calls invalidate(source), so in-memory copies made
 before it (in this process or the MCP server's) are no longer fresh. mark(source) records when a source was last fetched
@@ -54,6 +55,26 @@ def mode():
     except (OSError, ValueError, AttributeError):
         m = None
     return m if m in MODES else "manual"
+
+
+def set_mode(m):
+    """Save the data policy (the Settings switch). Only 'manual' or 'auto'. -> {data_policy}."""
+    if m not in MODES:
+        raise ValueError("data mode must be manual or auto")
+    f = _dir() / "settings.json"
+    with _lock, open(_dir() / ".settings_policy.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            s = json.loads(f.read_text())
+        except (OSError, ValueError):
+            s = {}
+        if not isinstance(s, dict):
+            s = {}
+        s["data_policy"] = m
+        tmp = f.with_suffix(f".{os.getpid()}.policy.tmp")
+        tmp.write_text(json.dumps(s, indent=1, ensure_ascii=False))
+        tmp.replace(f)
+    return {"data_policy": mode()}
 
 
 def manual():

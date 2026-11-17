@@ -1,6 +1,6 @@
 """Activity area: Meta ad account activity log (act_<id>/activities), read-only.
 
-Fields (AdActivity, Graph v26, read 10 November 2026): actor_id, actor_name, application_id, application_name,
+Fields (AdActivity, Graph v27, checked 17 November 2026): actor_id, actor_name, application_id, application_name,
 date_time_in_timezone, event_time, event_type, extra_data (JSON text), object_id, object_name, object_type,
 translated_event_type. The edge returns one week by default; Studio asks for since/until (epoch seconds), which the
 API accepts although the reference page lists no parameters.

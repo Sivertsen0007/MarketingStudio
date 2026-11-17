@@ -761,12 +761,35 @@ class Scheduler(unittest.TestCase):
         self.assertTrue(social.tick()["off"])
 
     def test_start_scheduler_not_on_import(self):
-        self.assertFalse(social._sched.get("thread"))
+        import scheduler
+        self.assertFalse(social._sched.get("registered"))
+        self.assertFalse(scheduler.running())
         with mock.patch.object(social, "tick", lambda at=None: None):
             self.assertTrue(social.start_scheduler(interval=3600))
             self.assertFalse(social.start_scheduler(interval=3600))
-        social._sched["stop"].set()
+            self.assertTrue(social.scheduler_running())
+            row = next(j for j in scheduler.status()["jobs"] if j["name"] == social.JOB)
+            self.assertTrue(row["enabled"])
+            self.assertFalse(row["can_disable"])
+            self.assertEqual(row["schedule"], "every 1 hour")
+        scheduler._reset_for_tests()
         social._sched.clear()
+
+    def test_scheduler_job_runs_tick_and_keeps_errors(self):
+        import scheduler
+        calls = []
+        with mock.patch.object(social, "tick", lambda at=None: calls.append(1)):
+            social._job()
+        self.assertEqual(calls, [1])
+
+        def boom(at=None):
+            raise RuntimeError("publisher down")
+        with mock.patch.object(social, "tick", boom):
+            with self.assertRaises(RuntimeError):
+                social._job()
+        self.assertIn("publisher down", social._sched["error"])
+        social._sched.clear()
+        scheduler._reset_for_tests()
 
     def test_approval_gate(self):
         social.save_settings({"local_scheduler": True})
@@ -995,20 +1018,22 @@ class Races(unittest.TestCase):
         self.assertEqual(rows[2]["problems"], [])
 
     def test_start_scheduler_concurrent(self):
+        import scheduler
         social._sched.clear()
         made = []
-        real = social._start_thread
+        real = scheduler.register
 
-        def slow(interval):
+        def slow(*a, **kw):
             time.sleep(0.05)
             made.append(1)
-            return real(interval)
-        with mock.patch.object(social, "_start_thread", slow), mock.patch.object(social, "tick", lambda at=None: None):
+            return real(*a, **kw)
+        with mock.patch.object(scheduler, "register", slow), mock.patch.object(social, "tick", lambda at=None: None):
             ts = [threading.Thread(target=social.start_scheduler, kwargs={"interval": 3600}) for _ in range(5)]
             [t.start() for t in ts]
             [t.join() for t in ts]
         self.assertEqual(len(made), 1)
-        social._sched["stop"].set()
+        self.assertEqual([t.name for t in threading.enumerate()].count("studio-scheduler"), 1)
+        scheduler._reset_for_tests()
         social._sched.clear()
 
 

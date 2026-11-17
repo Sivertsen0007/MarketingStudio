@@ -50,11 +50,11 @@ GOOGLE_SUNSET = {
 
 # Meta Marketing API expiration dates (stricter than the Graph API dates for the same version, and the
 # ads endpoints are what Studio uses). None = "TBD" on Meta's page.
-# Source: https://developers.facebook.com/docs/marketing-api/marketing-api-changelog/versions (read 10 November 2026).
+# Source: https://developers.facebook.com/docs/marketing-api/marketing-api-changelog/versions (read 17 November 2026).
 # After expiry Meta may auto-upgrade a call to the next version or fail it (endpoints that changed fail):
 # https://developers.facebook.com/docs/marketing-api/overview/versioning
 META_SOURCE = "https://developers.facebook.com/docs/marketing-api/marketing-api-changelog/versions"
-META_READ = "10 November 2026"
+META_READ = "17 November 2026"
 META_EXPIRY = {
     "v18.0": "2024-08-13",
     "v19.0": "2025-02-04",

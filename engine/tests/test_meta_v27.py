@@ -121,8 +121,12 @@ class V27(unittest.TestCase):
 
     def test_no_lookalike_or_moment_maker_fields(self):
         src = (HERE / "meta_ads.py").read_text()
-        for word in ("lookalike_spec", "location_spec", "meta_moment_maker_spec"):
+        for word in ("location_spec", "meta_moment_maker_spec"):
             self.assertNotIn(word, src)
+        # [audiences] lookalike_spec is only read here (the Audiences view); lookalikes are built in meta_audiences.py and
+        # never carry a country or location (test_audiences.py checks the params Studio would send)
+        self.assertEqual(len([ln for ln in src.splitlines() if "lookalike_spec" in ln]), 1)
+        self.assertIn("lookalike_spec", next(ln for ln in src.splitlines() if "retention_days,lookalike_spec" in ln))
 
 
 if __name__ == "__main__":

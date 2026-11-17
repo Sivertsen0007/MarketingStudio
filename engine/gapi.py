@@ -352,7 +352,13 @@ def _build_base(cid):
                               "asset.youtube_video_asset.youtube_video_id, asset.youtube_video_asset.youtube_video_title "
                               "FROM asset_group_asset",
         "user_lists": "SELECT user_list.id, user_list.name, user_list.type, user_list.size_for_search, user_list.size_for_display, "
-                      "user_list.membership_status, user_list.account_user_list_status FROM user_list",
+                      "user_list.membership_status, user_list.account_user_list_status, user_list.size_range_for_search, "
+                      "user_list.size_range_for_display, user_list.membership_life_span, user_list.read_only, user_list.description, "
+                      "user_list.rule_based_user_list.prepopulation_status, "
+                      "user_list.rule_based_user_list.flexible_rule_user_list.inclusive_rule_operator, "
+                      "user_list.rule_based_user_list.flexible_rule_user_list.inclusive_operands, "
+                      "user_list.rule_based_user_list.flexible_rule_user_list.exclusive_operands, "
+                      "user_list.logical_user_list.rules FROM user_list",  # [audiences] details for the Audience lists view
         "custom_audiences": "SELECT custom_audience.id, custom_audience.name FROM custom_audience",
         "combined_audiences": "SELECT combined_audience.id, combined_audience.name FROM combined_audience",
         "camp_audiences": "SELECT campaign.id, campaign_criterion.criterion_id, campaign_criterion.type, campaign_criterion.status, "
@@ -593,7 +599,12 @@ def _rows(q, geo, names):
                            "size_display": int(u["sizeForDisplay"]) if u.get("sizeForDisplay") else None,
                            "membership": _title(u.get("membershipStatus")), "status": _st(u.get("accountUserListStatus")),
                            "campaigns": len(used.get(int(u["id"]), ())), "attached_to": ", ".join(sorted(used.get(int(u["id"]), ()))),
-                           "campaign_id": None, "ad_group_id": None, "editor": "", "remote_id": int(u["id"])}
+                           "campaign_id": None, "ad_group_id": None, "editor": "", "remote_id": int(u["id"]),
+                           # [audiences] audiences.py: membership days, ranges, rules (read-only extras)
+                           "lifespan": u.get("membershipLifeSpan"), "read_only": bool(u.get("readOnly")), "description": u.get("description", ""),
+                           "size_range_search": u.get("sizeRangeForSearch"), "size_range_display": u.get("sizeRangeForDisplay"),
+                           "_raw": {k: u[k] for k in ("type", "readOnly", "ruleBasedUserList", "logicalUserList") if k in u},
+                           "_logical": (u.get("logicalUserList") or {}).get("rules") or []}
                           for u in (r["userList"] for r in q["user_lists"])]
 
     recs = []
@@ -755,7 +766,7 @@ def grid(acct, kind, campaign_id=None, ad_group_id=None, status="active", search
         raise ValueError(f"unknown kind {kind!r}; one of {', '.join(KINDS + EXTRA_KINDS)}")
     cid = _cid(acct)
     d = base(cid, wait=wait)
-    rows = [dict(r) for r in d["rows"].get(kind, []) if core._scope_ok(r, campaign_id, ad_group_id)]
+    rows = [{k: v for k, v in r.items() if k not in ("_raw", "_logical")} for r in d["rows"].get(kind, []) if core._scope_ok(r, campaign_id, ad_group_id)]
     cs = {int(k): v for k, v in d["camp_status"].items()}
     gs = {int(k): v for k, v in d["group_status"].items()}
     if status != "all":

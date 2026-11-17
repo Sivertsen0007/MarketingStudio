@@ -437,8 +437,7 @@ for (const [k, v] of Object.entries(VIEWS)) if (!["negatives", "shared_lists"].i
 Object.assign(VIEWS, {
   asset_group_assets:{label:"PMax assets", cols:[{...ST}, CA, {key:"asset_group",label:"Asset group"}, {key:"field",label:"Field"}, {key:"text",label:"Text / asset"},
     {key:"asset_type",label:"Type",hide:1}, {key:"source",label:"Source",hide:1}, {key:"primary_status",label:"Primary status"}, {key:"approval",label:"Approval"}, ...GSTATS], bulk:1, api:1},
-  user_lists:{label:"Audience lists", cols:[{key:"list",label:"List"}, {key:"type",label:"Type"}, {key:"size_search",label:"Size (Search)",num:1}, {key:"size_display",label:"Size (Display)",num:1},
-    {key:"membership",label:"Membership",hide:1}, {key:"campaigns",label:"Campaigns",num:1}, {key:"attached_to",label:"Used by"}], api:1},
+  user_lists:{label:"Audience lists", cols:[], ro:1, custom:"Audiences", api:1}, // [audiences] static/audiences.js draws this tab
   recommendations:{label:"Recommendations", cols:[{key:"type",label:"Recommendation"}, LV, CA, AG, {key:"impact_clicks",label:"+ Clicks",num:1}, {key:"impact_cost",label:"+ Cost",num:1,fmt:money},
     {key:"impact_conversions",label:"+ Conv.",num:1}, {key:"dismissed",label:"Dismissed",hide:1}], api:1},
   videos:{label:"Videos", cols:[], ro:1, custom:1, api:1}, // [videos] static/videos.js: YouTube videos, uploads, Demand Gen
@@ -470,7 +469,7 @@ const META_VIEWS = {
   ads:{label:"Ads", cols:[MST, THUMB, {key:"ad",label:"Ad"}, CA, AS, DL, {key:"format",label:"Format"}, {key:"headline",label:"Headline"},
     {key:"primary_text",label:"Primary text"}, {key:"description",label:"Description",hide:1}, {key:"link",label:"Link"}, {key:"cta",label:"CTA"},
     ...STATS, {key:"creative_id",label:"Creative ID",hide:1}, UPD, IDC], bulk:1, open:r => metaAdDialog(r)},
-  audiences:{label:"Audiences", cols:[{key:"audience",label:"Audience"}, {key:"type",label:"Type"}, {key:"size",label:"Size"}, {key:"status",label:"Status"}, {key:"updated",label:"Updated"}], ro:1},
+  audiences:{label:"Audiences", cols:[], ro:1, custom:"Audiences"}, // [audiences] static/audiences.js draws this tab
   leadforms:{label:"Lead forms", cols:[{key:"lead_form",label:"Lead form"}, {key:"status",label:"Status"}, {key:"leads",label:"Leads",num:1}, {key:"created",label:"Created"}, IDC], ro:1},
   tests:{label:"Tests", cols:[], ro:1, custom:1}, // [meta tests] static/meta_tests.js draws this tab
 };
@@ -622,8 +621,8 @@ function renderPills(){
 $("#fpills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; const was = S.filter; S.filter = b.dataset.f; localSet("filter", S.filter);
   if ((was === "removed") !== (S.filter === "removed")){ loadTree(); loadGrid() } else { renderPills(); renderGrid() } };
 function renderGrid(){
-  if (V()[S.kind] && V()[S.kind].custom){ $("#fpills").innerHTML = ""; const C = S.kind === "videos" && !isMeta() ? window.Videos : window.MetaTests; // [meta tests] [videos]
-    return C ? C.render($("#grid")) : ($("#grid").innerHTML = `<div class="empty">Loading ...</div>`) }
+  if (V()[S.kind] && V()[S.kind].custom){ $("#fpills").innerHTML = ""; const cu = V()[S.kind].custom; const R = typeof cu === "string" ? window[cu] : (S.kind === "videos" && !isMeta() ? window.Videos : window.MetaTests); // [meta tests] [videos] [audiences]
+    return R ? R.render($("#grid")) : ($("#grid").innerHTML = `<div class="empty">Loading ...</div>`) }
   const v = V()[S.kind], cols = colsFor();
   let rows = S.rows.filter(passFilter);
   if (S.sort){ const {key, dir} = S.sort, mc = cols.find(c => c.key === key && isMoney(c)), sv = r => { const x = r[key]; return mc && dispCur() && x != null && x !== "" ? toDisp(x) : x };
@@ -948,7 +947,7 @@ async function liveUndo(id, spend){
   try {
     const r = await withProgress("Undoing in " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/undo", {push_id:id, ...(spend ? {accept_spend:true} : {})});
     if (r.needs_spend){ dlg.close(); // switching things back on can raise spend: ask, like the Push live tick
-      if (confirm(`This undo switches these back on, which can raise spend:\n\n${(r.spend || []).join("\n")}\n\nUndo anyway?`)) return liveUndo(id, true);
+      if (confirm(`This undo can raise spend:\n\n${(r.spend || []).join("\n")}\n\nUndo anyway?`)) return liveUndo(id, true);
       return poll(true) }
     const list = await lastProgress();
     showDialog(r.ok ? "Undone" : "Not undone", `${list}<p>${esc(r.message)}</p>${r.not_undone && r.not_undone.length ? `<p class="hint">Not reversed automatically:</p><ul>${r.not_undone.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}${r.errors ? `<pre class="out">${esc(JSON.stringify(r.errors, null, 1))}</pre>` : ""}`, []);
@@ -1207,6 +1206,7 @@ const goalLabel = g => g.toLowerCase().replace(/_/g, " ").replace(/^./, x => x.t
 function readFile(f){ return new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => bad(new Error("Couldn't read the file")); fr.readAsDataURL(f) }) }
 const META_ADD = {
   tests(){ return window.MetaTests && MetaTests.add("split") }, // [meta tests]
+  audiences(){ return window.Audiences && Audiences.add("website") }, // [audiences]
   campaigns(){
     showDialog("New Meta campaign", `<p class="hint">New campaigns are created <b>Paused</b>, with lowest-cost bidding. Nothing changes on Meta until you push live.</p>
       <div class="row"><label>Name</label><input id="f_name"></div>
@@ -2014,8 +2014,9 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
 <!-- [mac-app updater] end -->
 <script>window.addEventListener("unhandledrejection", e => { const m = e.reason && e.reason.message; if (m && typeof toast === "function"){ toast(m); e.preventDefault() } });</script>
 <script src="/static/setup.js"></script>
-<script src="/static/meta_tests.js"></script>
-<script src="/static/videos.js"></script><!-- [videos] the Videos tab in the Google Ads area --><!-- [meta tests] the Tests tab in the Meta ads area -->
+<script src="/static/meta_tests.js"></script><!-- [meta tests] the Tests tab in the Meta ads area -->
+<script src="/static/videos.js"></script><!-- [videos] the Videos tab in the Google Ads area -->
+<script src="/static/audiences.js"></script><!-- [audiences] Audience lists (Google) and Audiences (Meta) tabs -->
 <script src="/static/team.js"></script>
 <script src="/static/team_reviews.js"></script>
 <script src="/static/team_marks.js"></script><!-- [team live] tints, locks, claims, comments, presence, mentions -->

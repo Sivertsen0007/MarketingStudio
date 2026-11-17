@@ -28,6 +28,8 @@ import fx
 import live
 import meta_ads as meta
 import meta_tests
+import audiences  # [audiences] Google Audience lists view (audiences.py)
+import meta_audiences  # [audiences] Meta Audiences view
 import overview
 import pacing  # budget pacing (Ads > Pacing, areas/pacing.py) and its daily check
 import alerts  # Ads alerts (areas/alerts.py): rules, hourly / daily checks, history
@@ -381,6 +383,8 @@ class H(BaseHTTPRequestHandler):
                 "/api/live/progress": lambda: progress.get(meta.acct()),
                 "/api/meta/tests": lambda: meta_tests.studies(),  # [meta tests] read-only
                 "/api/meta/tests/results": lambda: meta_tests.results(q.get("id")),
+                "/api/audiences": lambda: meta_audiences.rows(meta.load()),  # [audiences] read-only (cached)
+                "/api/audiences/detail": lambda: meta_audiences.detail(q["id"], meta),  # one read: the audience's rule
             }
             return self._run(routes[u.path]) if u.path in routes else self._send(404, {"error": "not found"})
         acct = core.resolve(q.get("acct"))
@@ -396,6 +400,7 @@ class H(BaseHTTPRequestHandler):
             "/api/videos/info": lambda: demandgen.video_info(acct, q.get("v", "")),
             "/api/videos/uploads": lambda: youtube_upload.history(acct),
             "/api/videos/upload_status": lambda: youtube_upload.status(acct, q.get("resource", "")),
+            "/api/audiences": lambda: audiences.rows(acct),  # [audiences] read-only (cached account data)
         }
         if u.path in routes:
             return self._run(routes[u.path])
@@ -494,7 +499,7 @@ class H(BaseHTTPRequestHandler):
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{acct}", body, lambda only: live.preview(
                 acct, bool(body.get("enable_new")), only=only)),
             "/api/live/push": live_push,
-            "/api/live/undo": lambda: _after_live(acct, live.undo(acct, body["push_id"])),
+            "/api/live/undo": lambda: _after_live(acct, live.undo(acct, body["push_id"], bool(body.get("accept_spend")))),
             "/api/google/refresh": lambda: _then(gapi.refresh(acct, body.get("days"), body.get("start"), body.get("end")),
                                                  lambda: _alerts_after("google", acct)),
             "/api/draft/add": lambda: core.add(acct, body["changes"], body.get("by", "you"), body.get("note")),

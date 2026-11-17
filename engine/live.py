@@ -35,7 +35,8 @@ RESULT_KEY = {"campaignBudgetOperation": "campaignBudgetResult", "campaignOperat
               "adGroupCriterionOperation": "adGroupCriterionResult", "campaignCriterionOperation": "campaignCriterionResult",
               "adGroupAdOperation": "adGroupAdResult", "adOperation": "adResult", "assetOperation": "assetResult",
               "campaignAssetOperation": "campaignAssetResult", "customerAssetOperation": "customerAssetResult",
-              "campaignSharedSetOperation": "campaignSharedSetResult", "assetGroupAssetOperation": "assetGroupAssetResult"}
+              "campaignSharedSetOperation": "campaignSharedSetResult", "assetGroupAssetOperation": "assetGroupAssetResult",
+              "userListOperation": "userListResult"}
 
 
 def _log(acct):
@@ -320,6 +321,8 @@ class Ids:
 
     def user_list(self, name):
         what = f'audience list "{name}"'
+        if ("user_list", name) in self.new:  # [audiences] Google can't point at a list made in the same push (checked live)
+            raise ValueError(f'{what} is new in this push: push it first, then combine or attach it in the next push')
 
         def ed():
             r = self.db.execute("select remoteId from UserList where name = ?", (name,)).fetchall()
@@ -649,6 +652,8 @@ def ops_for(ids, c, enable_new):
     if t == "audience":
         return _audience_ops(ids, c)
 
+    if t == "user_list":  # [audiences] website / combined lists (audiences.py)
+        return core.audiences.ops(ids, c)
     if t == "pmax_asset":
         return _pmax_asset_ops(ids, c, enable_new)
 
@@ -804,6 +809,11 @@ def plan(acct, enable_new=False, items=None, source=None):
         xp, xw = experiments.check(exps, it["change"])
         entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
                  "problems": xp + list(it["problems"]), "warnings": xw}
+        try:  # never trust stored problems: a synced or merged draft never went through core.add (core.check is local)
+            again = core.check(it["change"])[0] + core.audiences.refusals(acct, [it["change"]])
+        except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
+            again = [f"invalid change: {ex}"]
+        entry["problems"] += [p for p in again if p not in entry["problems"]]
         if not entry["problems"]:
             try:
                 for o in ops_for(ids, it["change"], enable_new):
@@ -869,6 +879,22 @@ def _refuse_trial_undo(acct, rec):
         raise ValueError("Not undone: " + "; ".join(dict.fromkeys(bad)))
 
 
+def _refuse_list_in_use(acct, rec):
+    """[audiences] Undo removes a list Studio made in that push: first read live who uses it (as a remove does); refuse
+    when anything does, or when that can't be read."""
+    made = [o["resource"] for o in rec.get("ops", []) if o.get("undo") == "remove-created" and "userListOperation" in o.get("op", {})]
+    if not made:
+        return
+    ids = type("Acct", (), {"acct": acct})()
+    for res in made:
+        try:
+            users = core.audiences.live_users(ids, res)
+        except Exception:  # noqa: BLE001
+            raise ValueError("Not undone: Studio can't read whether the audience list it would remove is in use; try again")
+        if users:
+            raise ValueError(f"Not undone: the audience list this push made is now in use ({'; '.join(users)}). Detach it first")
+
+
 def _only(acct, only):
     """The draft items in this push: all of them, or (team approvals / push by person) only the ids in `only`."""
     items = [i for i in core.draft(acct)["items"] if i["change"].get("type") != "video_upload"]
@@ -912,7 +938,8 @@ def _push(acct, enable_new=False, accept_spend=False, accept_permanent=False, on
         for o, r in zip(ops, responses):
             created = next(iter(r.values()), {}).get("resourceName") if r else None
             rec["ops"].append({"line": o["line"], "op": o["op"], "undo": o.get("undo"), "undo_note": o.get("undo_note", ""),
-                               "resource": created, "permanent": o.get("permanent", False)})
+                               "resource": created, "permanent": o.get("permanent", False),
+                               **({"undo_spend": o["undo_spend"]} if o.get("undo_spend") else {})})
         core.remove(acct, [i["id"] for i in rec["items"]])
     with open(_log(acct), "a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -945,23 +972,28 @@ def history(acct, limit=20):
     return out[:limit]
 
 
-def undo(acct, push_id):
+def undo(acct, push_id, accept_spend=False):
     res = None
     try:
-        res = _undo(acct, push_id)
+        res = _undo(acct, push_id, accept_spend)
         return res
     finally:
         progress.finish(acct, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
 
 
-def _undo(acct, push_id):
+def _undo(acct, push_id, accept_spend=False):
     recs = [json.loads(l) for l in _log(acct).read_text().splitlines() if l.strip()]
     rec = next((r for r in recs if r["id"] == push_id), None)
     if not rec or not rec["ok"]:
         raise ValueError("push not found")
     if any(r.get("undo_of") == push_id for r in recs):
         raise ValueError("already undone")
+    on = [o["line"] for o in rec["ops"] if o.get("undo_spend")]  # [audiences] e.g. membership days put back
+    if on and not accept_spend:  # nothing is sent: the UI asks, then calls again with accept_spend
+        return {"ok": False, "needs_spend": True, "spend": on, "not_undone": [], "errors": None,
+                "message": f"Not undone - this undo can raise spend ({len(on)} change(s)); accept to undo."}
     _refuse_trial_undo(acct, rec)
+    _refuse_list_in_use(acct, rec)
     ops, notes = [], []
     for o in reversed(rec["ops"]):
         u = o.get("undo")

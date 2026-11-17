@@ -371,12 +371,38 @@ class Security(Base):
     def test_final_refusal_deletes_the_staged_copy(self):
         p = self.staged()
         iid = core.add(A, [{"type": "video_upload", "file": str(p), "title": "Clip"}])[0]["id"]
-        self.fake(fail={1: 403})
+        self.fake(fail={1: 400})
         r = yu.upload(A, iid)
         self.assertFalse(r["ok"])
         self.assertIn("pick the file again", r["message"])
         self.assertFalse(p.exists())
         self.assertEqual(len(core.draft(A)["items"]), 1)
+
+    def test_auth_and_rate_limit_refusals_keep_the_staged_copy(self):
+        p = self.staged()
+        iid = core.add(A, [{"type": "video_upload", "file": str(p), "title": "Clip"}])[0]["id"]
+        for code in (401, 403):
+            self.fake(fail={1: code})
+            r = yu.upload(A, iid)
+            self.assertFalse(r["ok"])
+            self.assertNotIn("pick the file again", r["message"])
+            self.assertTrue(p.exists(), code)
+        self.fake(fail={i: 429 for i in range(1, 10)})  # rate limited every time: retried, then given up, not final
+        self.assertFalse(yu.upload(A, iid)["ok"])
+        self.assertTrue(p.exists())
+        f = self.fake()  # after signing in again the same staged file uploads
+        self.assertTrue(yu.upload(A, iid)["ok"])
+        self.assertFalse(p.exists())
+
+    def test_success_keeps_a_file_another_item_uses(self):
+        p = self.staged()
+        items = core.add(A, [{"type": "video_upload", "file": str(p), "title": "One"}, {"type": "video_upload", "file": str(p), "title": "Two"}])
+        self.fake()
+        self.assertTrue(yu.upload(A, items[0]["id"])["ok"])
+        self.assertTrue(p.exists(), "item Two still needs the file")
+        self.fake()
+        self.assertTrue(yu.upload(A, items[1]["id"])["ok"])
+        self.assertFalse(p.exists())
 
     def test_temporary_failures_keep_the_staged_copy(self):
         p = self.staged()
@@ -444,22 +470,27 @@ class Routes(Base):
 
         def call(method, path, body=None, headers=None):
             c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-            c.request(method, path, body, headers or {})
-            r = c.getresponse()
-            return r.status, json.loads(r.read())
+            try:
+                c.request(method, path, body, headers or {})
+                r = c.getresponse()
+                return r.status, json.loads(r.read())
+            except (ConnectionResetError, BrokenPipeError):
+                # a refused upload closes the connection without reading the body: the client may see a reset
+                # instead of the 403 / 400 (a race, not a pass): only refusals may end this way
+                return "refused", {}
         js = lambda b: (json.dumps(b), {"Content-Type": "application/json", "X-Studio-Press": server.PRESS})  # noqa: E731
         # staging: Studio's own page only
         st, _ = call("POST", "/api/videos/stage?name=a.mp4", self.data, {"Content-Type": "application/octet-stream"})
-        self.assertEqual(st, 403)
+        self.assertIn(st, (403, "refused"))
         st, _ = call("POST", "/api/videos/stage?name=a.mp4", self.data, {"Content-Type": "application/json", "X-Studio-Press": server.PRESS})
-        self.assertEqual(st, 403)
+        self.assertIn(st, (403, "refused"))
         st, _ = call("POST", "/api/videos/stage?name=a.mp4", self.data, {"Content-Type": "application/octet-stream", "X-Studio-Press": server.PRESS,
                                                                          "Origin": "https://evil.example"})
-        self.assertEqual(st, 403)
+        self.assertIn(st, (403, "refused"))
         st, res = call("POST", "/api/videos/stage?name=a.mp4", self.data, {"Content-Type": "application/octet-stream", "X-Studio-Press": server.PRESS})
         self.assertEqual((st, Path(res["file"]).read_bytes()), (200, self.data))
         st, _ = call("POST", "/api/videos/stage?name=a.exe", b"x", {"Content-Type": "application/octet-stream", "X-Studio-Press": server.PRESS})
-        self.assertEqual(st, 400)
+        self.assertIn(st, (400, "refused"))
         # the upload button: through the push lock and team gate (solo here), then the fake Google
         st, items = call("POST", "/api/draft/add", *js({"acct": A, "changes": [{"type": "video_upload", "file": res["file"], "title": "T"}]}))
         self.assertEqual(st, 200)

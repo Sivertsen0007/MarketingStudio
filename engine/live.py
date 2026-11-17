@@ -758,7 +758,7 @@ def _pmax_asset_ops(ids, c, enable_new):
         left = enabled - led["removed_on"] + led["added_on"] - gone
         if left < minimum:
             raise ValueError(f'"{c["asset_group"]}" would keep {left} enabled {label}s; Performance Max needs at least {minimum}'
-                             + ("" if enable_new else " (new texts go in paused unless you switch new items on)"))
+                             + (" (new texts go in paused unless you switch new items on)" if led["added"] and not enable_new else ""))
         led["removed_on"] += gone
         led["removed"] += sum(1 for t in texts if have[t]["assetGroupAsset"].get("source") != "AUTOMATICALLY_CREATED")
         return out

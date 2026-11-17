@@ -713,16 +713,23 @@ class Draft(unittest.TestCase):
             self.add("1234567890", "ads", self.key(self.g, "Dive the reef"), "replace_text", new_text="Dive  the reef")
 
     def test_clash_without_local_id(self):
+        core.add("1234567890", [{"type": "rsa", "campaign": "Search A", "ad_group": "Group A", "final_url": "https://e.com",
+                                 "headlines": ["New 1", "New 2", "New 3"], "descriptions": ["D1", "D2"]}])  # a new RSA: no clash
         core.add("1234567890", [{"type": "rsa", "edit": True, "campaign": "Search A", "ad_group": "group a",
                                  "headlines": ["H1", "H2", "H3"], "descriptions": ["D1", "D2"]}])
         r = self.add("1234567890", "ads", self.key(self.g, "Dive the reef"), "replace_text", new_text="Dive the outer reef")
         self.assertEqual(len(r["added"]), 1)  # ad 2 (Group B) only
         self.assertEqual(r["skipped"][0]["name"], "Search A / Group A")
         self.assertIn("already has a change", r["skipped"][0]["why"])
-        self.assertTrue(creatives._clash("google", [{"change": {"type": "rsa", "ad_id": "1", "headlines": ["x"]}}],
+        self.assertTrue(creatives._clash("google", [{"change": {"type": "rsa", "edit": True, "ad_id": "1", "headlines": ["x"]}}],
                                          {"type": "rsa", "local_id": 1, "campaign": "C", "ad_group": "G", "headlines": ["y"]}))
-        self.assertFalse(creatives._clash("google", [{"change": {"type": "rsa", "ad_id": "9", "headlines": ["x"]}}],
+        self.assertFalse(creatives._clash("google", [{"change": {"type": "rsa", "edit": True, "ad_id": "9", "headlines": ["x"]}}],
                                           {"type": "rsa", "local_id": 1, "campaign": "C", "ad_group": "G", "headlines": ["y"]}))
+        # a new RSA waiting in the draft (not an edit) never blocks an edit of an existing ad in that ad group
+        self.assertFalse(creatives._clash("google", [{"change": {"type": "rsa", "campaign": "C", "ad_group": "G", "headlines": ["a", "b", "c"],
+                                                                 "descriptions": ["d", "e"]}}],
+                                          {"type": "rsa", "edit": True, "campaign": "C", "ad_group": "G", "local_id": 123,
+                                           "headlines": ["x", "y", "z"], "descriptions": ["d", "e"]}))
         self.assertFalse(creatives._clash("google", [{"change": {"type": "rsa", "campaign": "C", "ad_group": "G", "status": "paused"}}],
                                           {"type": "rsa", "local_id": 1, "campaign": "C", "ad_group": "G", "headlines": ["y"]}))
 
@@ -840,6 +847,10 @@ class PmaxPushCounts(unittest.TestCase):
         out = self.ops([add, rm], 3)  # the new text goes in paused: the group would keep 2 enabled
         self.assertEqual(out[1][0], "refused")
         self.assertIn("at least 3", out[1][1])
+        self.assertIn("new texts go in paused", out[1][1])
+        out = self.ops([rm], 3)  # a plain removal: no adds in the push, so no hint about new texts
+        self.assertEqual(out[0][0], "refused")
+        self.assertNotIn("new texts", out[0][1])
 
 
 class Text(unittest.TestCase):

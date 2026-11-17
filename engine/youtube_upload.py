@@ -173,7 +173,8 @@ def send(url, path, size, gran, on_progress=None):
                 raise
             except urllib.error.HTTPError as e:
                 if e.code < 500 and e.code not in (408, 429):
-                    raise UploadError("Google refused the upload: " + _err(e), final=True) from None
+                    # 401 / 403: the sign-in or access, not the file (a retry after signing in again can work)
+                    raise UploadError("Google refused the upload: " + _err(e), final=e.code not in (401, 403)) from None
                 tries += 1
                 offset = _resume(url, tries, e)
             except (urllib.error.URLError, OSError, TimeoutError) as e:
@@ -357,7 +358,6 @@ def upload(acct, item_id, body=None):
         progress.sent(key)
         rec.update(ok=True, resource=resource)
         core.remove(cid, [item["id"]])  # also deletes a staged copy (release), unless another item uses the same file
-        _unstage(path)
         res = {"ok": True, "resource": resource, "applied": 1,
                "message": f"Uploaded {shown}: Google is processing it (unlisted, on the account's Google-managed channel). "
                           "It shows in Videos once it has a YouTube id."}

@@ -39,6 +39,8 @@ import areas
 import setup_routes  # keys (Keychain), Sign in with Google, .env import
 import team  # team sync: join a team server, sync drafts (team.py)
 import team_reviews  # team approvals, push gating, why note, owners (team_reviews.py)
+import demandgen  # Demand Gen / YouTube video ads (Videos tab): reads; its change types go through live.py
+import youtube_upload  # upload a video file to YouTube (Google-managed channel), the user's own button only
 import team_live  # team presence, claims, comments, mentions, activity (team_live.py)
 import team_notify  # team notifications: the bell, rules, Focus and Away (team_notify.py)
 import updater  # [mac-app updater] in-app updates (GitHub Releases), see updater.py
@@ -390,12 +392,38 @@ class H(BaseHTTPRequestHandler):
             "/api/geo": lambda: gapi.geo_any(acct, q.get("q", "")),
             "/api/live/history": lambda: live.history(acct),
             "/api/live/progress": lambda: progress.get(acct),
+            "/api/videos": lambda: demandgen.library(acct),  # read-only, cached until a refresh
+            "/api/videos/info": lambda: demandgen.video_info(acct, q.get("v", "")),
+            "/api/videos/uploads": lambda: youtube_upload.history(acct),
+            "/api/videos/upload_status": lambda: youtube_upload.status(acct, q.get("resource", "")),
         }
         if u.path in routes:
             return self._run(routes[u.path])
         self._send(404, {"error": "not found"})
 
+    def _stage_video(self):
+        """POST /api/videos/stage?name=<file name>: the raw bytes of a video picked in the page, streamed to Studio's
+        staging folder (never read into memory) for a video_upload draft item. Same guards as every POST, but the body is
+        application/octet-stream instead of JSON. Nothing leaves this Mac here."""
+        if not self._host_ok():
+            return self._send(403, {"error": "Studio only answers on localhost (wrong Host header)"})
+        origin = self.headers.get("Origin")
+        if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/octet-stream" \
+                or (origin is not None and origin.rstrip("/").lower() not in (f"http://localhost:{self._port()}", f"http://127.0.0.1:{self._port()}")) \
+                or not secrets.compare_digest(self.headers.get("X-Studio-Press") or "", PRESS):
+            self.close_connection = True
+            return self._send(403, {"error": "upload staging needs Studio's own page"})
+        q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+        try:
+            n = int(self.headers.get("Content-Length") or -1)
+            return self._send(200, youtube_upload.stage(self.rfile, n, q.get("name", "")))
+        except ValueError as ex:
+            self.close_connection = True
+            return self._send(400, {"error": str(ex)})
+
     def do_POST(self):
+        if urlparse(self.path).path == "/api/videos/stage":
+            return self._stage_video()
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if not self._host_ok():
             return self._send(403, {"error": "Studio only answers on localhost (wrong Host header)"})
@@ -450,7 +478,19 @@ class H(BaseHTTPRequestHandler):
             finally:
                 PUSH_LOCK.release()
 
+        def video_upload():
+            # the user's Upload button only (never Push live, never MCP): one draft item, gated like a push
+            if not PUSH_LOCK.acquire(blocking=False):
+                raise ValueError("a push or upload is already running")
+            try:
+                return team_reviews.single_action("ads", f"ads:{acct}", str(body["id"]), body, "Uploaded a video to YouTube",
+                                                  lambda: youtube_upload.upload(acct, body["id"], body))
+            finally:
+                PUSH_LOCK.release()
+
         routes = {
+            "/api/videos/refresh": lambda: demandgen.library(acct, refresh=True),
+            "/api/videos/upload": video_upload,
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{acct}", body, lambda only: live.preview(
                 acct, bool(body.get("enable_new")), only=only)),
             "/api/live/push": live_push,
@@ -546,7 +586,19 @@ class H(BaseHTTPRequestHandler):
         def no_editor():
             raise ValueError("Meta has no Editor: use Push live")
 
+        def video_upload():
+            # the user's Upload button only (never Push live, never MCP): one draft item, gated like a push
+            if not PUSH_LOCK.acquire(blocking=False):
+                raise ValueError("a push or upload is already running")
+            try:
+                return team_reviews.single_action("ads", f"ads:{acct}", str(body["id"]), body, "Uploaded a video to YouTube",
+                                                  lambda: youtube_upload.upload(acct, body["id"], body))
+            finally:
+                PUSH_LOCK.release()
+
         routes = {
+            "/api/videos/refresh": lambda: demandgen.library(acct, refresh=True),
+            "/api/videos/upload": video_upload,
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{meta.acct()}", body,
                                                                    lambda only: meta.preview(only=only)),
             "/api/live/push": live_push,

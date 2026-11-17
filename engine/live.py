@@ -22,6 +22,7 @@ import appconfig  # noqa: E402,F401  (vendor_hub on sys.path)
 import gads  # noqa: E402  (auth + developer token, shared with the SEM agent)
 
 import core
+import demandgen  # noqa: E402
 import experiments  # noqa: E402
 import progress  # noqa: E402
 
@@ -651,6 +652,9 @@ def ops_for(ids, c, enable_new):
     if t == "pmax_asset":
         return _pmax_asset_ops(ids, c, enable_new)
 
+    if demandgen.is_dg(c):
+        return demandgen.ops(ids, c, enable_new)
+
     raise ValueError(f"'{t}' can't be pushed live yet - use Send to Editor for it")
 
 
@@ -782,6 +786,7 @@ def plan(acct, enable_new=False, items=None, source=None):
     """Build operations for the whole draft (or the given draft items) and let Google validate them (validateOnly).
     Applies nothing."""
     items = core.draft(acct)["items"] if items is None else items
+    items = [i for i in items if i["change"].get("type") != "video_upload"]  # uploads run from their own button only
     ids = Ids(acct, source)
     ops, per_item = [], []
     exps = _experiments(acct) if items else experiments.empty()
@@ -856,7 +861,7 @@ def _refuse_trial_undo(acct, rec):
 
 def _only(acct, only):
     """The draft items in this push: all of them, or (team approvals / push by person) only the ids in `only`."""
-    items = core.draft(acct)["items"]
+    items = [i for i in core.draft(acct)["items"] if i["change"].get("type") != "video_upload"]
     if only is None:
         return items
     return [i for i in items if (only.admits(i) if hasattr(only, "admits") else i["id"] in only)]

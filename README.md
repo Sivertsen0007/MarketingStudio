@@ -24,7 +24,7 @@
 | | |
 |---|---|
 | **Start** | [What it is](#what-it-is) · [Install](#install) · [First run: Setup](#first-run-setup) · [Updates](#updates) |
-| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Alerts](#alerts) · [Creatives](#creatives) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
+| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Alerts](#alerts) · [Creatives](#creatives) · [Video ads](#video-ads-demand-gen-and-youtube) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
 | **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email platform](#email-platform) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
@@ -271,6 +271,40 @@ and video performs for one Google Ads or Meta account over a date range (7, 14, 
   Push live as usual.
 - Read once and kept until you press **Refresh** (or the Refresh menu's *Creatives* line): two Google searches per
   account; for Meta one insights read, the ads' creatives (from the Ads data when it has them) and up to seven breakdowns.
+
+---
+
+## Video ads: Demand Gen and YouTube
+
+**Videos** (the last tab of a Google Ads account, or under MANAGE) holds YouTube video ads. Google doesn't let tools create
+or change Video campaigns, so Studio makes video ads on YouTube as **Demand Gen** video ads; pick **YouTube only** channels
+(in-stream, in-feed and Shorts) to keep them on YouTube.
+
+- **New Demand Gen campaign**: daily budget (not shared; Demand Gen has a minimum of about 5 USD or 4 GBP a day, checked in
+  the draft and again with Google's own figure at push), bidding (Maximise conversions with an optional target CPA, Target
+  CPA, or Maximise clicks), optional start and end dates, and its first ad group with locations, languages and channels.
+  Always created **Paused**.
+- **Ad groups**: new ones with their own locations, languages and channels (when a campaign sets locations and languages for
+  the whole campaign, its ad groups use those), and channel or status changes to existing ones.
+- **Video ads**: 1 to 5 YouTube videos (links or ids), 1 to 5 headlines (40 characters), long headlines (90) and descriptions
+  (90), with 3 or more recommended, a business name (25), a square logo (an image already in the account, or a PNG, JPG or
+  GIF of at least 128x128 on this Mac), the final URL and a call to action. Edit any of those on an existing video ad, and
+  pause or enable any Demand Gen ad. Videos not in the account yet are added as video assets on the way.
+- **Videos by URL** adds YouTube videos to the asset library; **Check** says what Google Ads knows about a video (title and
+  length when it has seen it). Only Google Ads is asked, never YouTube.
+- Everything goes into the draft: Check, the live preview (Google validates without applying), team approval, Push live and
+  Undo work as for every other change. Experiment trial campaigns are refused. New assets stay in the account's library on undo.
+- **Upload from Mac** sends a video file to YouTube through Google Ads, to the account's **Google-managed channel**, as an
+  **unlisted** video (the only option there). It becomes a draft item first and uploads only when you press **Upload** on it
+  in the Videos tab, gated like a push (your team's approval when your team requires it, and the why note). It is never part
+  of Push live, and Claude can't start it. Large files resume after a dropped connection. Google then processes the video;
+  *Check status* shows its YouTube id, ready for a video ad. A file picked in the page is copied into Studio's data folder and
+  deleted after the upload; files over 10 GB are given by their full path instead.
+- **Your own brand channel** is not an upload target in Studio: Google only uploads there with the sign-in of a Google user who
+  manages that channel (never a service account), and Studio has no YouTube channel sign-in. Upload to the brand channel in
+  YouTube or Google Ads and add the video here by its link. Linking a channel to the Ads account is done in Google Ads.
+  Removing an upload deletes the video from YouTube too, so that is done in Google Ads.
+- Read once and kept until you press **Refresh** in the tab.
 
 ---
 
@@ -634,6 +668,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Pacing | `pacing_status` (targets, spend, forecast, flags, recommendations), `pacing_add_to_draft` (budget changes into the draft only) |
 | Alerts | `alerts_list` (rules and recent alerts), `alert_rule_add` (a rule in Studio's local config) |
 | Creatives | `creative_performance` (asset and ad performance for a date range, read-only) |
+| Video ads | `video_assets_list` (videos, uploads, Demand Gen campaigns, ad groups and ads, logos; read), `demandgen_add_to_draft` (Demand Gen campaigns, ad groups, video ads, pauses and video assets; draft only; no upload tool) |
 | Calendar | `calendar_list`, `library_list`, `team_settings_get` (read only) |
 
 ---

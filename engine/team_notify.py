@@ -98,6 +98,22 @@ def test(channel):
     return _api("POST", "/api/v1/notify/test", {"channel": channel})
 
 
+def send_alert(text, data=None):
+    """One of my own Ads alerts (alerts.py) to my own team notification channels (bell, and email / webhook per my
+    prefs). The server only ever delivers it to me. -> "sent", "off" (my alert rule is off), "solo" (not in a team) or
+    "unsupported" (a team server from before alerts)."""
+    if not team.joined():
+        return "solo"
+    try:
+        r = _api("POST", "/api/v1/notify/alert", {"text": str(text)[:300], "data": data if isinstance(data, dict) else {}})
+    except team.TeamError as e:
+        if e.status in (404, 405):
+            return "unsupported"
+        raise
+    team_live._bump("notify")
+    return "sent" if r.get("sent") else "off"
+
+
 def on_event(kind, data):
     """team.py's stream listener: SSE `notify` -> the page reloads the bell."""
     if kind == "notify":

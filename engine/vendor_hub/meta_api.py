@@ -7,7 +7,8 @@ Bump GRAPH_VERSION here and every user follows.
     meta_api.get("act_123/campaigns", fields="id,name")
     meta_api.get_all("act_123/ads", fields="id,name")
     meta_api.post("<adset_id>", {"status": "PAUSED"}, validate=True)   # validate_only: changes nothing
-    meta_api.usage()          # latest rate-usage headers
+    meta_api.usage()          # latest rate-usage headers (incl. X-FB-Ads-Insights-Throttle)
+    meta_api.get_once(path)   # one GET without retries (callers with their own back-off)
     meta_api.debug_token()    # token type, validity, expiry, scopes (never the token itself)
 
 Token: META_ACCESS_TOKEN from appconfig (Keychain, or the environment). Never print or log it.
@@ -44,12 +45,12 @@ GRAPH_HOST = "https://graph.facebook.com"
 API = f"{GRAPH_HOST}/{GRAPH_VERSION}"
 
 TIMEOUT = 90
-RATE_LIMIT_CODES = (4, 17, 32, 613, 80004)
+RATE_LIMIT_CODES = (4, 17, 32, 613, 80000, 80004)
 GET_TRIES = 3
 GET_BACKOFF_RATE = (15, 45)      # seconds before try 2 and 3 after a rate limit
 GET_BACKOFF_OTHER = (2, 8)       # after 5xx / network errors
 POST_RATE_WAIT = 35              # one patient retry for a rate-limited POST
-USAGE_HEADERS = ("x-business-use-case-usage", "x-ad-account-usage", "x-app-usage")
+USAGE_HEADERS = ("x-business-use-case-usage", "x-ad-account-usage", "x-app-usage", "x-fb-ads-insights-throttle")
 
 
 def _load_env(path):
@@ -189,6 +190,14 @@ def call(method, path, params=None, validate=False, retry_rate=True, token=None)
 
 def get(path, **params):
     return call("GET", path, params)
+
+
+def get_once(path, **params):
+    """One GET, no retries (callers that back off on their own, e.g. alerts.py, so a throttled account is not hit again)."""
+    try:
+        return _once("GET", path, params)
+    except _NetworkError as ex:
+        raise MetaError({"message": str(ex)}) from None
 
 
 def post(path, params, validate=False, retry_rate=True):

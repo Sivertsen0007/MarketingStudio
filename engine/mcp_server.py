@@ -309,7 +309,55 @@ def call_pacing(name, a):
     return pacing.add_to_draft(a["account"], a.get("ids") or None, by="claude", note=a.get("note"))
 
 
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS
+ALERT_TOOLS = [
+    # Ads alerts (alerts.py). Read, and local rule config only: no tool checks, sends or changes anything on Google / Meta.
+    {"name": "alerts_list",
+     "description": "The user's Ads alert rules (Google Ads and Meta: metric, comparison, window, minimum volume, quiet period, "
+                    "on or off, hourly or daily check) and the alerts that fired recently (what triggered them, value vs the "
+                    "rule, acknowledged or snoozed), plus when each account was last checked. Read-only.",
+     "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "description": "fired alerts to return (default 50)"},
+                                                      "unacknowledged_only": {"type": "boolean"}}}},
+    {"name": "alert_rule_add",
+     "description": "Add an alert rule to the user's local Studio config (nothing is sent or changed on Google or Meta). "
+                    "metric: spend, clicks, impressions, conversions, cpc, ctr (%), cpa, roas, spend_vs_budget (% of the daily "
+                    "budget), no_delivery (active but no impressions for 24 hours), disapproved_ads (count), learning_limited "
+                    "(Meta ad sets). op: above, below, up_pct, down_pct (change vs the previous comparable period). window: "
+                    "today, yesterday, last_7_days. level: account, campaign, adset (Meta). Rules are checked hourly "
+                    "(conversions, CPA, ROAS daily) when Refresh data is automatic, else when the user presses Check now or "
+                    "refreshes data.",
+     "inputSchema": {"type": "object", "properties": {
+         "metric": {"type": "string"}, "op": {"type": "string"}, "value": {"type": "number"},
+         "window": {"type": "string"}, "level": {"type": "string", "description": "account (default), campaign or adset"},
+         "account": {"type": "string", "description": "account id or key (see list_accounts); none = every account"},
+         "platform": {"type": "string", "description": "any (default), google or meta: for rules on every account"},
+         "object_id": {"type": "string", "description": "one campaign or ad set id; none = each one at that level"},
+         "min": {"type": "object", "description": "minimum volume in the window, e.g. {\"conversions\": 10}"},
+         "quiet_hours": {"type": "number", "description": "fire at most once per this many hours per object (default 24)"},
+         "name": {"type": "string"}, "enabled": {"type": "boolean", "description": "default true"}},
+         "required": ["metric"]}},
+]
+ALERT_NAMES = {t["name"] for t in ALERT_TOOLS}
+
+
+def call_alerts(name, a):
+    import alerts  # noqa: PLC0415
+    if name == "alerts_list":
+        v = alerts.view()
+        fired = [x for x in v["alerts"] if not (a.get("unacknowledged_only") and x.get("acked_at"))][:max(1, min(int(a.get("limit") or 50), 200))]
+        return {"rules": [{k: r.get(k) for k in ("id", "name", "enabled", "platform", "account", "level", "object_id", "metric", "op",
+                                                 "value", "window", "min", "quiet_hours", "cadence", "description", "last_fired")}
+                          for r in v["rules"]],
+                "alerts": [{k: x.get(k) for k in ("id", "at", "text", "rule_id", "account", "account_name", "platform", "object",
+                                                  "metric", "value", "previous", "threshold", "op", "window", "acked_at", "snoozed_until")}
+                           for x in fired],
+                "unacknowledged": v["badge"]["unacked"], "last_check": v["last_check"], "meta_backoff": v["meta_backoff"],
+                "data_policy": v["policy"], "method": v["method"]}
+    body = {k: a[k] for k in ("metric", "op", "value", "window", "level", "account", "platform", "object_id", "min",
+                              "quiet_hours", "name", "enabled") if k in a}
+    return alerts.add_rule(body, by="claude")
+
+
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS
 TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
 
 
@@ -445,6 +493,8 @@ def call(name, a):
         return call_area(name, a)
     if name in PACING_NAMES:
         return call_pacing(name, a)
+    if name in ALERT_NAMES:
+        return call_alerts(name, a)
     if name in ("team_status", "team_sync"):
         return call_team(name)
     if name in ("reviews_list", "review_request"):

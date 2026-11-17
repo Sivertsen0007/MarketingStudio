@@ -29,6 +29,7 @@ import live
 import meta_ads as meta
 import overview
 import pacing  # budget pacing (Ads > Pacing, areas/pacing.py) and its daily check
+import alerts  # Ads alerts (areas/alerts.py): rules, hourly / daily checks, history
 import health
 import gapi
 import progress
@@ -188,14 +189,29 @@ def data_cached(q):
 
 
 def data_refresh(body):
-    return datasources.refresh(body.get("source"), body.get("account") or None,
-                               **{k: body.get(k) for k in ("days", "start", "end", "parts") if body.get(k) not in (None, "")})
+    res = datasources.refresh(body.get("source"), body.get("account") or None,
+                              **{k: body.get(k) for k in ("days", "start", "end", "parts") if body.get(k) not in (None, "")})
+    _alerts_after(body.get("source"), body.get("account") or None)
+    return res
+
+
+def _alerts_after(source, account=None):
+    """The user's own Refresh: check the alert rules for what was just refreshed (background; nothing when no rule applies)."""
+    try:
+        alerts.after_refresh(source, account)
+    except Exception:  # noqa: BLE001 - never break a refresh
+        traceback.print_exc()
 
 
 def _meta_after(res):
     """After a Meta push or undo: Pacing reads this ad account again when next shown (budgets may have changed)."""
     if isinstance(res, dict) and res.get("ok"):
         pacing.invalidate(meta.acct())
+    return res
+
+
+def _then(res, fn):
+    fn()
     return res
 
 
@@ -436,7 +452,8 @@ class H(BaseHTTPRequestHandler):
                 acct, bool(body.get("enable_new")), only=only)),
             "/api/live/push": live_push,
             "/api/live/undo": lambda: _after_live(acct, live.undo(acct, body["push_id"])),
-            "/api/google/refresh": lambda: gapi.refresh(acct, body.get("days"), body.get("start"), body.get("end")),
+            "/api/google/refresh": lambda: _then(gapi.refresh(acct, body.get("days"), body.get("start"), body.get("end")),
+                                                 lambda: _alerts_after("google", acct)),
             "/api/draft/add": lambda: core.add(acct, body["changes"], body.get("by", "you"), body.get("note")),
             "/api/draft/remove": lambda: {"removed": core.remove(acct, body["ids"])},
             "/api/draft/clear": lambda: {"removed": core.clear(acct)},
@@ -535,7 +552,8 @@ class H(BaseHTTPRequestHandler):
             "/api/draft/remove": lambda: {"removed": core.remove(meta.acct(), body["ids"])},
             "/api/draft/clear": lambda: {"removed": core.clear(meta.acct())},
             "/api/validate": lambda: meta.validate(),
-            "/api/meta/refresh": lambda: {"fetched_at": meta.refresh_account()["fetched_at"]},
+            "/api/meta/refresh": lambda: _then({"fetched_at": meta.refresh_account()["fetched_at"]},
+                                               lambda: _alerts_after("meta", meta.acct())),
             "/api/meta/draft_preview": lambda: meta.draft_preview(body.get("ad_id"), body.get("placement", "facebook"),
                                                                   body.get("overrides"), body.get("draft_id")),
             "/api/meta/media": lambda: meta.store_media(body.get("filename"), body.get("data") or ""),
@@ -569,6 +587,10 @@ def main():
             traceback.print_exc()
     try:  # the daily budget pacing check: off until switched on in Settings, held while Refresh data is manual
         pacing.register_job()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    try:  # alerts: hourly and daily checks, held while Refresh data is manual (then: Check now, or after a Refresh)
+        alerts.register_jobs()
     except Exception:  # noqa: BLE001
         traceback.print_exc()
     try:  # Studio's background jobs (scheduler.py): one thread, only here (never on import)

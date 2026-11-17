@@ -196,6 +196,37 @@ class TestRules(NotifyBase):
         self.assertTrue(out["server"]["email"])
         self.assertEqual(self.notes(self.alex)["notifications"], [])
 
+    def test_own_alert_reaches_only_me(self):
+        self.prefs(self.alex, {"webhook": {"on": True, "url": self.hook.url}})
+        out = self.ok("POST", "/api/v1/notify/alert", {"text": "ML Google: spend today is 132% of the daily budget",
+                                                       "data": {"rule": "r1", "account": "123"}}, self.alex["token"])
+        self.assertTrue(out["sent"])
+        n = self.notes(self.alex)["notifications"]
+        self.assertEqual([x["kind"] for x in n], ["alert"])
+        self.assertEqual((n[0]["actor"], n[0]["area"], n[0]["data"]["rule"]), (None, "ads", "r1"))
+        self.assertEqual(n[0]["link"], "marketingstudio://open?area=ads")
+        for other in (self.bo, self.cy, self.owner):
+            self.assertEqual(self.kinds(other), [])
+        self.tick()
+        self.assertEqual(len(self.hook.posts), 1)
+        self.assertIn("spend today is 132%", self.hook.texts()[0])
+        # the rule off: nothing on the bell
+        self.prefs(self.alex, {"rules": {"alert": False}})
+        out = self.ok("POST", "/api/v1/notify/alert", {"text": "again"}, self.alex["token"])
+        self.assertFalse(out["sent"])
+        self.assertEqual(len(self.notes(self.alex)["notifications"]), 1)
+        # bad bodies, no token, rate limit
+        for body in ({}, {"text": ""}, {"text": 5}):
+            s, _ = self.call("POST", "/api/v1/notify/alert", body, self.alex["token"])
+            self.assertEqual(s, 400, body)
+        s, _ = self.call("POST", "/api/v1/notify/alert", {"text": "x"}, None)
+        self.assertEqual(s, 401)
+        for _ in range(notify.ALERT_RATE[0]):
+            self.ok("POST", "/api/v1/notify/alert", {"text": "x"}, self.bo["token"])
+        s, _ = self.call("POST", "/api/v1/notify/alert", {"text": "x"}, self.bo["token"])
+        self.assertEqual(s, 429)
+        self.assertEqual(self.kinds(self.alex), ["alert"])
+
     def test_bad_prefs(self):
         for body in ({"rules": {"nope": True}}, {"follow": {"tv": True}}, {"email": {"timing": "weekly"}},
                      {"daily_at": "25:00"}, {"tz_offset": 2000}, {"focus": {"until": "soon"}},

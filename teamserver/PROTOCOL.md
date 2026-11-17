@@ -174,7 +174,8 @@ notification `{id, kind, actor, area, coll, item_id, text, data, at, read, link}
   `mention` (a comment, or an edit of one, that @mentions you), `review_decided` (your own request approved or sent
   back), `pending_changed` (someone else changed an item you have pending: your last write to it was tagged with a
   changeset and you have not reported a push / publish listing it since), `claim` (a claim on something you own: an
-  owner scope that is the collection, `coll/id` or a scope above it, or an item you created).
+  owner scope that is the collection, `coll/id` or a scope above it, or an item you created), `alert` (your own Studio
+  alerts, see `POST /api/v1/notify/alert`).
   follow (off by default, per area `ads`, `email`, `seo`, `social`): `push`, `publish`, `send_to_editor` events in that
   area. Item writes (edit sessions) never ping anyone, except the `pending_changed` case. Your own actions never ping you.
 - `GET /api/v1/notify/prefs` -> `{prefs, server: {email}, rules, areas, timings}`; `PUT /api/v1/notify/prefs {partial prefs}`
@@ -209,6 +210,11 @@ notification `{id, kind, actor, area, coll, item_id, text, data, at, read, link}
   Marking a `mention` notification read marks its mention read, and `POST /api/v1/mentions/read` marks the matching
   mention notifications read.
 - `POST /api/v1/notify/test {channel: email|webhook}` -> `{ok, error?}`: a test message now (5 per 10 minutes).
+- `POST /api/v1/notify/alert {text, data?}` -> `{ok, sent, id}`: one of the caller's own Studio alerts (Ads alerts
+  checked on their Mac) as a notification of kind `alert` to the caller only (area `ads`, no item, `actor` null),
+  delivered like any other (bell, email, webhook per their prefs; rule `alert`, on by default, turns it off: `sent`
+  false). It never reaches another member. text is cut to 300 characters; data (an object, at most 2000 bytes of JSON,
+  else dropped) is kept with it. 60 per member per hour (then 429).
 - SSE `event: notify` `{id?, unread?, quiet}` to the member only, when something lands on their bell or they marked
   notifications read.
 

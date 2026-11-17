@@ -88,8 +88,8 @@ body.ov #ovBtn{background:var(--accent-bg);color:var(--accent);border-color:var(
 .ovpage table{width:100%;border-collapse:collapse;background:var(--panel)} .ovpage th,.ovpage td{padding:6px 10px;border-bottom:1px solid var(--line2);text-align:left;font-size:13px} .ovpage td.num,.ovpage th.num{text-align:right}
 main.noside aside.draft{display:none}
 .rtabs .rclose{flex:0 0 40px;font-size:18px;line-height:1;color:var(--muted)}
-#sideOpen{display:none;position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:20;writing-mode:vertical-rl;border-radius:6px 0 0 6px;border-right:0;padding:14px 7px;box-shadow:0 1px 4px rgba(0,0,0,.15)}
-main.noside ~ #sideOpen{display:block}
+#sideOpen{display:none;white-space:nowrap}
+body.noside #sideOpen{display:inline-block}
 .pad{padding:12px}
 .search{position:relative}
 .search input{width:100%;background:var(--head);border-color:transparent;padding-left:34px;height:38px}
@@ -324,6 +324,7 @@ tr.focus td{background:var(--accent-bg)!important}
       <span id="bulk" class="bulk" title="Select rows first"><span id="bulkN">None selected</span>
         <button data-bulk="enabled" disabled>Enable</button><button data-bulk="paused" disabled>Pause</button><button data-bulk="removed" class="danger" disabled>Remove</button></span>
       <button id="addBtn" class="primary">+ Add</button>
+      <button id="sideOpen" title="Open the Edit and Draft panel">Edit · Draft <span id="draftN2"></span></button>
     </div>
     <div id="grid" class="grid-wrap"></div>
   </section>
@@ -341,7 +342,6 @@ tr.focus td{background:var(--accent-bg)!important}
 </main>
 <div id="ovPage" class="ovpage"></div>
 <div id="areaPage" class="areapage"></div>
-<button id="sideOpen" title="Open the Edit and Draft panel">Edit · Draft <span id="draftN2"></span></button>
 <footer><span>Marketing Studio</span><span class="spacer"></span><span>Draft only. Live changes only by your own Push live.</span></footer>
 </div>
 <dialog id="dlg"><div class="dlg-h"><span id="dlgT"></span><button class="link" onclick="dlg.close()">Close</button></div>
@@ -1438,7 +1438,7 @@ function showPane(p){ $("#rtEdit").classList.toggle("on", p === "edit"); $("#rtD
 $("#rtEdit").onclick = () => showPane("edit");
 $("#rtDraft").onclick = () => showPane("draft");
 // close / open the right panel (remembered on this Mac)
-const sideOpen = on => { document.querySelector("main").classList.toggle("noside", !on); localSet("side", on ? "open" : "closed") };
+const sideOpen = on => { document.querySelector("main").classList.toggle("noside", !on); document.body.classList.toggle("noside", !on); localSet("side", on ? "open" : "closed") };
 $("#sideClose").onclick = () => sideOpen(false);
 $("#sideOpen").onclick = () => sideOpen(true);
 if (localGet("side") === "closed") sideOpen(false);

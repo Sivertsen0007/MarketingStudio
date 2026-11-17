@@ -343,7 +343,7 @@ class Meta(unittest.TestCase):
     def test_back_off_stops_early(self):
         n = {"calls": 0}
 
-        def busy():
+        def busy(kind=None):
             n["calls"] += 1
             return "Meta usage is at 92%" if n["calls"] > 4 else None
         get = FakeMeta()
@@ -353,13 +353,13 @@ class Meta(unittest.TestCase):
         self.assertIn("92%", s["warnings"][0])
         self.assertEqual(creatives.account_view(M_ACCT, s, "assets")["missing"], s["missing"])
         with self.assertRaises(creatives.MetaBusy):
-            creatives.fetch_meta("act_555", win30(), get=FakeMeta(), busy=lambda: "busy")
+            creatives.fetch_meta("act_555", win30(), get=FakeMeta(), busy=lambda kind=None: "busy")
 
     def test_fetch_the_rest(self):
         busy = {"on": True}
         n = {"c": 0}
 
-        def b():
+        def b(kind=None):
             n["c"] += 1
             return "Meta usage is at 99%" if busy["on"] and n["c"] > 3 else None
         snap = creatives.fetch_meta("act_555", win30(), get=FakeMeta(), busy=b)
@@ -375,7 +375,7 @@ class Meta(unittest.TestCase):
     def test_stopped_before_the_ads(self):
         n = {"c": 0}
 
-        def b():
+        def b(kind=None):
             n["c"] += 1
             return "Meta usage is at 104%" if n["c"] == 2 else None
         s = creatives.fetch_meta("act_555", win30(), get=FakeMeta(), busy=b, known={})
@@ -404,7 +404,7 @@ class Meta(unittest.TestCase):
                 return {"data": [{"id": i, "name": "Ad " + i, "effective_status": "ACTIVE", "creative": {"id": "c"}} for i in ids if i != "x10"]}
         n = {"c": 0}
 
-        def b():
+        def b(kind=None):
             n["c"] += 1
             return "Meta usage is at 101%" if n["c"] == 3 else None
         s = creatives.fetch_meta("act_555", win30(), get=Many(), busy=b, known={})
@@ -416,6 +416,21 @@ class Meta(unittest.TestCase):
         creatives.fill_missing(s, win30(), get=get, busy=None, known={})
         self.assertEqual(len(get.calls[0][1]["filtering"][0]["value"]), 50)  # only the other 50
         self.assertTrue(all(a["read"] for a in s["ads"].values()))
+
+    def test_busy_per_kind(self):
+        u = {"x-business-use-case-usage": {"1": [{"type": "ads_management", "call_count": 8, "total_time": 108, "estimated_time_to_regain_access": 2},
+                                                 {"type": "ads_insights", "call_count": 10, "total_time": 12}]},
+             "x-fb-ads-insights-throttle": {"app_id_util_pct": 3, "acc_id_util_pct": 4}, "x-app-usage": {"call_count": 1}}
+        with mock.patch("meta_api.usage", lambda: u):
+            self.assertIn("108%", creatives._meta_busy("management"))
+            self.assertIsNone(creatives._meta_busy("insights"))  # insights reads have their own limit
+            self.assertIn("108%", creatives._meta_busy())
+        u["x-fb-ads-insights-throttle"]["acc_id_util_pct"] = 95
+        with mock.patch("meta_api.usage", lambda: u):
+            self.assertIn("95%", creatives._meta_busy("insights"))
+        seen = []
+        creatives.fetch_meta("act_555", win30(), get=FakeMeta(), busy=lambda kind=None: seen.append(kind), known={})
+        self.assertEqual(seen, ["insights", "management"] + ["insights"] * len(creatives.BREAKDOWNS))
 
     def test_rate_limit_keeps_what_was_read(self):
         get = FakeMeta(fail_on="image_asset")
@@ -488,7 +503,7 @@ class Cache(unittest.TestCase):
             if a["platform"] == "google":
                 return g_snap(a, win)
 
-            def b():
+            def b(kind=None):
                 n["c"] += 1
                 return "Meta usage is at 99%" if n["c"] > 2 else None
             return creatives.fetch_meta(a["act"], win, get=FakeMeta(), busy=b)
@@ -499,7 +514,7 @@ class Cache(unittest.TestCase):
         with self.assertRaises(ValueError):
             creatives.fetch_rest("1234567890", 30)
         get = FakeMeta()
-        with mock.patch.object(creatives, "_meta_busy", lambda: None), mock.patch("meta_api.get_once", get):
+        with mock.patch.object(creatives, "_meta_busy", lambda kind=None: None), mock.patch("meta_api.get_once", get):
             r = creatives.fetch_rest("meta_555", 30)
         self.assertEqual(r["missing"], [])
         self.assertEqual(len(get.calls), len(creatives.BREAKDOWNS))

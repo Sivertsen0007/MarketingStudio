@@ -249,11 +249,28 @@ class MetaBusy(Exception):
     """Meta's usage headers say Studio is close to its limit: stop reading (what was read is kept)."""
 
 
-def _meta_busy():
+def _usage_for(u, kind):
+    """Meta's usage headers -> only the parts that limit this kind of read: "insights" (the ads_insights use case and the
+    insights throttle) or "management" (the ads_management use case). Account and app usage count for both."""
+    out = {h: u[h] for h in ("x-ad-account-usage", "x-app-usage") if h in (u or {})}
+    if kind == "insights" and "x-fb-ads-insights-throttle" in u:
+        out["x-fb-ads-insights-throttle"] = u["x-fb-ads-insights-throttle"]
+    buc = (u or {}).get("x-business-use-case-usage")
+    if isinstance(buc, dict):
+        want = "ads_insights" if kind == "insights" else "ads_management"
+        out["x-business-use-case-usage"] = {k: [e for e in v if isinstance(e, dict) and e.get("type") in (want, None)]
+                                            for k, v in buc.items() if isinstance(v, list)}
+    return out
+
+
+def _meta_busy(kind=None):
+    """Why to stop before the next Meta read of this kind ("insights" or "management"), or None. The back-off line and
+    wait are Alerts' (alerts.meta_pressure / _backoff_minutes) on the headers that limit that kind of read."""
     try:
         import alerts  # noqa: PLC0415
         import meta_api  # noqa: PLC0415
-        pct, regain = alerts.meta_pressure(meta_api.usage())
+        u = meta_api.usage()
+        pct, regain = alerts.meta_pressure(_usage_for(u, kind) if kind else u)
         mins = alerts._backoff_minutes(pct, regain)
         return f"Meta usage is at {pct:.0f}%: try again in about {mins:.0f} minutes" if mins else None
     except Exception:  # noqa: BLE001 - no usage known: carry on
@@ -293,9 +310,11 @@ def _bd_asset(bd, a):
 
 
 def _reader(get, busy, calls):
-    """read(path, _pages=PAGES, **params) -> every row of a list (at most _pages next pages); checks busy() before each GET."""
+    """read(path, _pages=PAGES, **params) -> every row of a list (at most _pages next pages); checks busy(kind) before
+    each GET (kind: "insights" for insights reads, else "management")."""
     def read(path, _pages=PAGES, **params):
-        why = busy() if busy else None
+        kind = "insights" if path.endswith("/insights") else "management"
+        why = busy(kind) if busy else None
         if why:
             raise MetaBusy(why)
         page = get(path, **params)
@@ -303,7 +322,7 @@ def _reader(get, busy, calls):
         out = list(page.get("data") or [])
         nxt, n = (page.get("paging") or {}).get("next"), 0
         while nxt and n < _pages:
-            why = busy() if busy else None
+            why = busy(kind) if busy else None
             if why:
                 raise MetaBusy(why)
             page = get(nxt)
@@ -606,7 +625,8 @@ def _members(snap, view):
         for i, ad in ads.items():
             met = snap["ad_metrics"].get(i) or {}
             text = ad["primary_text"] or ad["headline"] or ("" if ad.get("read") and ad["feed"] else ad["name"])
-            out.append({"gkey": ("m", "ads", i), "field": "ad", "field_label": ad["format"] or "Ad", "kind": "ad", "text": text,
+            label = ("Flexible " + ad["format"].lower()).strip() if ad["feed"] else ad["format"] or "Ad"
+            out.append({"gkey": ("m", "ads", i), "field": label.lower().replace(" ", "_"), "field_label": label, "kind": "ad", "text": text,
                         "headline": ad["headline"], "primary_text": ad["primary_text"], "image_url": ad["thumbnail"],
                         "ad_id": i, "owner_id": i, "ad_name": ad["name"], "campaign": ad["campaign"], "adset": ad["adset"],
                         "where": " / ".join(x for x in (ad["campaign"], ad["adset"]) if x), "status": ad["status"],

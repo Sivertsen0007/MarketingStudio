@@ -28,6 +28,7 @@ import fx
 import live
 import meta_ads as meta
 import overview
+import pacing  # budget pacing (Ads > Pacing, areas/pacing.py) and its daily check
 import health
 import gapi
 import progress
@@ -72,6 +73,7 @@ def _after_live(acct, res):
     fetched). Meta does the same inside meta.push / meta.undo (meta.refresh_account)."""
     if isinstance(res, dict) and res.get("ok"):
         threading.Thread(target=lambda: gapi.refresh(acct), daemon=True).start()
+        pacing.invalidate(acct)  # budgets may have changed: Pacing reads this account again when next shown
     return res
 
 
@@ -188,6 +190,13 @@ def data_cached(q):
 def data_refresh(body):
     return datasources.refresh(body.get("source"), body.get("account") or None,
                                **{k: body.get(k) for k in ("days", "start", "end", "parts") if body.get(k) not in (None, "")})
+
+
+def _meta_after(res):
+    """After a Meta push or undo: Pacing reads this ad account again when next shown (budgets may have changed)."""
+    if isinstance(res, dict) and res.get("ok"):
+        pacing.invalidate(meta.acct())
+    return res
 
 
 def _meta_window(q):
@@ -509,8 +518,8 @@ class H(BaseHTTPRequestHandler):
             if not PUSH_LOCK.acquire(blocking=False):
                 raise ValueError("a push is already running")
             try:
-                return team_reviews.gated_push("ads", f"ads:{meta.acct()}", body, lambda only: meta.push(  # [team reviews]
-                    False, bool(body.get("accept_spend")), bool(body.get("accept_permanent")), only), "Pushed live to Meta")
+                return _meta_after(team_reviews.gated_push("ads", f"ads:{meta.acct()}", body, lambda only: meta.push(  # [team reviews]
+                    False, bool(body.get("accept_spend")), bool(body.get("accept_permanent")), only), "Pushed live to Meta"))
             finally:
                 PUSH_LOCK.release()
 
@@ -521,7 +530,7 @@ class H(BaseHTTPRequestHandler):
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{meta.acct()}", body,
                                                                    lambda only: meta.preview(only=only)),
             "/api/live/push": live_push,
-            "/api/live/undo": lambda: meta.undo(body["push_id"]),
+            "/api/live/undo": lambda: _meta_after(meta.undo(body["push_id"])),
             "/api/draft/add": lambda: meta.add(body["changes"], body.get("by", "you"), body.get("note")),
             "/api/draft/remove": lambda: {"removed": core.remove(meta.acct(), body["ids"])},
             "/api/draft/clear": lambda: {"removed": core.clear(meta.acct())},
@@ -558,6 +567,10 @@ def main():
             so.start_scheduler()
         except Exception:  # noqa: BLE001 - the studio must start even if SoMe can't
             traceback.print_exc()
+    try:  # the daily budget pacing check: off until switched on in Settings, held while Refresh data is manual
+        pacing.register_job()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
     try:  # Studio's background jobs (scheduler.py): one thread, only here (never on import)
         scheduler.start()
     except Exception:  # noqa: BLE001 - the studio must start even if the scheduler can't

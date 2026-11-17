@@ -1,5 +1,5 @@
 """Team settings: values the whole team shares (copy rules, SEO sites, test email addresses, SoMe slots and UTM
-defaults, calendar limits). See PROTOCOL.md, "Team settings".
+defaults, calendar limits, ad spend targets for pacing). See PROTOCOL.md, "Team settings".
 
 One row per key, versioned. Everyone reads; owners and admins write. Every write bumps the key's version, adds a
 `settings` event to the activity feed and sends the SSE event `settings` {key, version} to everyone.
@@ -13,7 +13,7 @@ import json
 
 from .store import MANAGERS, ApiError, iso, json_size, need_int
 
-KEYS = ("copy_rules", "seo_sites", "email_test_addresses", "social", "calendar_limits")
+KEYS = ("copy_rules", "seo_sites", "email_test_addresses", "social", "calendar_limits", "pacing_targets")
 MAX_VALUE_BYTES = 64 * 1024
 
 

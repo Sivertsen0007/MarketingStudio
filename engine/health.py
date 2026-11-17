@@ -139,7 +139,7 @@ def google_checks(today):
                         "The service account key may be missing or deleted. See the README (Setup)."))
         tok = None
     out.append(_version_row("google", getattr(g, "API_VERSION", None), GOOGLE_SUNSET, GOOGLE_SOURCE, GOOGLE_READ, today,
-                            "API_VERSION in shared/dashboard/connectors/google_ads_api.py"))
+                            "API_VERSION in engine/vendor_hub/google_ads_api.py"))
     if not tok:
         return out
     try:

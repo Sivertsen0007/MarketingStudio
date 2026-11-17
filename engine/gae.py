@@ -31,6 +31,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import appconfig  # noqa: E402
+import experiments  # noqa: E402
 
 HUB = appconfig.DATA  # Studio keeps everything gae writes in its own data folder
 EDITOR_DIR = Path(os.environ.get("GAE_EDITOR_DIR", Path.home() / "Library/Application Support/Google/Google-AdWords-Editor"))
@@ -601,6 +602,16 @@ def _insert(db, table, overrides):
     return cur.lastrowid  # AUTOINCREMENT keeps sqlite_sequence in step, as Editor's own import does
 
 
+def _refuse_trial(db, name):
+    """An experiment's trial campaign (Editor: trialParentId set) is changed from the experiment, never directly."""
+    try:
+        rows = db.execute("select trialParentId from Campaign where name = ?", (name,)).fetchall()
+    except sqlite3.OperationalError:  # an Editor without experiments support
+        return
+    if any(r[0] for r in rows):
+        raise ValueError(f'{experiments.MSG} ("{name}")')
+
+
 def _campaign_id(db, name, created):
     if name in created["campaign"]:
         return created["campaign"][name]
@@ -806,6 +817,8 @@ def apply_changes(db, changes, comment, edits=None):
         t = c["type"]
         if t not in SUPPORTED:
             raise ValueError(f"'{t}' can't be written directly yet - use `gae build` (import file) for it")
+        if experiments.touches(c):
+            _refuse_trial(db, c["campaign"])
         if t == "campaign":
             if not c.get("new"):
                 n["campaign_edit"] += _edit_campaign(db, c, edits)

@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import appconfig  # noqa: E402,F401
 import draftstore  # noqa: E402
+import experiments  # noqa: E402
 import gae  # noqa: E402
 
 STUDIO_DIR = gae.OUT_DIR / "studio"
@@ -289,6 +290,7 @@ def grid(acct, kind, campaign_id=None, ad_group_id=None, status="active", search
         n = search.lower()
         rows = [r for r in rows if _matches(r, n)]
     _overlay(acct, kind, rows, x, campaign_id, ad_group_id)
+    experiments.tag(rows, experiments.from_editor(db))
     return rows[:limit] if limit else rows
 
 
@@ -310,7 +312,7 @@ def tree(acct, status="active"):
         out.append({"id": c["localId"], "name": c["name"], "status": gae.STATUS.get(c["status"]),
                     "type": gae.CAMPAIGN_TYPE.get(c["campaignType"], str(c["campaignType"])),
                     "editor": STATE.get(c["state"], c["state"]), "ad_groups": kids})
-    return out
+    return experiments.tag(out, experiments.from_editor(db), key="name")
 
 
 def editor_pending(acct):
@@ -442,12 +444,18 @@ def check(change):
 
 
 def add(acct, changes, by="you", note=None):
-    """Add plan changes (gae plan format) to the draft. Returns the new items, each with its problems/warnings."""
+    """Add plan changes (gae plan format) to the draft. Returns the new items, each with its problems/warnings.
+    Refuses (ValueError, nothing added) when a change touches an experiment's trial campaign (experiments.py)."""
     if isinstance(changes, dict):
         changes = [changes]
+    exps = experiments.known(acct)
+    refused = [f"{_summary(c)}: {p}" for c in changes for p in experiments.check(exps, c)[0]]
+    if refused:
+        raise ValueError("Not added to the draft. " + "; ".join(refused))
     items = []
     for c in changes:
         problems, warnings = check(c)
+        warnings = warnings + experiments.check(exps, c)[1]
         items.append({"id": uuid.uuid4().hex[:8], "change": c, "by": by, "note": note or "",
                       "ts": dt.datetime.now().isoformat(timespec="seconds"), "summary": _summary(c),
                       "problems": problems, "warnings": warnings})
@@ -495,8 +503,11 @@ def validate(acct):
         db.row_factory = sqlite3.Row
         db.execute("begin")
         results = []
+        exps = experiments.merge(experiments.known(acct), experiments.from_editor(db))
         for it in items:
             problems, warnings = check(it["change"])
+            xp, xw = experiments.check(exps, it["change"])
+            problems, warnings = xp + problems, warnings + xw
             if live_only(it["change"]):
                 results.append({"id": it["id"], "summary": it["summary"], "ok": False, "live_only": True, "warnings": warnings,
                                 "problems": problems + ["live only: Editor can't hold this change - use Push live, or remove it before Send to Editor"]})

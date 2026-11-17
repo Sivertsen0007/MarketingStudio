@@ -15,13 +15,14 @@ IDs come from Editor's database (remoteId = the Google Ads id, verified against 
 from the API (see Ids: the account's read source goes first, the other is the fallback). Rows Editor has never
 posted (remoteId 0) can't be referenced - post them first or create them in the draft.
 """
-import datetime as dt, json, os, sys, urllib.error, urllib.request, uuid
+import datetime as dt, json, os, re, sys, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 import appconfig  # noqa: E402,F401  (vendor_hub on sys.path)
 import gads  # noqa: E402  (auth + developer token, shared with the SEM agent)
 
 import core
+import experiments  # noqa: E402
 import progress  # noqa: E402
 
 gae = core.gae
@@ -783,8 +784,11 @@ def plan(acct, enable_new=False, items=None, source=None):
     items = core.draft(acct)["items"] if items is None else items
     ids = Ids(acct, source)
     ops, per_item = [], []
+    exps = _experiments(acct) if items else experiments.empty()
     for it in items:
-        entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [], "problems": list(it["problems"])}
+        xp, xw = experiments.check(exps, it["change"])
+        entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
+                 "problems": xp + list(it["problems"]), "warnings": xw}
         if not entry["problems"]:
             try:
                 for o in ops_for(ids, it["change"], enable_new):
@@ -812,6 +816,42 @@ def plan(acct, enable_new=False, items=None, source=None):
                             break
     return {"items": per_item, "ops": ops, "ok": bool(ops) and not any(e["problems"] for e in per_item),
             "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item)}
+
+
+def _experiments(acct):
+    """Trial campaigns (refused) and bases with a running experiment (warned): asked from Google at push time, plus what
+    Editor / the cache know. If Google can't be asked, the cached facts still apply (and the push itself needs Google)."""
+    try:
+        fresh = experiments.fetch(acct, query)
+    except Exception:  # noqa: BLE001
+        fresh = experiments.empty()
+    return experiments.merge(fresh, experiments.known(acct))
+
+
+_CAMP_RES = re.compile(r"campaign(?:s|Criteria|Assets|SharedSets)/(\d+)")
+_GROUP_RES = re.compile(r"adGroup(?:s|Criteria|Ads|Assets)/(\d+)")
+
+
+def _refuse_trial_undo(acct, rec):
+    """An undo is a push too: refuse it, before anything is sent, when a logged change or any campaign / ad group the
+    logged operations name is (now) an experiment's trial campaign or sits in one."""
+    exps = _experiments(acct)
+    bad = [p for it in rec.get("items", []) for p in experiments.check(exps, it.get("change") or {})[0]]
+    blob = json.dumps([[o.get("op"), o.get("undo"), o.get("resource")] for o in rec.get("ops", [])])
+    camps = sorted(set(_CAMP_RES.findall(blob)) - {""})
+    groups = sorted(set(_GROUP_RES.findall(blob)))
+    rows = []
+    if camps:
+        rows += query(acct, f"SELECT campaign.id, campaign.name, campaign.experiment_type FROM campaign WHERE campaign.id IN ({', '.join(camps)})")
+    if groups:
+        rows += query(acct, f"SELECT ad_group.id, campaign.id, campaign.name, campaign.experiment_type FROM ad_group "
+                            f"WHERE ad_group.id IN ({', '.join(groups)})")
+    for r in rows:
+        c = r.get("campaign", {})
+        if c.get("experimentType") not in experiments.NOT_TRIAL or experiments._n(c.get("name")) in exps["trials"]:
+            bad.append(f'{experiments.MSG} ("{c.get("name", c.get("id"))}")')
+    if bad:
+        raise ValueError("Not undone: " + "; ".join(dict.fromkeys(bad)))
 
 
 def _only(acct, only):
@@ -906,6 +946,7 @@ def _undo(acct, push_id):
         raise ValueError("push not found")
     if any(r.get("undo_of") == push_id for r in recs):
         raise ValueError("already undone")
+    _refuse_trial_undo(acct, rec)
     ops, notes = [], []
     for o in reversed(rec["ops"]):
         u = o.get("undo")

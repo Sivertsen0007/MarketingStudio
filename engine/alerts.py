@@ -366,7 +366,7 @@ def save_settings(body):
 # ---------------------------------------------------------------- reading Google (GAQL search only)
 
 G_CAMPS = ("SELECT customer.time_zone, customer.currency_code, campaign.id, campaign.name, campaign.status, campaign.serving_status, "
-           "campaign_budget.id, campaign_budget.amount_micros, campaign_budget.period FROM campaign WHERE campaign.status != 'REMOVED'")
+           "campaign.start_date_time, campaign_budget.id, campaign_budget.amount_micros, campaign_budget.period FROM campaign WHERE campaign.status != 'REMOVED'")
 G_CUSTOMER = "SELECT customer.time_zone, customer.currency_code FROM customer LIMIT 1"
 G_DAILY = ("SELECT campaign.id, segments.date, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, "
            "metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '{start}' AND '{end}'")
@@ -385,7 +385,7 @@ def _local(tz_name, now=None):
 
 def _empty(platform, acct, tz, currency, now):
     loc = _local(tz, now)
-    return {"platform": platform, "account_id": acct["id"], "name": acct["name"], "currency": currency, "tz": tz,
+    return {"ts": now if now is not None else _now(), "platform": platform, "account_id": acct["id"], "name": acct["name"], "currency": currency, "tz": tz,
             "today": loc.date().isoformat(), "day_part": round((loc.hour * 3600 + loc.minute * 60 + loc.second) / 86400, 4),
             "campaigns": {}, "adsets": {}, "daily": {"campaign": {}, "adset": {}}, "disapproved": [], "parts": [], "calls": 0}
 
@@ -409,7 +409,7 @@ def fetch_google(acct, need, query=None, now=None):
             "id": str(c.get("id")), "name": c.get("name", ""), "status": (c.get("status") or "").title(),
             "active": c.get("status") == "ENABLED" and c.get("servingStatus") not in ("ENDED", "SUSPENDED", "PENDING"),
             "budget": round(amt / 1e6, 2) if amt and (b.get("period") or "DAILY") == "DAILY" else None,
-            "budget_id": str(b.get("id") or "")}
+            "budget_id": str(b.get("id") or ""), "started": _started(c.get("startDateTime"), snap["tz"])}
     today = dt.date.fromisoformat(snap["today"])
     if need.get("metrics"):
         start = today - dt.timedelta(days=DAYS_BACK)
@@ -439,12 +439,33 @@ def fetch_google(acct, need, query=None, now=None):
 
 # ---------------------------------------------------------------- reading Meta (one GET per check)
 
-M_CAMPS = "campaigns.limit(500){id,name,effective_status,daily_budget,lifetime_budget}"
-M_SETS = "adsets.limit(500){id,name,campaign_id,effective_status,daily_budget,learning_stage_info}"
+M_CAMPS = "campaigns.limit(500){id,name,effective_status,daily_budget,lifetime_budget,created_time,start_time}"
+M_SETS = "adsets.limit(500){id,name,campaign_id,effective_status,daily_budget,learning_stage_info,created_time,start_time}"
 M_ADS = 'ads.limit(200).effective_status(["DISAPPROVED"]){id,name,campaign_id,adset_id}'
 M_INS = ('insights.level({level}).time_increment(1).time_range({{"since":"{since}","until":"{until}"}}).limit(2000)'
          "{{{level}_id,spend,clicks,impressions,actions,action_values}}")
 PAGES = 5
+
+
+def _started(text, tz_name):
+    """Google's campaign.start_date_time ("YYYY-MM-DD HH:MM:SS", account time zone) -> epoch, or None."""
+    try:
+        d = dt.datetime.strptime(str(text)[:19], "%Y-%m-%d %H:%M:%S")
+        return d.replace(tzinfo=ZoneInfo(tz_name) if tz_name else dt.timezone.utc).timestamp()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _started_meta(o):
+    """The later of Meta's created_time and start_time (ISO 8601 with offset) -> epoch, or None."""
+    out = []
+    for k in ("created_time", "start_time"):
+        with contextlib.suppress(Exception):
+            out.append(dt.datetime.strptime(str(o.get(k)), "%Y-%m-%dT%H:%M:%S%z").timestamp())
+    return max(out) if out else None
+
+
+NEW_FOR = 86400  # no_delivery: a campaign / ad set that started less than this long ago is left alone
 
 
 def _cents(v):
@@ -464,12 +485,21 @@ def meta_fields(need, tz, now=None):
     return ",".join(f)
 
 
-def _edge(node, key, get, counter):
-    """Every row of a nested edge, following at most PAGES next links (each one more GET)."""
+class MetaBusy(Exception):
+    """Meta's usage headers went over the back-off line between pages: the check stops (no alerts from part of the data)."""
+    rate_limited = True
+
+
+def _edge(node, key, get, counter, busy=None):
+    """Every row of a nested edge, following at most PAGES next links (each one more GET). Before each next page the
+    usage headers are read again (busy()); over the line, the check stops with MetaBusy."""
     e = node.get(key) or {}
     out = list(e.get("data") or [])
     nxt, n = (e.get("paging") or {}).get("next"), 0
     while nxt and n < PAGES:
+        why = busy() if busy else None
+        if why:
+            raise MetaBusy(f"stopped before the next page of {key}: {why}")
         page = get(nxt)
         counter[0] += 1
         out += page.get("data") or []
@@ -478,7 +508,12 @@ def _edge(node, key, get, counter):
     return out
 
 
-def fetch_meta(acct, need, get=None, now=None, tz_hint=None):
+def _meta_busy():
+    pct, regain = meta_pressure(_meta_usage())
+    return f"Meta usage is at {pct:.0f}%" if _backoff_minutes(pct, regain) else None
+
+
+def fetch_meta(acct, need, get=None, now=None, tz_hint=None, busy=_meta_busy):
     if get is None:
         import meta_api  # noqa: PLC0415
         get = meta_api.get_once
@@ -493,27 +528,28 @@ def fetch_meta(acct, need, get=None, now=None, tz_hint=None):
     counter[0] += 1
     tz = node.get("timezone_name") or tz
     snap = _empty("meta", acct, tz, node.get("currency", ""), now)
-    for c in _edge(node, "campaigns", get, counter):
+    for c in _edge(node, "campaigns", get, counter, busy):
         snap["campaigns"][str(c["id"])] = {"id": str(c["id"]), "name": c.get("name", ""),
                                            "status": (c.get("effective_status") or "").replace("_", " ").title(),
                                            "active": c.get("effective_status") == "ACTIVE", "budget": _cents(c.get("daily_budget")),
-                                           "budget_id": str(c["id"]) if c.get("daily_budget") else ""}
-    for s in _edge(node, "adsets", get, counter):
+                                           "budget_id": str(c["id"]) if c.get("daily_budget") else "",
+                                           "started": _started_meta(c)}
+    for s in _edge(node, "adsets", get, counter, busy):
         snap["adsets"][str(s["id"])] = {"id": str(s["id"]), "name": s.get("name", ""), "campaign_id": str(s.get("campaign_id")),
                                         "status": (s.get("effective_status") or "").replace("_", " ").title(),
                                         "active": s.get("effective_status") == "ACTIVE", "budget": _cents(s.get("daily_budget")),
-                                        "learning": (s.get("learning_stage_info") or {}).get("status")}
+                                        "learning": (s.get("learning_stage_info") or {}).get("status"), "started": _started_meta(s)}
     if need.get("adsets"):
         snap["parts"].append("adsets")
     if need.get("disapproved"):
-        for a in _edge(node, "ads", get, counter):
+        for a in _edge(node, "ads", get, counter, busy):
             camp = snap["campaigns"].get(str(a.get("campaign_id")), {})
             snap["disapproved"].append({"id": str(a["id"]), "name": a.get("name") or f"Ad {a['id']}", "campaign_id": str(a.get("campaign_id")),
                                         "campaign": camp.get("name", ""), "adset_id": str(a.get("adset_id") or ""), "group": ""})
         snap["parts"].append("disapproved")
     if need.get("metrics"):
         level = "adset" if need.get("adset_level") else "campaign"
-        for r in _edge(node, "insights", get, counter):
+        for r in _edge(node, "insights", get, counter, busy):
             k = str(r.get(f"{level}_id"))
             acts = {a["action_type"]: float(a["value"]) for a in r.get("actions") or []}
             vals = {a["action_type"]: float(a["value"]) for a in r.get("action_values") or []}
@@ -650,6 +686,7 @@ def _objects(rule, snap):
             if not budget and snap["platform"] == "meta":  # ABO: the sum of its active ad sets' budgets
                 budget = sum(s["budget"] or 0 for s in snap["adsets"].values() if s["campaign_id"] == c["id"] and s["active"]) or None
             out.append({"level": "campaign", "id": c["id"], "name": c["name"], "active": c["active"], "budget": budget,
+                        "started": c.get("started"),
                         "daily": snap["daily"]["campaign"].get(c["id"], {}), "campaign_id": c["id"]})
     else:
         out = []
@@ -657,7 +694,8 @@ def _objects(rule, snap):
             camp = snap["campaigns"].get(s["campaign_id"]) or {}
             out.append({"level": "adset", "id": s["id"], "name": s["name"], "active": s["active"] and camp.get("active", True),
                         "budget": s.get("budget") or camp.get("budget"), "daily": snap["daily"]["adset"].get(s["id"], {}),
-                        "campaign_id": s["campaign_id"], "learning": s.get("learning")})
+                        "campaign_id": s["campaign_id"], "learning": s.get("learning"),
+                        "started": max([x for x in (s.get("started"), camp.get("started")) if x] or [None]) if (s.get("started") or camp.get("started")) else None})
     if rule.get("object_id"):
         out = [o for o in out if o["id"] == rule["object_id"]]
     else:
@@ -729,8 +767,14 @@ def evaluate(rule, snap):
         return hits
     if metric == "no_delivery":
         y = as_of - dt.timedelta(days=1)
+        ts = snap.get("ts") or _now()
         for o in _objects(rule, snap):
             if not o["active"] or (o["level"] != "account" and not o.get("budget") and snap["platform"] == "google"):
+                continue
+            if o.get("started") and ts - o["started"] < NEW_FOR:
+                continue  # started less than 24 hours ago: no impressions yet is no news
+            if o["level"] == "account" and snap["campaigns"] and all(
+                    c.get("started") and ts - c["started"] < NEW_FOR for c in snap["campaigns"].values() if c["active"]):
                 continue
             imp = totals(o["daily"], [y, as_of])["impressions"]
             if imp == 0:
@@ -862,14 +906,18 @@ def _check(which, accounts, reason, fetch, now, min_gap):
             st["tz"][a["id"]] = snap["tz"]
             row.update(ok=True, calls=snap.get("calls"), today=snap["today"])
             for r in mine:
-                hs = evaluate(r, snap)
-                if len(hs) > MAX_PER_RULE:
-                    row["capped"] = row.get("capped", 0) + len(hs) - MAX_PER_RULE
-                    hs = hs[:MAX_PER_RULE]
-                for h in hs:
+                hs = []
+                for h in evaluate(r, snap):  # quiet / snoozed ones out first, so the cap never hides objects 21+
                     if float(st["snoozed"].get(h["key"]) or 0) > t0 or t0 - float(st["last_fired"].get(h["key"]) or 0) < r["quiet_hours"] * 3600:
                         out["suppressed"] += 1
-                        continue
+                    else:
+                        hs.append(h)
+                hs.sort(key=lambda h: float(st["last_fired"].get(h["key"]) or 0))  # longest waiting first
+                if len(hs) > MAX_PER_RULE:  # the rest fire at the next check (their quiet period has not started)
+                    row["capped"] = row.get("capped", 0) + len(hs) - MAX_PER_RULE
+                    out["capped"] = out.get("capped", 0) + len(hs) - MAX_PER_RULE
+                    hs = hs[:MAX_PER_RULE]
+                for h in hs:
                     st["last_fired"][h["key"]] = t0
                     fired.append({"id": "a_" + uuid.uuid4().hex[:12], "at": _iso(t0), "ts": t0, "rule_id": r["id"], "rule_name": r["name"],
                                   "account": a["id"], "account_name": a["name"], "platform": a["platform"], "currency": snap.get("currency", ""),
@@ -886,15 +934,13 @@ def _check(which, accounts, reason, fetch, now, min_gap):
             if mins and float(st["meta_backoff"].get("until") or 0) < t0 + mins * 60:
                 st["meta_backoff"] = {"until": t0 + mins * 60, "why": f"usage {pct:.0f}% after this check"}
             row["meta_usage_pct"] = round(pct)
-        st["last_check"][a["id"]] = {k: row.get(k) for k in ("at", "ok", "error", "skipped", "calls", "reason")} | {"ts": t0, "reason": reason}
+        st["last_check"][a["id"]] = {k: row.get(k) for k in ("at", "ok", "error", "skipped", "calls", "reason", "capped")} | {"ts": t0, "reason": reason}
         out["checked"].append(row)
     if fired:
         _deliver(fired)
     with _flock():
-        disk = _state()  # snoozes made while checking win
-        for k, v in disk["snoozed"].items():
-            if float(v or 0) > float(st["snoozed"].get(k) or 0):
-                st["snoozed"][k] = v
+        disk = _state()  # snoozes and wake-ups made while checking win: a check never changes them
+        st["snoozed"] = dict(disk["snoozed"])
         cut = t0 - 31 * 86400
         st["last_fired"] = {k: v for k, v in st["last_fired"].items() if v > cut}
         st["snoozed"] = {k: v for k, v in st["snoozed"].items() if float(v or 0) > t0}
@@ -1051,6 +1097,23 @@ def view():
 
 # ---------------------------------------------------------------- scheduler + refresh hook
 
+def job_tz():
+    """The daily check's time zone: the time zone of the first account with a switched-on rule that Studio has seen
+    (from earlier checks), else the Meta ad account's from Studio's cache, else the Mac's. No API call."""
+    import scheduler  # noqa: PLC0415
+    try:
+        seen = _state()["tz"]
+        live = [r for r in rules() if r.get("enabled")]
+        for a in _accounts():
+            if seen.get(a["id"]) and any(applies(r, a) for r in live):
+                return ZoneInfo(seen[a["id"]])
+        for tz in seen.values():
+            return ZoneInfo(tz)
+    except Exception:  # noqa: BLE001
+        pass
+    return scheduler.account_tz()
+
+
 def register_jobs():
     """server.py main(). Both held while Refresh data is manual; a run with no rule switched on reads nothing."""
     import scheduler  # noqa: PLC0415
@@ -1058,7 +1121,7 @@ def register_jobs():
                        timeout=900, label="Alerts: hourly check",
                        note="Spend, clicks, impressions, CPC, CTR, budget, delivery, disapproved ads and learning rules. "
                             "Reads Google / Meta (read-only) only for accounts with a rule switched on.")
-    scheduler.register(JOB_DAILY, lambda: check("daily", reason="daily"), at="09:00", enabled_default=True, refresh=True,
+    scheduler.register(JOB_DAILY, lambda: check("daily", reason="daily"), at="09:00", tz=job_tz, enabled_default=True, refresh=True,
                        timeout=900, label="Alerts: daily check",
                        note="Conversion, CPA and ROAS rules, once a day (conversions can take up to 15 hours to arrive).")
 

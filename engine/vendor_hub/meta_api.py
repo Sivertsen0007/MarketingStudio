@@ -45,7 +45,7 @@ GRAPH_HOST = "https://graph.facebook.com"
 API = f"{GRAPH_HOST}/{GRAPH_VERSION}"
 
 TIMEOUT = 90
-RATE_LIMIT_CODES = (4, 17, 32, 613, 80004)
+RATE_LIMIT_CODES = (4, 17, 32, 613, 80000, 80004)
 GET_TRIES = 3
 GET_BACKOFF_RATE = (15, 45)      # seconds before try 2 and 3 after a rate limit
 GET_BACKOFF_OTHER = (2, 8)       # after 5xx / network errors

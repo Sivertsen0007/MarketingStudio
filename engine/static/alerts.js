@@ -79,7 +79,7 @@ async function checkNow(){
     else {
       const bad = r.checked.filter(x => x.error || x.skipped);
       toast(`${r.fired.length} alert${r.fired.length === 1 ? "" : "s"} fired, ${r.checked.length} account${r.checked.length === 1 ? "" : "s"} checked`
-        + (r.suppressed ? `, ${r.suppressed} kept quiet (quiet period or snoozed)` : "") + (bad.length ? ". " + bad.map(x => `${x.name}: ${x.error || x.skipped}`).join("; ") : ""));
+        + (r.suppressed ? `, ${r.suppressed} kept quiet (quiet period or snoozed)` : "") + (r.capped ? `, +${r.capped} more (at most 20 per rule per check; they fire at the next check)` : "") + (bad.length ? ". " + bad.map(x => `${x.name}: ${x.error || x.skipped}`).join("; ") : ""));
     }
   } catch(e) { toast(e.message) }
   b.disabled = false; b.textContent = "Check now"; load();
@@ -97,7 +97,7 @@ function draw(){
   const jobs = (v.jobs || []).map(j => `${h(j.label)}: ${j.enabled ? (j.held ? "held (Refresh data is manual)" : "next " + h(fmtWhen(j.next_run))) : "off in Settings"}`).join(" · ");
   $("#alPolicy").textContent = v.policy === "manual" ? "Refresh data is manual: rules are checked when you press Check now or refresh Google / Meta" : "Checked hourly, conversion rules daily";
   const open = v.alerts.filter(x => !x.acked_at).length;
-  const checks = Object.entries(v.last_check || {}).map(([id, c]) => `${h(acctName(id))}: ${h(fmtWhen(c.at))}${c.error ? ` <span class="al-chip warn" title="${h(c.error)}">error</span>` : c.skipped ? ` <span class="al-chip warn" title="${h(c.skipped)}">skipped</span>` : ""}`).join(" · ");
+  const checks = Object.entries(v.last_check || {}).map(([id, c]) => `${h(acctName(id))}: ${h(fmtWhen(c.at))}${c.error ? ` <span class="al-chip warn" title="${h(c.error)}">error</span>` : c.skipped ? ` <span class="al-chip warn" title="${h(c.skipped)}">skipped</span>` : ""}${c.capped ? ` <span class="al-chip warn" title="At most 20 alerts per rule per check: the rest fire at the next check">+${h(c.capped)} more</span>` : ""}`).join(" · ");
   let out = "";
   if (v.meta_backoff) out += `<div class="warnl" style="margin-bottom:12px">Meta checks are paused until ${h(fmtWhen(v.meta_backoff.until))} (${h(v.meta_backoff.why)}): Meta asked Studio to slow down.</div>`;
   out += `<div class="al-card"><div class="al-head"><h3>Fired alerts</h3><span class="hint">${open} to look at</span><span class="spacer" style="flex:1"></span>

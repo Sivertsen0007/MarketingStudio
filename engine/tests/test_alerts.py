@@ -415,6 +415,115 @@ class Check(unittest.TestCase):
         self.assertEqual(out["fired"][0]["delivered"], {"studio": "shown", "mac": "off", "team": "off"})
 
 
+class ReviewFixes(unittest.TestCase):
+    """The independent review of a06: cap after the quiet filter, wake-ups during a check, the daily job's time zone,
+    Meta pressure between pages, new campaigns and no_delivery, Meta rate-limit codes."""
+
+    def setUp(self):
+        reset()
+        alerts.rules()
+        for x in alerts.rules():
+            alerts.update_rule(x["id"], {"enabled": False})
+        p = [mock.patch("pacing.accounts", return_value=[G]), mock.patch("alerts._meta_usage", return_value={}),
+             mock.patch("alerts._osascript", return_value="off"), mock.patch("alerts._team_send", return_value="solo")]
+        for x in p:
+            x.start()
+            self.addCleanup(x.stop)
+
+    @staticmethod
+    def many(n=25, hook=None):
+        def fetch(a, need, tz=None, now=None):
+            if hook:
+                hook()
+            s = alerts._empty("google", a, "UTC", "EUR", now)
+            s["campaigns"] = {str(i): {"id": str(i), "name": f"C{i}", "active": True, "budget": 10.0, "budget_id": f"b{i}"} for i in range(n)}
+            s["daily"]["campaign"] = {str(i): {s["today"]: {"spend": 100, "clicks": 1, "impressions": 10, "conversions": 0, "value": 0}}
+                                      for i in range(n)}
+            return s
+        return fetch
+
+    def test_cap_applies_after_the_quiet_filter(self):
+        alerts.add_rule({"account": G["id"], "metric": "spend_vs_budget", "op": "above", "value": 120, "window": "today",
+                         "level": "campaign", "quiet_hours": 24})
+        o1 = alerts.check(None, fetch=self.many(), now=NOW)
+        self.assertEqual((len(o1["fired"]), o1["capped"], o1["checked"][0]["capped"]), (20, 5, 5))
+        self.assertEqual(alerts._state()["last_check"][G["id"]]["capped"], 5)
+        o2 = alerts.check(None, fetch=self.many(), now=NOW + 3600)
+        self.assertEqual((len(o2["fired"]), o2["suppressed"], o2.get("capped")), (5, 20, None))
+        ids = {f["object"]["id"] for f in o1["fired"] + o2["fired"]}
+        self.assertEqual(ids, {str(i) for i in range(25)})
+
+    def test_wake_up_during_a_check_is_kept(self):
+        alerts.add_rule({"account": G["id"], "metric": "spend", "op": "above", "value": 1, "window": "today", "level": "campaign",
+                         "quiet_hours": 1})
+        alerts.check(None, fetch=self.many(2), now=NOW)
+        a = alerts.history()[0]
+        alerts.snooze(a["id"], 48)
+        self.assertIn(a["key"], alerts._state()["snoozed"])
+        alerts.check(None, fetch=self.many(2, hook=lambda: alerts.snooze(a["id"], 0)), now=NOW + 7200)
+        self.assertNotIn(a["key"], alerts._state()["snoozed"])  # the wake-up made while the check ran stays
+
+    def test_daily_job_in_the_account_time_zone(self):
+        st = alerts._state()
+        st["tz"] = {G["id"]: "Asia/Bangkok"}
+        alerts._write(alerts.STATE_FILE, st)
+        alerts.update_rule("r_cpa_up_week", {"enabled": True})
+        self.assertEqual(str(alerts.job_tz()), "Asia/Bangkok")
+        scheduler._reset_for_tests()
+        try:
+            alerts.register_jobs()
+            row = next(j for j in scheduler.status()["jobs"] if j["name"] == "alerts_daily")
+            self.assertEqual(row["schedule"], "daily at 09:00 (Asia/Bangkok)")
+        finally:
+            scheduler._reset_for_tests()
+
+    def test_meta_pressure_between_pages_stops(self):
+        node = meta_node()
+        node["insights"]["paging"] = {"next": "https://graph.facebook.com/v27.0/next-page"}
+        calls = []
+
+        def get(path, **params):
+            calls.append(path)
+            return node
+        with mock.patch("alerts._meta_usage", return_value={"x-fb-ads-insights-throttle": {"acc_id_util_pct": 95}}):
+            with self.assertRaises(alerts.MetaBusy):
+                alerts.fetch_meta(M, {"metrics": True}, get=get, now=NOW, tz_hint="Europe/Copenhagen")
+        self.assertEqual(len(calls), 1)  # the next page was never asked for
+        with mock.patch("pacing.accounts", return_value=[M]):
+            alerts.update_rule("r_learning_limited", {"enabled": True})
+            usage = iter([{}, {"x-fb-ads-insights-throttle": {"acc_id_util_pct": 95}}] + [{"x-fb-ads-insights-throttle": {"acc_id_util_pct": 95}}] * 5)
+            with mock.patch("alerts._meta_usage", side_effect=lambda: next(usage)):
+                out = alerts.check(None, fetch=lambda a, need, tz=None, now=None: alerts.fetch_meta(a, {"metrics": True, "adsets": True}, get=get,
+                                                                                                      now=NOW, tz_hint="Europe/Copenhagen"), now=NOW)
+        self.assertFalse(out["checked"][0]["ok"])
+        self.assertIn("stopped before the next page", out["checked"][0]["error"])
+        self.assertEqual(out["fired"], [])
+        self.assertGreaterEqual(alerts._state()["meta_backoff"]["until"], NOW + 3600)
+
+    def test_no_delivery_leaves_new_campaigns_alone(self):
+        rows = g_rows()
+        rows["campaign.status != 'REMOVED'"][1]["campaign"]["startDateTime"] = "2026-11-17 02:00:00"  # 10 hours before NOW
+        snap = alerts.fetch_google(G, {"metrics": True}, query=fake_query(rows), now=NOW)
+        self.assertEqual(alerts.evaluate(rule(metric="no_delivery", level="campaign"), snap), [])
+        rows["campaign.status != 'REMOVED'"][1]["campaign"]["startDateTime"] = "2026-11-15 02:00:00"
+        snap = alerts.fetch_google(G, {"metrics": True}, query=fake_query(rows), now=NOW)
+        self.assertEqual(len(alerts.evaluate(rule(metric="no_delivery", level="campaign"), snap)), 1)
+        node = meta_node()
+        node["insights"]["data"] = []
+        node["campaigns"]["data"][0]["created_time"] = "2026-11-17T08:00:00+0000"
+        s = alerts.fetch_meta(M, {"metrics": True, "adsets": True}, get=fake_get(node), now=NOW, tz_hint="Europe/Copenhagen")
+        self.assertEqual(alerts.evaluate(rule(metric="no_delivery", level="campaign"), s), [])
+        self.assertEqual(alerts.evaluate(rule(metric="no_delivery", level="adset"), s), [])
+        node["campaigns"]["data"][0]["created_time"] = "2026-11-01T08:00:00+0000"
+        s = alerts.fetch_meta(M, {"metrics": True, "adsets": True}, get=fake_get(node), now=NOW, tz_hint="Europe/Copenhagen")
+        self.assertEqual(len(alerts.evaluate(rule(metric="no_delivery", level="campaign"), s)), 1)
+
+    def test_meta_rate_limit_codes(self):
+        import meta_api  # noqa: PLC0415
+        for code in (80000, 80004, 17):
+            self.assertTrue(meta_api.MetaError({"code": code, "message": "x"}).rate_limited)
+
+
 class Wiring(unittest.TestCase):
     def setUp(self):
         reset()

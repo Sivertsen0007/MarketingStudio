@@ -164,8 +164,13 @@
     const r = (T.list || []).find(x => x.id === id); if (!r) return;
     showDialog("End test", `<p>End <b>${esc(r.name)}</b> now? This goes into the draft; it ends when you push live.</p>
       <p class="hint">Ending is final: an ended test can't be restarted or undone. The ad sets and ads in it keep running as normal unless you pause them.</p>
-      <label class="tick"><input type="checkbox" id="t_pause"> <span>Also pause the test's ${esc(r.cells.map(c => c.level).filter(Boolean)[0] === "campaign" ? "campaigns" : "ad sets or ads")}</span></label>${noteRow}`,
-      [["Add to draft", go("end", () => ({study_id: id, pause: document.getElementById("t_pause").checked})), "primary"]]);
+      ${r.variants ? `<label class="tick"><input type="checkbox" id="t_pvar" checked> <span>Pause the ${esc(r.variants)} variant(s) Studio created for this test</span></label>
+      <p class="hint" id="t_pvar_warn" style="display:none">Unticked: the variants keep running and spending until the test's planned end.</p>` : ""}
+      <label class="tick"><input type="checkbox" id="t_pause"> <span>Also pause everything else in the test's cells</span></label>${noteRow}`,
+      [["Add to draft", go("end", () => ({study_id: id, pause: document.getElementById("t_pause").checked,
+        pause_variants: !document.getElementById("t_pvar") || document.getElementById("t_pvar").checked})), "primary"]]);
+    const pv = document.getElementById("t_pvar");
+    if (pv) pv.onchange = () => { document.getElementById("t_pvar_warn").style.display = pv.checked ? "none" : "" };
   }
 
   async function render(grid){

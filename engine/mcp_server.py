@@ -302,7 +302,8 @@ META_TEST_TOOLS = [  # [meta tests] meta_tests.py: two reads and one draft tool;
                     "| creative (primary_text, headline, description, link, cta, media_id; applied to every copied ad) | "
                     "optimisation (optimization_goal, conversion_event)}, name?, variant_name?, percent? (variant share, default 50), "
                     "end_date, start_date?}. Adds a Paused copy of the ad set and its ads plus the test.\n"
-                    "  end: test = {study_id, pause?: also pause the test's ad sets / campaigns}. Ending is final.\n"
+                    "  end: test = {study_id, pause_variants? (default true: pause the variants Studio created for it, which otherwise "
+                    "keep running to the planned end), pause?: also pause everything else in its cells}. Ending is final.\n"
                     "A test can't be removed from Meta once pushed; undo only deletes the variant objects Studio created.\n\n"
                     + meta_tests.CHANGE_REFERENCE,
      "inputSchema": {"type": "object", "properties": {

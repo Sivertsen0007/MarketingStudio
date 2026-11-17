@@ -444,7 +444,10 @@ def _targeting(t):
     t = t or {}
     geo = t.get("geo_locations") or {}
     places = (geo.get("countries") or []) + [r.get("name", "") for r in geo.get("regions", [])] + [c.get("name", "") for c in geo.get("cities", [])]
-    return {"countries": ", ".join(places), "age": f"{t.get('age_min', '')}-{t.get('age_max', '')}",
+    adv = bool((t.get("targeting_automation") or {}).get("advantage_audience"))
+    age = (f"{t['age_range'][0]}-{t['age_range'][1]} (suggestion)" if adv and isinstance(t.get("age_range"), list) and len(t["age_range"]) == 2
+           else f"{t.get('age_min', '')}-{t.get('age_max', '')}")
+    return {"countries": ", ".join(places), "age": age,
             "audiences": ", ".join(a.get("name", a.get("id", "")) for a in t.get("custom_audiences", [])),
             "excluded": ", ".join(a.get("name", a.get("id", "")) for a in t.get("excluded_custom_audiences", [])),
             "advantage_audience": bool((t.get("targeting_automation") or {}).get("advantage_audience")),
@@ -917,8 +920,14 @@ def check(c, d=None, items=None):
             if c.get("activate_with_test"):
                 if not src:
                     problems.append("activate_with_test is only for a variant copied from an ad set (from_adset)")
-                if not c.get("end_date"):
-                    problems.append("activate_with_test needs the test's end_date (the variant runs only inside the test)")
+                own = _own_id(c, items)
+                test = _test_of(own, items) if own else None
+                if not test:
+                    problems.append("activate_with_test: no A/B test in the draft uses this ad set. It is only created Active "
+                                    "together with its test; add the test or remove activate_with_test")
+                elif (c.get("start_date"), c.get("end_date")) != (test.get("start_date"), test.get("end_date")):
+                    warnings.append(f'the variant follows its test\'s dates ({test.get("start_date") or "today"} to '
+                                    f'{test.get("end_date")}), not its own')
         elif t == "meta_new_ad":
             _adset_facts(c.get("adset_id"), d, items)
             if c.get("activate_with_test"):
@@ -1169,7 +1178,8 @@ def _overlay(kind, out, campaign_id, adset_id):
                         tg = json.loads(json.dumps(src.get("targeting") or {}))
                         if c.get("countries"):
                             tg["geo_locations"] = {"countries": c["countries"]}
-                        tg.update({k: int(c[k]) for k in ("age_min", "age_max") if c.get(k)})
+                        if c.get("age_min") or c.get("age_max"):
+                            tg, _ = _set_age(tg, c.get("age_min"), c.get("age_max"))
                         tg = _apply_placements(tg, c["placements"]) if c.get("placements") else tg
                     else:
                         tg = _apply_placements({"geo_locations": {"countries": c.get("countries") or []}, "age_min": c.get("age_min", 18),
@@ -1695,6 +1705,18 @@ COPY_AS_IS = ("bid_strategy", "bid_amount", "attribution_spec", "destination_typ
               "regional_regulation_identities", "dsa_beneficiary", "dsa_payor")
 
 
+def _own_id(c, items):
+    """The draft item id of this change (by identity in the pool), or None."""
+    return next((k for k, it in items.items() if it["change"] is c), None)
+
+
+def _test_of(adset_item_id, items):
+    """The meta_test_split in `items` (the draft, or one push) whose cells use new ad set d-<adset_item_id>."""
+    ref = f"d-{adset_item_id}"
+    return next((it["change"] for it in items.values() if it["change"].get("type") == "meta_test_split"
+                 and any(ref in (x.get("ids") or []) for x in it["change"].get("cells") or [])), None)
+
+
 def _set_age(tg, lo, hi):
     """Apply an age change to targeting -> (targeting, text). With Advantage+ audience on, Meta treats the ages as a
     suggestion (targeting.age_range) and only the minimum can be a hard limit (age_max stays 65): the suggestion is set,
@@ -1764,7 +1786,12 @@ def _copy_adset_ops(c, items):
     window = None
     if c.get("activate_with_test"):  # runs only from the test's start to its end (meta_tests: same clock as the test)
         import meta_tests  # noqa: PLC0415
-        window = {k: c.get(k) for k in ("start_date", "end_date")}
+        own = _own_id(c, items)
+        test = _test_of(own, items) if own else None
+        if not test:  # e.g. a push of approved items only, without the test: never Active on its own
+            raise ValueError("this variant is created Active only together with its A/B test, and the test is not in this "
+                             "push: push them together")
+        window = {k: test.get(k) for k in ("start_date", "end_date")}  # the test's window, whatever the variant says
         p["status"] = "ACTIVE"
         p["start_time"], p["end_time"] = meta_tests._times(window)
     else:
@@ -1936,6 +1963,7 @@ def _keep(done):
     object it uses: its cells' ad sets / campaigns / ads, the new campaign above a used ad set, the new ads inside a used
     ad set or campaign. Everything else made in the push is reversed as usual."""
     used = {str(x) for r in done if r.get("created") == "study" for x in r.get("uses") or []}
+    made = {str(r["id"]) for r in done if r.get("created")}
     keep = {id(r) for r in done if r.get("undo") is None}  # tests made or ended: final
     grew = True
     while grew:
@@ -1946,10 +1974,9 @@ def _keep(done):
             rid, parent = str(r["id"]), str(r.get("parent") or "")
             if rid in used or parent in used:
                 keep.add(id(r))
-                for x in (rid, parent):
+                for x in (rid, parent if parent in made else ""):  # an existing parent does not pull in its other children
                     if x and x not in used:
                         used.add(x)
-                        grew = True
                 grew = True
     return [r for r in done if id(r) in keep], [r for r in done if id(r) not in keep]
 
@@ -1967,8 +1994,15 @@ def _reverse(done, tick=None):
             post(r["id"], r["undo"])
             ok = True
         except MetaError as ex:
-            errors.append(f"{r['line']}: {ex}")
             ok = False
+            if r["undo"] == {"status": "DELETED"}:  # can't delete it: at least stop it spending
+                try:
+                    post(r["id"], {"status": "PAUSED"})
+                    errors.append(f"{r['line']}: could not delete it ({ex}), so it was set to Paused instead; delete it in Ads Manager")
+                except MetaError as ex2:
+                    errors.append(f"{r['line']}: could not delete it ({ex}) or pause it ({ex2}); check it in Ads Manager now")
+            else:
+                errors.append(f"{r['line']}: {ex}")
         if tick:
             tick(r, ok)
     return errors
@@ -2042,7 +2076,8 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
                 (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + "."
         return {"ok": False, "partial": True, "push_id": rec["id"], "kept": len(kept), "message": msg + lib, "errors": None}
     if error:
-        msg = f"Meta refused a change, so nothing was kept: {error}"
+        msg = (f"Meta refused a change, so nothing was kept: {error}" if not rolled
+               else f"Meta refused a change: {error}. Not everything made before it could be removed")
         if done:
             msg += f" ({len(done) - len(rolled)} change(s) already made were reversed" + (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + ")"
         return {"ok": False, "push_id": rec["id"], "message": msg + lib, "errors": None}

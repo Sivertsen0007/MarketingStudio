@@ -155,7 +155,7 @@ def _row(s, local=None):
             "start_time": s.get("start_time"), "end_time": s.get("end_time"), "created": (s.get("created_time") or "")[:10],
             "cells": cells, "objectives": [{"id": o["id"], "name": o.get("name", ""), "type": o.get("type", ""),
                                             "primary": bool(o.get("is_primary"))} for o in objs],
-            "by_studio": bool(lc)}
+            "by_studio": bool(lc), "variants": len(lc.get("created") or [])}
 
 
 def _cache_path(name):
@@ -451,6 +451,12 @@ def check(c, d, items):
         if not re.fullmatch(r"\d+", str(c.get("study_id") or "")):
             problems.append("study_id must be a Meta test id")
         warnings.append("ending a test is final: it can't be undone or restarted")
+        paused = {(it["change"].get("level"), str(it["change"].get("id"))) for it in items.values()
+                  if it["change"].get("type") == "meta_status" and it["change"].get("status") == "paused"}
+        left = [v for v in variants_of(c.get("study_id")) if (v["level"], str(v["id"])) not in paused]
+        if left:
+            warnings.append(f"{len(left)} variant(s) Studio created for this test keep running and spending until the "
+                            "test's planned end unless you pause them: " + ", ".join(f'{v["level"]} {v["id"]}' for v in left))
         return problems, warnings
     if not str(c.get("name") or "").strip():
         problems.append("the test needs a name")
@@ -732,9 +738,11 @@ def do(s, ctx):
         meta.post(s["study"], p)
         return {"line": s["line"], "id": s["study"], "undo": None, "final": "an ended test can't be restarted"}
     params = json.loads(json.dumps(s["params"]))
+    created = []  # objects Studio made in this push for the test: End test pauses them by default
     for cell in params["cells"]:
         for k in ("adsets", "campaigns", "ads"):
             if k in cell:
+                created += [{"id": ctx[meta._ref(o)], "level": k[:-1]} for o in cell[k] if meta._ref(o)]
                 cell[k] = [ctx[meta._ref(o)] if meta._ref(o) else o for o in cell[k]]
     start, end = _times(s["test"], ctx=ctx)
     params.update(start_time=start, end_time=end)
@@ -744,7 +752,7 @@ def do(s, ctx):
     level = "ad" if s["study_kind"] == "creative" else ("adset" if "adsets" in params["cells"][0] else "campaign")
     _remember(sid, {"kind": s["study_kind"], "name": params["name"],
                     "cells": [{"name": c["name"], "level": level, "ids": c.get("ads") or c.get("adsets") or c.get("campaigns")}
-                              for c in params["cells"]]})
+                              for c in params["cells"]], "created": created})
     _mem.pop((meta.acct(), "list"), None)
     return {"line": s["line"], "id": sid, "undo": None, "created": "study", "final": FINAL, "uses": _cell_ids(params)}
 
@@ -783,9 +791,16 @@ def variant_changes(adset_id, change, test_name=None, variant_name=None, start_d
         if not ch.get("optimization_goal"):
             raise ValueError("an optimisation change needs optimization_goal")
         new_set.update({k: ch[k] for k in ("optimization_goal", "conversion_event") if ch.get(k)})
-    ads = [a for a in d["ads"] if a.get("adset_id") == src["id"] and a.get("status") not in ("DELETED", "ARCHIVED")]
+    # the ads that run in the original (status Active): the variant gets an Active copy of each and nothing more,
+    # so paused ads are left out (they deliver nothing in the original either)
+    ads = [a for a in d["ads"] if a.get("adset_id") == src["id"] and a.get("status") == "ACTIVE"]
     if not ads:
-        raise ValueError(f'ad set "{src["name"]}" has no ads to copy into the variant')
+        raise ValueError(f'ad set "{src["name"]}" has no active ads to copy into the variant')
+    stuck = [a["name"] for a in ads if not meta.creative_text(a.get("creative"))["editable"]]
+    if stuck:  # leaving them out would make the variant differ by more than the one change
+        raise ValueError(f'{len(stuck)} of the ad set\'s {len(ads)} ads can\'t be copied by Studio (flexible / Advantage+ or '
+                         f'post-based creative: {", ".join(stuck[:5])}), so the variant would differ by more than one change. '
+                         "Duplicate it in Ads Manager, or test ad sets whose ads are single image or video")
     out = [new_set]
     for a in ads:
         ad = {"type": "meta_new_ad", "adset_id": "d-v1", "name": a["name"], "from_ad": a["id"], "activate_with_test": True}
@@ -799,14 +814,24 @@ def variant_changes(adset_id, change, test_name=None, variant_name=None, start_d
     return out
 
 
-def end_changes(study_id, pause=False):
-    """End a test now (meta_test_end); pause=True also pauses the ad sets / campaigns in its cells (meta_status)."""
+def variants_of(study_id):
+    """Objects Studio created for this test (its variants): [{id, level}]."""
+    return list((_local().get(str(study_id)) or {}).get("created") or [])
+
+
+def end_changes(study_id, pause=False, pause_variants=True):
+    """End a test now (meta_test_end). pause_variants (on by default) pauses the variants Studio created for it, which
+    otherwise keep running to the planned end; pause=True pauses everything in its cells (meta_status)."""
     st = next((s for s in studies() if s["id"] == str(study_id)), None)
     out = [{"type": "meta_test_end", "study_id": str(study_id), "name": (st or {}).get("name", "")}]
+    seen = set()
+    todo = [(v["level"], v["id"]) for v in variants_of(study_id)] if pause_variants else []
     if pause and st:
-        for cell in st["cells"]:
-            if cell["level"] in ("adset", "campaign", "ad"):
-                out += [{"type": "meta_status", "level": cell["level"], "id": i, "status": "paused"} for i in cell["ids"]]
+        todo += [(cell["level"], i) for cell in st["cells"] if cell["level"] in ("adset", "campaign", "ad") for i in cell["ids"]]
+    for lvl, i in todo:
+        if (lvl, i) not in seen:
+            seen.add((lvl, i))
+            out.append({"type": "meta_status", "level": lvl, "id": str(i), "status": "paused"})
     return out
 
 
@@ -829,7 +854,7 @@ def build(mode, a):
         return variant_changes(a.get("adset_id"), a.get("change") or {}, a.get("name"), a.get("variant_name"),
                                a.get("start_date"), a.get("end_date"), a.get("percent") or 50)
     if mode == "end":
-        return end_changes(a.get("study_id"), bool(a.get("pause")))
+        return end_changes(a.get("study_id"), bool(a.get("pause")), a.get("pause_variants") is not False)
     raise ValueError("mode must be split, creative, variant or end")
 
 
@@ -843,11 +868,13 @@ CHANGE_REFERENCE = """Meta tests (A/B and creative tests; Meta calls them ad stu
      (2-5 cells, whole-number shares of at least 10 adding up to 100; leave all percents out for equal shares)
   {"type":"meta_test_creative","name":"..","ads":["<ad id>","<ad id>"],"daily_budget":30.0,"end_date":".."}
      (2-7 ads, one per cell, ideally in one ad set; daily_budget = test budget per day, or "budget_percent":20 instead)
-  {"type":"meta_test_end","study_id":".."}   (ends a running test now: final, can't be undone)
+  {"type":"meta_test_end","study_id":".."}   (ends a running test now: final, can't be undone; variants Studio made for
+     it keep running to the planned end unless paused with meta_status - the end mode of meta_test_add_to_draft does that)
   A test can't be removed from Meta once made, and Meta can't test-run one first: Push live checks the objects with reads.
   Variant: meta_new_adset takes "from_adset":"<ad set id>" to copy that ad set (targeting, optimisation, bidding, budget,
   regional and DSA declarations) and change only the fields given (countries, age_min/age_max, placements,
-  optimization_goal, conversion_event). "activate_with_test":true (with start_date/end_date, also on its meta_new_ad
-  copies) creates it Active, scheduled to deliver only from the test start to its end; Push live needs the spend tick.
+  optimization_goal, conversion_event). "activate_with_test":true (also on its meta_new_ad copies) creates it Active,
+  scheduled to the start and end of the A/B test that uses it (the test's dates win); it needs that test in the draft and
+  in the same push, and Push live needs the spend tick.
   With Advantage+ audience on, an age change is a suggestion (age_range), not a hard limit.
   Dates are days in the ad account's time zone."""

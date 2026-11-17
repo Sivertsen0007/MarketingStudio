@@ -109,6 +109,38 @@ class Shared(unittest.TestCase):
     def clear_team(self, h, key):
         self.run_in(h, f"out = ts.save({key!r}, None, scope='team')['keys'][{key!r}]['source']")
 
+    # ---------- pacing targets (pacing.py) ----------
+
+    def test_pacing_targets_shared(self):
+        adm, _ = self.member("Ada", role="admin")
+        ed, _ = self.member("Eve")
+        r = self.run_in(adm, """
+import pacing
+pacing.save_targets({"account": "1234567890", "monthly": 5000, "campaigns": {"11": 1200}})
+pacing.save_targets({"share": True})
+out = {"t": pacing.targets(), "info": pacing.targets_info()}""")
+        self.assertEqual(r["t"]["accounts"]["1234567890"], {"monthly": 5000, "campaigns": {"11": 1200}})
+        self.assertEqual((r["info"]["source"], r["info"]["team"]), ("team", True))
+        r = self.run_in(ed, """
+import pacing
+ts.refresh()
+info = pacing.targets_info()
+try:
+    pacing.save_targets({"account": "1234567890", "monthly": 1})
+    err = ""
+except ValueError as ex:
+    err = str(ex)
+out = {"t": pacing.targets(), "info": info, "err": err}""")
+        self.assertEqual(r["t"]["accounts"]["1234567890"]["monthly"], 5000)
+        self.assertFalse(r["info"]["editable"])
+        self.assertIn("Set by your team", r["err"])
+        r = self.run_in(adm, """
+import pacing
+pacing.save_targets({"account": "1234567890", "monthly": 6000})
+out = pacing.targets()""")
+        self.assertEqual(r["accounts"]["1234567890"]["monthly"], 6000)  # an admin's edit goes to the team's value
+        self.clear_team(adm, "pacing_targets")
+
     # ---------- solo ----------
 
     def test_new_install_has_no_copy_rules(self):

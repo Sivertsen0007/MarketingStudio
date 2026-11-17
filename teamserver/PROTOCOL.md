@@ -127,7 +127,7 @@ review `{id, changeset {id,name}|null, title, area, items:[{coll, id, version, h
   64 KB, or null to clear it (everyone falls back to their own). base_version, when given, must be the current version,
   else 409 `{error, setting}`. Each write: version + 1, an event `{kind: "settings", area: "team", data: {key, version}}`
   and the SSE event `settings` `{key, version}` to everyone. `DELETE /api/v1/settings/<key>` = PUT with value null.
-- Keys: `copy_rules`, `seo_sites`, `email_test_addresses`, `social`, `calendar_limits` (unknown key: 404). The server
+- Keys: `copy_rules`, `seo_sites`, `email_test_addresses`, `social`, `calendar_limits`, `pacing_targets` (unknown key: 404). The server
   checks only the key, the object and its size; the app checks what is inside (engine/team_settings.py describes each
   value) and ignores a value it can't use.
 

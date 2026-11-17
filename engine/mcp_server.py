@@ -277,7 +277,39 @@ NOTIFY_TOOLS = [
                                                   "what they own and pushes in areas they follow. Read-only.",
      "inputSchema": {"type": "object", "properties": {"unread_only": {"type": "boolean"}, "limit": {"type": "integer"}}}},
 ]
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS
+PACING_TOOLS = [
+    # Budget pacing (pacing.py). Read, and draft only: budget changes go into the Ads draft; pushing them is the user's button.
+    {"name": "pacing_status",
+     "description": "Budget pacing per ad account (Google Ads and Meta) and campaign for this month: monthly target (set by the user in "
+                    "Studio's Pacing tab), month-to-date spend, forecast to month end (weekday-aware run-rate), over/under flag with the "
+                    "amount, daily budget, the spend per day needed to land on target, and draft-ready budget recommendations (Meta "
+                    "steps capped to protect learning; Google 2x day / 30.4x month rules). Cached until a refresh; refresh=true reads "
+                    "Google / Meta again (read-only).",
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "one account (id or key, see list_accounts); none = every account"},
+         "refresh": {"type": "boolean", "description": "read spend again now (read-only); default false"}}}},
+    {"name": "pacing_add_to_draft",
+     "description": "Add an account's pacing budget recommendations to its Ads draft (all, or only the campaign / ad set ids given). "
+                    "Draft only: nothing changes on Google or Meta. The user reviews them in Studio, where the usual checks, the live "
+                    "preview and team approval apply, and pushes them live with their own button (with undo). A pacing change already "
+                    "in the draft for the same object is replaced; other budget changes there are left alone.",
+     "inputSchema": {"type": "object", "properties": {
+         "account": {"type": "string", "description": "ad account id or key"},
+         "ids": {"type": "array", "items": {"type": "string"}, "description": "campaign or ad set ids; none = every recommendation"},
+         "note": {"type": "string", "description": "why - added to each draft note"}}, "required": ["account"]}},
+]
+PACING_NAMES = {t["name"] for t in PACING_TOOLS}
+
+
+def call_pacing(name, a):
+    import pacing  # noqa: PLC0415
+    if name == "pacing_status":
+        v = pacing.status(a.get("account") or None, refresh=bool(a.get("refresh")))
+        return {k: v[k] for k in ("accounts", "errors", "drift", "method")}
+    return pacing.add_to_draft(a["account"], a.get("ids") or None, by="claude", note=a.get("note"))
+
+
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS
 TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
 
 
@@ -411,6 +443,8 @@ AREA_NAMES = {t["name"] for t in AREA_TOOLS}
 def call(name, a):
     if name in AREA_NAMES:
         return call_area(name, a)
+    if name in PACING_NAMES:
+        return call_pacing(name, a)
     if name in ("team_status", "team_sync"):
         return call_team(name)
     if name in ("reviews_list", "review_request"):

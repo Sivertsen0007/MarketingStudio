@@ -24,7 +24,7 @@
 | | |
 |---|---|
 | **Start** | [What it is](#what-it-is) · [Install](#install) · [First run: Setup](#first-run-setup) · [Updates](#updates) |
-| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
+| **Using it** | [The window](#the-window) · [Ads](#ads-google-ads-and-meta) · [Draft and Push](#the-draft-and-push-live) · [Pacing](#pacing) · [Overview](#overview) · [Email](#email) · [SEO](#seo) · [SoMe](#some) · [Activity](#activity) · [Calendar](#calendar) · [Teams](#teams) · [Keyboard](#keyboard) |
 | **Connections** | [Meta](#meta) · [Google Ads](#google-ads) · [Google sign-in](#google-sign-in) · [Email platform](#email-platform) · [WordPress](#wordpress) · [LinkedIn](#linkedin) · [.env import](#import-keys-from-a-env-file) |
 | **Claude** | [Use with Claude Code (MCP)](#use-with-claude-code-mcp) · [MCP tools](#mcp-tools) |
 | **Under the hood** | [How it works](#how-it-works) · [Where your data lives](#where-your-data-lives) · [Data refresh policy](#data-refresh-policy) · [Safety rails](#safety-rails) · [Privacy](#privacy) |
@@ -120,10 +120,10 @@ have, so nobody else can push code into your copy.
 | Part | What it does |
 |---|---|
 | **Overview** (top left) | Switches between the dashboard and the editor |
-| **Ads · Email · SEO · SoMe · Activity** | The five areas |
+| **Ads · Pacing · Email · SEO · SoMe · Activity** | The areas |
 | **Account picker** | Google Ads accounts and Meta ad accounts. Meta accounts can be added in Settings |
 | **↻** | Re-reads the current account from the API |
-| **Refresh data ▾** | Fetch again per source: one Google account, one Meta account, Email, SEO, SoMe, Activity, rates, or all |
+| **Refresh data ▾** | Fetch again per source: one Google account, one Meta account, Email, SEO, SoMe, Activity, Pacing, rates, or all |
 | **Push** | Turns blue with a count when the draft has changes. Opens the push summary |
 | **Connections** | Read-only health check of every connection (tokens, API versions, access, rate limits) |
 | **Setup** | Keys and sign-in |
@@ -206,6 +206,26 @@ one change. **Check** re-runs every check. **Clear** empties the draft.
 ![Push history](docs/screenshots/push-history.png)
 
 Not everything can be undone automatically: removed keywords, ads or ad groups in Google Ads, and bid strategy switches. The history says so.
+
+---
+
+## Pacing
+
+**Pacing** (next to Ads, or *Pacing (all accounts)* under MANAGE) shows every Google Ads and Meta account for the current
+month: the monthly target you set (per account, and optionally per campaign), spend so far, the forecast to month end,
+an over/under flag with the amount, today's daily budgets and the spend per day needed to land on the target.
+
+- **Forecast**: spend so far + today's expected spend + the rest of the month at a run-rate. The run-rate is the last 7
+  completed days, adjusted for the day of the week (learned from the last 28 days). Paused campaigns add nothing more, and
+  a daily budget caps each remaining day. Days follow each account's own time zone.
+- **Recommendations** are "set the daily budget to X" per campaign (Meta: per campaign with a campaign budget, per ad set
+  otherwise). They only go into the account's draft when you press **Add to draft**: check, preview and Push live as
+  usual (team approval applies, undo works). Meta changes move at most 20% per step (changeable) because big budget
+  changes restart learning; ad sets in learning are flagged. Google may spend up to 2x the daily budget on one day and
+  about 30.4x in a month; shared and total budgets are left alone.
+- Targets are this Mac's own, or the team's when an owner or admin shares them (team setting *Ad spend targets*).
+- A daily **Budget pacing check** (Settings, off by default) reads spend and flags accounts drifting from their target.
+  It never changes a budget, and it only runs while Refresh data is automatic.
 
 ---
 
@@ -556,6 +576,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Topical map | `seo_map_get` (nodes, numbers, issues, coverage; filter by state), `seo_map_unmapped`, `seo_map_propose` (changes you accept in Studio), `seo_write_page` (a new page for a node, into the draft) |
 | SoMe | `social_calendar`, `social_list_drafts`, `social_add_draft` |
 | Activity | `activity_summary`, `activity_rows` (who made each change is always left out) |
+| Pacing | `pacing_status` (targets, spend, forecast, flags, recommendations), `pacing_add_to_draft` (budget changes into the draft only) |
 | Calendar | `calendar_list`, `library_list`, `team_settings_get` (read only) |
 
 ---
@@ -575,7 +596,8 @@ Marketing Studio.app
     ├── meta_ads.py        Meta Marketing API: read, previews, push one change at a time, undo
     ├── overview.py, fx.py the dashboard; display-currency rates (ECB)
     ├── datapolicy.py, datasources.py   when data may be fetched again
-    ├── areas/             Email, SEO, SoMe, Activity
+    ├── pacing.py          budget pacing: spend, forecast, targets, draft budget recommendations
+    ├── areas/             Pacing, Email, SEO, SoMe, Activity
     ├── mcp_server.py      the MCP server for Claude (stdio)
     ├── updater.py         in-app updates from GitHub Releases
     └── vendor_hub/        small API clients (Meta Graph, Google Ads REST)

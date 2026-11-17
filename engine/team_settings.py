@@ -12,6 +12,8 @@ Settings (one value per key, each a JSON object):
                         any subset; the fields given replace this Mac's SoMe settings (slots and utm per channel)
   calendar_limits       {"max_per_channel_day", "min_gap_hours", "same_link_days", "same_image_days", "same_topic_days",
                         "email_audience_days"} (the clash warnings in shared_calendar.py)
+  pacing_targets        {"accounts": {"<account id>": {"monthly": 5000, "campaigns": {"<campaign id>": 1200}}},
+                        "tolerance_pct": 5, "meta_step_pct": 20}  monthly ad spend targets (pacing.py), account currency
 
 Where a value comes from:
   solo (not in a team)  this Mac's own settings, exactly as before: copy_rules / seo_sites / calendar_limits in
@@ -40,9 +42,10 @@ import appconfig
 import draftstore
 import team
 
-KEYS = ("copy_rules", "seo_sites", "email_test_addresses", "social", "calendar_limits")
+KEYS = ("copy_rules", "seo_sites", "email_test_addresses", "social", "calendar_limits", "pacing_targets")
 LABELS = {"copy_rules": "Copy rules", "seo_sites": "SEO sites", "email_test_addresses": "Test email addresses",
-          "social": "SoMe slots, UTM and late posting", "calendar_limits": "Calendar limits"}
+          "social": "SoMe slots, UTM and late posting", "calendar_limits": "Calendar limits",
+          "pacing_targets": "Ad spend targets (Pacing)"}
 AREAS = ("google_ads", "meta_ads", "email", "seo", "social")
 AREA_ALIASES = {"ads": ("google_ads", "meta_ads")}
 LEVELS = ("block", "warn")
@@ -57,6 +60,9 @@ TEAM_FILE = "settings.json"  # in <data>/team (team.py's folder, removed when le
 MANAGERS = ("owner", "admin")
 EMAIL_RE = re.compile(r"[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}")
 MAX_RULES = 200
+PACING_DEFAULTS = {"accounts": {}, "tolerance_pct": 5.0, "meta_step_pct": 20.0}
+PACING_ACCOUNT = re.compile(r"[A-Za-z0-9_]{1,40}")
+PACING_CAMPAIGN = re.compile(r"[A-Za-z0-9_]{1,40}")
 
 LIB = "library"
 LIB_KINDS = {"headline": "Headline", "cta": "Call to action", "image": "Image URL", "utm": "UTM preset",
@@ -249,12 +255,42 @@ def clean(key, value):
         if "late_minutes" in value:
             out["late_minutes"] = int(_num(value["late_minutes"] or 0, "late posting minutes", 0, 240))
         return out
+    if key == "pacing_targets":
+        return clean_pacing(value)
     # calendar_limits
     out = {}
     for k, (lo, hi) in CALENDAR_RANGES.items():
         if k in value and value[k] is not None and value[k] != "":
             out[k] = _num(value[k], k.replace("_", " "), lo, hi)
     return out
+
+
+def clean_pacing(value):
+    accts = value.get("accounts") or {}
+    if not isinstance(accts, dict) or len(accts) > 50:
+        raise ValueError("accounts must be {account id: {monthly, campaigns}} (max 50)")
+    out = {}
+    for aid, a in accts.items():
+        if not PACING_ACCOUNT.fullmatch(str(aid)):
+            raise ValueError(f"{str(aid)[:40]} is not an ad account id")
+        if not isinstance(a, dict):
+            raise ValueError("each account's targets must be an object")
+        camps = a.get("campaigns") or {}
+        if not isinstance(camps, dict) or len(camps) > 500:
+            raise ValueError("campaigns must be {campaign id: monthly target} (max 500)")
+        cs = {}
+        for cid, v in camps.items():
+            if not PACING_CAMPAIGN.fullmatch(str(cid)):
+                raise ValueError(f"{str(cid)[:40]} is not a campaign id")
+            if v not in (None, ""):
+                cs[str(cid)] = round(_num(v, "campaign target", 0, 1e9), 2)
+        m = a.get("monthly")
+        m = None if m in (None, "") else round(_num(m, "monthly target", 0, 1e9), 2)
+        if m is not None or cs:
+            out[str(aid)] = {"monthly": m, "campaigns": cs}
+    return {"accounts": out,
+            "tolerance_pct": _num(value.get("tolerance_pct") if value.get("tolerance_pct") not in (None, "") else 5, "tolerance", 1, 50),
+            "meta_step_pct": _num(value.get("meta_step_pct") if value.get("meta_step_pct") not in (None, "") else 20, "Meta step", 5, 50)}
 
 
 # ---------- this Mac's own values ----------
@@ -281,6 +317,11 @@ def local_get(key):
     if key == "social":
         return _social_local()
     v = _local_all().get(key)
+    if key == "pacing_targets":
+        try:
+            return clean(key, v) if isinstance(v, dict) else copy.deepcopy(PACING_DEFAULTS)
+        except ValueError:
+            return copy.deepcopy(PACING_DEFAULTS)
     if key == "calendar_limits":
         try:
             return {**CALENDAR_DEFAULTS, **(clean(key, v) if isinstance(v, dict) else {})}

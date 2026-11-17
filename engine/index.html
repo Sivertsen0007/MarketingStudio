@@ -68,6 +68,8 @@ header,.subbar{min-width:0;overflow:hidden}
 .chip.warn{background:var(--warn-bg);color:var(--text)}
 .chip.draft{background:var(--draft-bg);color:var(--text)}
 .chip.ok{background:var(--ok-bg);color:var(--text)}
+.chip.exp{font-size:12px;padding:1px 6px;margin-left:6px;background:var(--line2);color:var(--text2)}
+.chip.exp.base{background:var(--warn-bg);color:var(--text)}
 .spacer{flex:1}
 main{display:grid;grid-template-columns:300px minmax(0,1fr) 400px;min-height:0;min-width:0}
 aside,section{min-height:0;min-width:0;display:flex;flex-direction:column}
@@ -144,7 +146,7 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .item .sum{margin:3px 0;word-break:break-word}
 .item .note{font-size:12px;color:var(--muted);font-style:italic}
 .item .prob{font-size:12px;color:var(--text);background:var(--bad-bg);border-radius:2px;padding:3px 7px;margin-top:4px}
-.item .warnl{font-size:12px;color:var(--text);background:var(--warn-bg);border-radius:2px;padding:3px 7px;margin-top:4px}
+.item .warnl,.pv .warnl,#editBody .warnl{font-size:12px;color:var(--text);background:var(--warn-bg);border-radius:2px;padding:3px 7px;margin-top:4px}
 .draft-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;border-top:1px solid var(--line)}
 button.live{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:500}
 @media (prefers-color-scheme: dark){button.live{color:#202124}}
@@ -518,6 +520,12 @@ const BUILTIN = {
 };
 const builtins = () => (BUILTIN[chan()] || {})[S.kind] || {};
 
+// ---- experiments: a trial campaign belongs to its experiment (read-only here); a base campaign warns ----
+const EXP_MSG = "This is an experiment's trial campaign: change it from the experiment";
+const isTrial = r => !!r && r.experiment === "trial";
+const expChip = r => !r || !r.experiment ? "" : r.experiment === "trial"
+  ? `<span class="chip exp" title="${esc(EXP_MSG + (r.experiment_base ? ` (base campaign: ${r.experiment_base})` : ""))}">experiment</span>`
+  : `<span class="chip exp base" title="Has a running experiment: Google copies only some changes into its trial campaign">has experiment</span>`;
 // ---- tree ----
 async function loadTree(){
   S.tree = await api("/api/tree?" + qs({acct:S.acct, status:srvStatus()}));
@@ -532,7 +540,7 @@ function renderTree(){
     const open = S.open.has(String(c.id)) || (f && groups.length);
     h += `<div class="node ${S.camp === String(c.id) && !S.ag ? "sel" : ""}" data-c="${c.id}" title="${esc(c.name)} - ${esc(c.type)}">
       <span class="tw" data-tw="${c.id}">${c.ad_groups.length ? (open ? "▾" : "▸") : ""}</span><span class="dot ${c.status}"></span><span class="nm">${esc(c.name)}</span>
-      ${c.editor ? `<span class="ed">${c.editor}</span>` : ""}${c.draft ? ` <span class="chip draft" title="New in the draft: created Paused when you push live">draft</span>` : ""}</div>`;
+      ${c.editor ? `<span class="ed">${c.editor}</span>` : ""}${expChip(c)}${c.draft ? ` <span class="chip draft" title="New in the draft: created Paused when you push live">draft</span>` : ""}</div>`;
     if (open) for (const g of (f && !c.name.toLowerCase().includes(f) ? groups : c.ad_groups))
       h += `<div class="node ag ${S.ag === String(g.id) ? "sel" : ""}" data-c="${c.id}" data-g="${g.id}" title="${esc(g.name)}"><span class="dot ${g.status}"></span><span class="nm">${esc(g.name)}</span>${g.draft ? ` <span class="chip draft">draft</span>` : ""}</div>`;
   }
@@ -621,7 +629,7 @@ function renderGrid(){
     const i = S.rows.indexOf(r);
     const removed = r.status === "Removed" || (r._draft && r._draft.status && r._draft.status.value === "Removed");
     h += `<tr data-i="${i}" class="${r._new ? "new" : ""} ${removed ? "removed" : ""} ${S.focus && String(r.id) === S.focus ? "focus" : ""}">`;
-    if (v.bulk) h += `<td class="cb">${r._new ? "" : `<input type="checkbox" data-sel="${i}" ${S.sel.has(i) ? "checked" : ""}>`}</td>`;
+    if (v.bulk) h += `<td class="cb">${r._new || isTrial(r) ? "" : `<input type="checkbox" data-sel="${i}" ${S.sel.has(i) ? "checked" : ""}>`}</td>`;
     for (const c of cols){
       if (c.thumb){ const mu = r.media_id && mediaUrl(r.media_id);
         h += `<td class="thumbc">${mu ? (r.format === "Video" ? `<span class="chip draft" title="Uploaded video, stored on this Mac until you push">Video</span>` : `<img class="thumb" src="${esc(mu)}" data-big="${esc(mu)}" alt="" loading="lazy">`)
@@ -630,9 +638,9 @@ function renderGrid(){
       const val = cellVal(r, c);
       const mon = isMoney(c) ? moneyCell(c, val) : null;
       const shown = mon ? mon[0] : c.fmt ? c.fmt(val) : esc(val);
-      const editable = c.edit && !r._new && (!c.when || c.when(r)) && !(S.kind === "campaigns" && c.key === "budget" && r.shared_budget);
+      const editable = c.edit && !r._new && !isTrial(r) && (!c.when || c.when(r)) && !(S.kind === "campaigns" && c.key === "budget" && r.shared_budget);
       const stEdit = editable && (c.edit.startsWith("status") || c.edit === "mstatus");
-      h += `<td class="${c.num ? "num" : ""} ${d ? "changed" : ""} ${stEdit ? "st-edit" : editable ? "edit" : ""}" data-k="${c.key}" title="${esc(mon ? mon[1] : val)}">${d ? `<span class="old">${isMoney(c) ? moneyCell(c, r[c.key])[0] : c.fmt ? c.fmt(r[c.key]) : esc(r[c.key])}</span>` : ""}${shown}</td>`;
+      h += `<td class="${c.num ? "num" : ""} ${d ? "changed" : ""} ${stEdit ? "st-edit" : editable ? "edit" : ""}" data-k="${c.key}" title="${esc(mon ? mon[1] : val)}">${d ? `<span class="old">${isMoney(c) ? moneyCell(c, r[c.key])[0] : c.fmt ? c.fmt(r[c.key]) : esc(r[c.key])}</span>` : ""}${shown}${c.key === "campaign" ? expChip(r) : ""}</td>`;
     }
     h += "</tr>";
   });
@@ -659,7 +667,7 @@ function renderGrid(){
 $("#grid").onclick = e => {
   const th = e.target.closest("th[data-s]");
   if (th){ const k = th.dataset.s; S.sort = S.sort && S.sort.key === k ? {key:k, dir:-S.sort.dir} : {key:k, dir:1}; return renderGrid() }
-  if (e.target.id === "selAll"){ S.rows.forEach((r, i) => !r._new && passFilter(r) && (e.target.checked ? S.sel.add(i) : S.sel.delete(i))); renderGrid(); return }
+  if (e.target.id === "selAll"){ S.rows.forEach((r, i) => !r._new && !isTrial(r) && passFilter(r) && (e.target.checked ? S.sel.add(i) : S.sel.delete(i))); renderGrid(); return }
   if (e.target.dataset.sel !== undefined){ const i = +e.target.dataset.sel; e.target.checked ? S.sel.add(i) : S.sel.delete(i); return updBulk() }
   const st = e.target.closest("td.st-edit");
   if (st) return statusMenu(st);
@@ -686,6 +694,7 @@ document.addEventListener("keydown", e => {
 $("#grid").ondblclick = e => {
   const tr = e.target.closest("tr[data-i]"); if (!tr || e.target.closest("td.edit, td.st-edit")) return;
   const r = S.rows[+tr.dataset.i], v = V()[S.kind];
+  if (isTrial(r)) return toast(EXP_MSG);
   if (v.open && !r._new) v.open(r);
 };
 // ---- status menu: click the status pill, pick the new status ----
@@ -874,7 +883,8 @@ async function livePreview(){
     ${i.lines.map(l => `<div class="ln2">${esc(l)}</div>`).join("")}
     ${i.spend.map(f => `<span class="flag spend">raises spend: ${esc(f)}</span> `).join("")}
     ${i.permanent.length ? `<span class="flag perm">permanent, can't be undone</span>` : ""}
-    ${i.problems.map(x => `<div class="prob">${esc(x)}</div>`).join("")}</div>`).join("");
+    ${i.problems.map(x => `<div class="prob">${esc(x)}</div>`).join("")}
+    ${(i.warnings || []).map(x => `<div class="warnl">${esc(x)}</div>`).join("")}</div>`).join("");
   const body = `<table class="tally">${counts.map(([l, n]) => `<tr><td>${esc(l)}</td><td>${n}</td></tr>`).join("")}</table>
     ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then Undo or fix ${bad.length > 1 ? "them" : "it"} in the Draft tab.</div>` : ""}
     ${isMeta() ? "" : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
@@ -1498,8 +1508,10 @@ function renderEdit(r){
     b.innerHTML = `<div class="edit-head"><div><div class="t">${esc(r.ad || r.keyword || r.text || r.ad_group || r.campaign || r.audience || "")}</div><div class="s">${esc([r.campaign, r.ad_group].filter(Boolean).join(" / "))}</div></div></div>
       ${colsFor().filter(c => !c.thumb).map(c => { const v = cellVal(r, c), mon = isMoney(c) ? moneyCell(c, v) : null;
         return `<div class="fld"><label><span>${esc(isMoney(c) && acctCur() && c.edit === "money" ? curLabel(c.label) : colLabel(c))}</span></label><div ${mon ? `title="${esc(mon[1])}"` : ""}>${mon ? mon[0] || "-" : c.fmt ? c.fmt(v) : esc(v) || "-"}</div></div>` }).join("")}
-      <p class="hint">${v.open ? "Use Edit below to change this." : "Change status and amounts straight in the grid."}</p>`;
-    editFoot(v.open && !r._new ? [["Edit", () => v.open(r), "primary"]] : []);
+      ${isTrial(r) ? `<div class="warnl">${esc(EXP_MSG)}${r.experiment_base ? ` (base campaign: ${esc(r.experiment_base)})` : ""}. Studio shows it read-only.</div>`
+        : `<p class="hint">${v.open ? "Use Edit below to change this." : "Change status and amounts straight in the grid."}</p>`}
+      ${r.experiment === "base" ? `<div class="warnl">This campaign has a running experiment: Google copies only some changes into its trial campaign.</div>` : ""}`;
+    editFoot(v.open && !r._new && !isTrial(r) ? [["Edit", () => v.open(r), "primary"]] : []);
     return;
   }
   if (r._new && S.kind === "ads") return editNewAd(r);

@@ -22,6 +22,7 @@ import appconfig  # noqa: E402,F401  (vendor_hub on sys.path)
 import gads  # noqa: E402  (auth + developer token, shared with the SEM agent)
 
 import core
+import experiments  # noqa: E402
 import progress  # noqa: E402
 
 gae = core.gae
@@ -783,8 +784,11 @@ def plan(acct, enable_new=False, items=None, source=None):
     items = core.draft(acct)["items"] if items is None else items
     ids = Ids(acct, source)
     ops, per_item = [], []
+    exps = _experiments(acct) if items else experiments.empty()
     for it in items:
-        entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [], "problems": list(it["problems"])}
+        xp, xw = experiments.check(exps, it["change"])
+        entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
+                 "problems": xp + list(it["problems"]), "warnings": xw}
         if not entry["problems"]:
             try:
                 for o in ops_for(ids, it["change"], enable_new):
@@ -812,6 +816,16 @@ def plan(acct, enable_new=False, items=None, source=None):
                             break
     return {"items": per_item, "ops": ops, "ok": bool(ops) and not any(e["problems"] for e in per_item),
             "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item)}
+
+
+def _experiments(acct):
+    """Trial campaigns (refused) and bases with a running experiment (warned): asked from Google at push time, plus what
+    Editor / the cache know. If Google can't be asked, the cached facts still apply (and the push itself needs Google)."""
+    try:
+        fresh = experiments.fetch(acct, query)
+    except Exception:  # noqa: BLE001
+        fresh = experiments.empty()
+    return experiments.merge(fresh, experiments.known(acct))
 
 
 def _only(acct, only):

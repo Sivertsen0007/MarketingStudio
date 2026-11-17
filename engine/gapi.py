@@ -18,6 +18,9 @@ mode they are 15 minutes fresh, stale served at once and refreshed in a backgrou
 
 Read only: GAQL searchStream. Nothing here writes to Google Ads.
 
+Experiments: the base cache also holds "experiments" (see experiments.py: trial campaigns, and base campaigns with a
+running experiment); grid and tree rows carry experiment = "trial" (read-only in the UI) or "base".
+
 Fields Editor has that the API does not give (left empty): comment (Editor-only note), editor (Editor's unposted
 state; always "" here, "draft" for draft rows). Asset performance labels (Best/Good/Low) are gone from
 asset_group_asset in API v23; asset group asset rows carry primary_status plus real stats instead.
@@ -31,6 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import core
 import datapolicy
+import experiments
 import live
 
 gae = core.gae
@@ -310,6 +314,7 @@ def _parallel(cid, queries):
 def _build_base(cid):
     q = _parallel(cid, {
         "campaigns": "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type, "
+                     "campaign.experiment_type, "
                      "campaign.start_date_time, campaign.end_date_time, campaign.target_spend.cpc_bid_ceiling_micros, "
                      "campaign.target_impression_share.location_fraction_micros, campaign.target_impression_share.cpc_bid_ceiling_micros, "
                      "campaign.maximize_conversions.target_cpa_micros, campaign.target_cpa.target_cpa_micros, "
@@ -318,6 +323,7 @@ def _build_base(cid):
         "languages": "SELECT campaign.id, campaign_criterion.language.language_constant FROM campaign_criterion "
                      "WHERE campaign_criterion.type = LANGUAGE AND campaign_criterion.status != REMOVED",
         "lang_codes": "SELECT language_constant.id, language_constant.code FROM language_constant",
+        "experiment_arms": experiments.ARMS_GAQL,
         "ad_groups": "SELECT ad_group.id, ad_group.name, ad_group.status, ad_group.cpc_bid_micros, campaign.id FROM ad_group",
         "criteria": "SELECT ad_group.id, campaign.id, ad_group_criterion.criterion_id, ad_group_criterion.status, ad_group_criterion.negative, "
                     "ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.cpc_bid_micros, "
@@ -615,8 +621,9 @@ def _rows(q, geo, names):
                      "editor": "", "ad_groups": sorted(({"id": int(gid), "name": gname[gid], "status": _st(g["adGroup"]["status"]), "_code": group_status[gid]}
                                                         for gid, g in groups.items() if g["campaign"]["id"] == cid), key=lambda g: g["name"].lower())})
     tree.sort(key=lambda c: (c["_code"], c["name"].lower()))
+    exps = experiments.from_api(q["campaigns"], q.get("experiment_arms", []))
     return {"rows": rows, "tree": tree, "camp_status": {int(k): v for k, v in camp_status.items()},
-            "group_status": {int(k): v for k, v in group_status.items()}, "errors": q["_errors"]}
+            "group_status": {int(k): v for k, v in group_status.items()}, "errors": q["_errors"], "experiments": exps}
 
 
 def _ext_fields(ft, a):
@@ -764,6 +771,7 @@ def grid(acct, kind, campaign_id=None, ad_group_id=None, status="active", search
         if st is not None and kind not in NO_STATS:
             r.update(_metrics(st.get(mk)) if mk else dict.fromkeys(METRIC_KEYS))
     core._overlay(cid, kind, rows, _Names(d), campaign_id, ad_group_id)
+    experiments.tag(rows, d.get("experiments") or experiments.empty())
     return rows[:limit] if limit else rows
 
 
@@ -777,7 +785,7 @@ def tree(acct, status="active", wait=False):
             continue
         kids = [{k: g[k] for k in ("id", "name", "status")} for g in c["ad_groups"] if status == "all" or g["_code"] != 2]
         out.append({**{k: c[k] for k in ("id", "name", "status", "type", "editor")}, "ad_groups": kids})
-    return out
+    return experiments.tag(out, d.get("experiments") or experiments.empty(), key="name")
 
 
 def geo_search(acct, name):

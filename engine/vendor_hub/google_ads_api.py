@@ -9,7 +9,7 @@ import urllib.request
 
 import appconfig
 
-API_VERSION = "v23"  # v21/v20 are deprecated + blocked by Google (bumped 2026-08-17)
+API_VERSION = "v26"  # latest (v23 sunsets February 2027); v24-v26 breaking changes checked 2026-11-17, none touch Studio
 _MISSING = object()
 
 

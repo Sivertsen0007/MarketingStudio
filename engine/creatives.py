@@ -1003,12 +1003,15 @@ def _rsa_target(o):
 
 def _clash(platform, items, c):
     """Is there already a draft item that this change would fight with (same ad / same text list)? An RSA edit without
-    an ad id (local_id or ad_id) covers every RSA of its ad group, so it clashes with any edit of an ad there."""
+    an ad id (local_id or ad_id) covers every RSA of its ad group, so it clashes with any edit of an ad there. A new
+    RSA in the draft (not an edit) never clashes with an edit of an existing ad."""
     for it in items:
         o = it.get("change") or {}
         if o.get("type") != c["type"]:
             continue
         if platform == "google" and c["type"] == "rsa":
+            if not o.get("edit"):
+                continue
             texts = lambda x: bool(x.get("headlines") or x.get("descriptions"))  # noqa: E731
             if texts(o) != texts(c):
                 continue

@@ -794,6 +794,11 @@ def plan(acct, enable_new=False, items=None, source=None):
         xp, xw = experiments.check(exps, it["change"])
         entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
                  "problems": xp + list(it["problems"]), "warnings": xw}
+        try:  # never trust stored problems: a synced or merged draft never went through core.add (core.check is local)
+            again = core.check(it["change"])[0] + core.audiences.refusals(acct, [it["change"]])
+        except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
+            again = [f"invalid change: {ex}"]
+        entry["problems"] += [p for p in again if p not in entry["problems"]]
         if not entry["problems"]:
             try:
                 for o in ops_for(ids, it["change"], enable_new):

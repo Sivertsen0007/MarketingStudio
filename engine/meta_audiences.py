@@ -74,13 +74,12 @@ SUBTYPE = {"WEBSITE": "Website", "ENGAGEMENT": "Engagement", "IG_BUSINESS": "Ins
 EDITABLE = ("WEBSITE", "ENGAGEMENT", "IG_BUSINESS", "VIDEO", "LOOKALIKE")
 EDIT_FIELDS = ("name", "description")
 NO_RULE_EDIT = "rules can't be changed on an existing audience; create a new one"
-RULE_FIELDS = ("rules", "exclude", "match", "retention_days", "all_visitors", "prefill", "source", "event", "source_id", "form_ids",
-               "video_ids", "seed_id", "ratio", "from", "to", "kind", "rule", "event_sources", "lookalike_spec")
+EDIT_ALLOWED = ("type", "action", "id", "name", "description", "account", "ref")  # an edit may carry only these
 
 
 def rule_fields(c):
-    """Anything but the name and description on an edit (refused)."""
-    return [k for k in RULE_FIELDS if k in c and c[k] not in (None, "", [], False)]
+    """Every key on an edit outside the allow-list (refused): rules, retention, sources, anything unknown."""
+    return sorted(k for k in c if k not in EDIT_ALLOWED)
 NO_CUSTOMER_DATA = "Studio doesn't upload, read or change customer data (customer lists are read-only here)"
 NO_COUNTRY = "Studio never sends a country or location for a lookalike: the ad set's location decides where it is used"
 CUSTOMER_KEYS = ("schema", "payload", "emails", "phones", "members", "customer_file_source", "users", "hashed")
@@ -377,8 +376,14 @@ def website_rule(c, pixel, days):
 
 
 def engagement_rule(c, source_id):
+    if c.get("source") not in ENGAGEMENT:
+        raise ValueError(f"source must be one of {', '.join(ENGAGEMENT)}")
     typ, events, _ = ENGAGEMENT[c["source"]]
     ids = c.get("form_ids") if c["source"] == "lead_form" else [source_id]
+    if not ids or not all(ids):
+        raise ValueError("form_ids: give the lead form ids" if c["source"] == "lead_form" else "no source id for this audience")
+    if c.get("event") not in events:
+        raise ValueError(f"event for {c['source']} must be one of {', '.join(events)}")
     return {"inclusions": {"operator": "or", "rules": [{
         "event_sources": [{"type": typ, "id": str(i)} for i in ids], "retention_seconds": int(c["retention_days"]) * DAY,
         "filter": {"operator": "and", "filters": [{"field": "event", "operator": "eq", "value": events[c["event"]]}]}}]}}
@@ -412,7 +417,14 @@ def ops_for(c, meta):
     d = meta.load()
     action = c.get("action") or "create"
     if action == "create":
+        if c["kind"] not in KINDS:
+            raise ValueError(f"kind must be one of {', '.join(KINDS)}")
         if c["kind"] == "lookalike":
+            seed = meta.get(str(c["seed_id"]), fields="subtype")  # live: the seed's type now, not the cached one
+            if seed.get("subtype") == "CUSTOM":
+                raise ValueError("seed: a customer list can't be a seed here. " + NO_CUSTOMER_DATA)
+            if seed.get("subtype") == "LOOKALIKE":
+                raise ValueError("seed: a lookalike can't be the seed of another lookalike")
             lo, hi = _ratio(c)
             spec = {"ratio": round(hi / 100, 2)} if not lo else {"starting_ratio": round(lo / 100, 2), "ratio": round(hi / 100, 2)}
             p = {"name": c["name"], "subtype": "LOOKALIKE", "origin_audience_id": c["seed_id"], "lookalike_spec": json.dumps(spec)}

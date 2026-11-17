@@ -37,7 +37,7 @@ COMBINE = {"all": "ALL", "any": "ANY", "none": "NONE"}
 COMBINE_LABEL = {"ALL": "all of", "ANY": "any of", "NONE": "none of"}
 LIFESPAN_MAX = 540
 EDIT_FIELDS = ("new_name", "description", "lifespan")
-RULE_FIELDS = ("rules", "exclude", "match", "all_visitors", "prepopulate", "all", "any", "none", "kind")
+EDIT_ALLOWED = ("type", "action", "list", "id", "account", "new_name", "description", "lifespan")  # an edit may carry only these
 NO_RULE_EDIT = "rules can't be changed on an existing audience; create a new one"
 NAME_MAX = 650  # Google's limit on user list names
 CUSTOMER_KEYS = ("members", "emails", "phones", "addresses", "customer_match", "crm", "upload", "crm_based_user_list", "hashed")
@@ -219,8 +219,8 @@ def _names(c):
 
 
 def rule_fields(c):
-    """Rule or member fields on an edit (refused: an edit changes only the name, description and days)."""
-    return [k for k in RULE_FIELDS if k in c and c[k] not in (None, "", [], False)]
+    """Every key on an edit outside the allow-list (refused): rules, members, anything unknown."""
+    return sorted(k for k in c if k not in EDIT_ALLOWED)
 
 
 def check(c):
@@ -458,6 +458,8 @@ def ops(ids, c):
         body = {"resourceName": res, "name": name, "membershipStatus": "OPEN"}
         if c.get("description"):
             body["description"] = c["description"]
+        if c.get("kind") not in KINDS or any(c.get(k) for k in CUSTOMER_KEYS):
+            raise ValueError(f"kind must be website or combined (customer lists: {NO_CUSTOMER_DATA})")
         if c["kind"] == "website":
             days = int(c["lifespan"])
             body["membershipLifeSpan"] = str(days)
@@ -465,7 +467,7 @@ def ops(ids, c):
             if c.get("prepopulate"):  # Google refuses NONE on create: left out = not prepopulated
                 body["ruleBasedUserList"]["prepopulationStatus"] = "REQUESTED"
             line = f'new website list "{name}" ({days} days{", prepopulated" if c.get("prepopulate") else ""})'
-        else:
+        elif c["kind"] == "combined":
             if c.get("lifespan"):
                 body["membershipLifeSpan"] = str(int(c["lifespan"]))
             _no_customer_members(ids, c)

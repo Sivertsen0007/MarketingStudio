@@ -675,12 +675,13 @@ class MetaReviewFixes(MBase):
         self.assertTrue(self.spend({"audiences_add": ["w2"]}), "a second include (OR) adds people")
         self.assertTrue(self.spend({"audiences_remove": ["w1"]}))
         self.assertTrue(self.spend({"excluded_remove": ["c1"]}))
-        self.assertFalse(self.spend({"excluded_add": ["w2"]}), "an exclusion narrows")
+        self.assertTrue(self.spend({"excluded_add": ["w2"]}), "an exclusion narrows, but its undo or a rollback widens again: ticked")
 
     def test_undo_that_widens_needs_the_tick(self):
         core.clear(meta.acct())
         self.add1({"type": "meta_targeting", "level": "adset", "id": "s1", "excluded_add": ["w2"]})
-        res = meta.push()
+        self.assertFalse(meta.push()["ok"], "a push whose rollback can widen targeting needs the tick")
+        res = meta.push(accept_spend=True)
         self.assertTrue(res["ok"], res)
         n = len(self.f.posts)
         out = meta.undo(res["push_id"])
@@ -690,7 +691,7 @@ class MetaReviewFixes(MBase):
         self.assertTrue(meta.undo(res["push_id"], accept_spend=True)["ok"])
         core.clear(meta.acct())
         self.add1({"type": "meta_targeting", "level": "adset", "id": "s1", "age_min": 30})
-        res = meta.push()
+        res = meta.push(accept_spend=True)
         self.assertTrue(meta.undo(res["push_id"]).get("needs_spend"), "undoing a narrower age range widens it again")
 
 
@@ -861,6 +862,106 @@ class MetaNoRuleEdits(MBase):
         self.f.live_adsets = []
         self.assertTrue(meta.undo(res["push_id"])["ok"])
         self.assertEqual(self.f.deletes, ["new1"])
+
+
+def inject(acct, c):
+    """A draft item that never went through add(): a team sync or a three-way merge, with stored problems: []."""
+    import uuid
+    it = {"id": uuid.uuid4().hex[:8], "change": c, "by": "teammate", "note": "", "ts": "2026-11-17T10:00:00",
+          "summary": "synced", "problems": [], "warnings": []}
+    with core._locked(acct) as dr:
+        dr["items"].append(it)
+    return it
+
+
+META_BAD = [
+    {"type": "meta_audience", "action": "create", "kind": "engagement", "name": "L", "source": "lead_form", "event": "opened",
+     "form_ids": ["777"], "retention_days": 365},
+    {"type": "meta_audience", "action": "create", "kind": "engagement", "name": "L", "source": "lead_form", "event": "opened", "retention_days": 30},
+    {**MWEB, "retention_days": 400},
+    {"type": "meta_audience", "action": "create", "kind": "lookalike", "name": "LAL", "seed_id": "c1", "ratio": 1},
+    {"type": "meta_audience", "action": "create", "kind": "lookalike", "name": "LAL", "seed_id": "e1", "ratio": 1, "country": "GB"},
+    {"type": "meta_audience", "action": "create", "kind": "engagement", "name": "V", "source": "video", "event": "3s", "retention_days": 30,
+     "video_ids": ["1"]},
+    {"type": "meta_audience", "action": "create", "kind": "custom", "name": "C", "subtype": "CUSTOM"},
+    {"type": "meta_audience", "action": "edit", "id": "w2", "name": "x", "retention_days": 90},
+    {"type": "meta_audience", "action": "edit", "id": "w2", "name": "x", "rule_json": "{}"},
+    {"type": "meta_audience", "action": "edit", "id": "c1", "name": "x"},
+    {"type": "meta_audience", "action": "remove", "id": "w1"},
+    {"type": "meta_targeting", "level": "adset", "id": "s1", "audiences_add": ["zz"]},
+]
+GOOGLE_BAD = [
+    {"type": "user_list", "action": "create", "kind": "combined", "name": "X", "any": ["Egypt visitors", "Customer list one"]},
+    {"type": "user_list", "action": "create", "kind": "combined", "name": "X", "all": ["Egypt visitors"], "none": ["Combined one"]},
+    {"type": "user_list", "action": "create", "kind": "crm", "name": "X", "any": ["Egypt visitors", "Unused list"]},
+    {"type": "user_list", "action": "create", "kind": "website", "name": "X", "rules": [{"op": "contains", "value": "/x"}], "lifespan": 900},
+    {"type": "user_list", "action": "edit", "list": "Egypt visitors", "new_name": "E2", "rules": [{"op": "contains", "value": "/x"}]},
+    {"type": "user_list", "action": "edit", "list": "Egypt visitors", "new_name": "E2", "retention": 5},
+    {"type": "user_list", "action": "edit", "list": "Egypt visitors", "new_name": "E2", "ruleBasedUserList": {"x": 1}},
+    {"type": "user_list", "action": "remove", "list": "Egypt visitors"},
+]
+
+
+class SyncedMeta(MBase):
+    """Stored problems are never trusted: preview and push re-check every audience / targeting change and send nothing."""
+
+    def test_synced_items_refused(self):
+        for c in META_BAD:
+            core.clear(meta.acct())
+            inject(meta.acct(), c)
+            p = meta.preview()
+            res = meta.push(accept_spend=True, accept_permanent=True)
+            self.assertFalse(p["ok"], c)
+            self.assertTrue(p["items"][0]["problems"], c)
+            self.assertFalse(res["ok"], c)
+            self.assertEqual((self.f.posts, self.f.deletes), ([], []), c)
+
+    def test_broken_change_is_a_refusal_not_a_crash(self):
+        inject(meta.acct(), {"type": "meta_audience", "action": "create", "kind": "engagement", "name": "L", "source": None, "event": None})
+        p = meta.preview()
+        self.assertFalse(p["ok"])
+        self.assertEqual(self.f.posts, [])
+
+    def test_lead_form_without_forms_is_a_problem(self):
+        with self.assertRaises(ValueError):
+            ma.engagement_rule({"source": "lead_form", "event": "opened", "retention_days": 30}, None)
+
+    def test_seed_checked_live(self):
+        meta.add([{"type": "meta_audience", "action": "create", "kind": "lookalike", "name": "LAL", "seed_id": "e1", "ratio": 1}])
+        orig = self.f.get
+        with mock.patch.object(meta, "get", lambda path, **k: {"subtype": "CUSTOM"} if path == "e1" and k.get("fields") == "subtype" else orig(path, **k)):
+            p = meta.preview()
+        self.assertIn("customer list", " ".join(p["items"][0]["problems"]))
+        self.assertEqual(self.f.posts, [])
+
+    def test_placements_undo_needs_the_tick(self):
+        self.add1({"type": "meta_placements", "level": "adset", "id": "s1", "advantage": False, "publisher_platforms": ["facebook"],
+                   "facebook_positions": ["feed"]})
+        self.assertFalse(meta.push()["ok"], "its undo or rollback can widen placements again")
+        res = meta.push(accept_spend=True)
+        self.assertTrue(res["ok"], res)
+        n = len(self.f.posts)
+        self.assertTrue(meta.undo(res["push_id"]).get("needs_spend"))
+        self.assertEqual(len(self.f.posts), n)
+
+
+class SyncedGoogle(GBase):
+    def test_synced_items_refused(self):
+        for c in GOOGLE_BAD:
+            core.clear(A)
+            self.g.mutates.clear()
+            inject(A, c)
+            p = live.preview(A)
+            res = live.push(A, accept_spend=True, accept_permanent=True)
+            self.assertFalse(p["ok"], c)
+            self.assertTrue(p["items"][0]["problems"], c)
+            self.assertFalse(res["ok"], c)
+            self.assertEqual(self.g.mutates, [], f"nothing sent, not even validateOnly: {c}")
+
+    def test_unknown_kind_never_reaches_the_combined_branch(self):
+        with self.assertRaises(ValueError):
+            audiences.ops(live.Ids(A, "api"), {"type": "user_list", "action": "create", "kind": "crm", "name": "X",
+                                                "any": ["Egypt visitors", "Unused list"]})
 
 
 class Text(unittest.TestCase):

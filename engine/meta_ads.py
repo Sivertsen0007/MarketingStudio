@@ -1500,6 +1500,7 @@ def _wider(old_tg, new_tg):
     return False
 
 
+RECHECK = ("meta_audience", "meta_targeting", "meta_placements")  # [audiences] re-checked at preview / push
 PHASE = {"audience": -1, "new_campaign": 0, "new_adset": 1, "new_ad": 2, "study": 4, "study_end": 5, "audience_delete": 6}  # edits: 3
 
 
@@ -1699,7 +1700,8 @@ def ops_for(c, items=None):
         tg = _apply_placements(old_tg, c)
         return [{"kind": "update", "id": oid, "params": {"targeting": _pin_device(tg)}, "undo": {"targeting": _pin_device(old_tg)},
                  "line": f'ad set "{nm}": placements {_placements(old_tg)} -> {_placements(tg)}',
-                 "spend": "more placements" if _wider(old_tg, tg) else ""}]
+                 "spend": "more placements" if _wider(old_tg, tg) else "",
+                 "undo_spend": "puts the ad set's old placements back (can reach more people)"}]
     if t in ("meta_copy", "meta_carousel_copy", "meta_feed_copy"):
         cr = cur["creative"]
         ct = creative_text(cr)
@@ -1763,6 +1765,14 @@ def plan(tick=False, only=None):
     steps, per_item, touched = [], [], {}
     for it in items:
         entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [], "problems": list(it["problems"])}
+        rechecked = it["change"].get("type") in RECHECK
+        if rechecked:  # [audiences] never trust stored problems: a synced or merged draft never went through add()
+            try:
+                c0 = _normalise(it["change"])
+                entry["problems"] += [p for p in check(c0, load(), pool)[0] + meta_audiences.refusals([c0], load())
+                                      if p not in entry["problems"]]
+            except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
+                entry["problems"].append(f"invalid change: {ex}")
         if not entry["problems"]:
             try:
                 its = list(ops_for(it["change"], pool))
@@ -1788,10 +1798,16 @@ def plan(tick=False, only=None):
                     entry["lines"].append(s["line"])
                     if s.get("spend"):
                         entry["spend"].append(s["spend"])
+                    if s.get("undo_spend"):  # its undo, or a rollback after a failed push, can widen targeting again
+                        entry["spend"].append(f"undo or rollback: {s['undo_spend']}")
                     if s.get("permanent"):
                         entry["permanent"].append(s["line"])
             except (MetaError, ValueError, KeyError) as ex:
                 entry["problems"].append(str(ex))
+            except Exception as ex:  # noqa: BLE001
+                if not rechecked:
+                    raise
+                entry["problems"].append(f"invalid change: {ex}")
         per_item.append(entry)
     steps.sort(key=lambda s: PHASE.get(s.get("phase"), 3))  # campaign -> ad set -> ad -> edits; stable within a phase
     return {"items": per_item, "steps": steps, "ok": bool(steps) and not any(e["problems"] for e in per_item),

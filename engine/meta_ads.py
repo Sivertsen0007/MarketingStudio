@@ -633,7 +633,9 @@ def _name(d, level, oid):
 
 
 TYPES = ("meta_status", "meta_budget", "meta_end", "meta_rename", "meta_targeting", "meta_placements", "meta_copy",
-         "meta_carousel_copy", "meta_feed_copy", "meta_new_campaign", "meta_new_adset", "meta_new_ad", "meta_boost_post")
+         "meta_carousel_copy", "meta_feed_copy", "meta_new_campaign", "meta_new_adset", "meta_new_ad", "meta_boost_post",
+         "meta_test_split", "meta_test_creative", "meta_test_end")  # tests: meta_tests.py
+TEST_TYPES = ("meta_test_split", "meta_test_creative", "meta_test_end")
 NEW_TYPES = ("meta_new_campaign", "meta_new_adset", "meta_new_ad")
 OBJECTIVES = {"traffic": "OUTCOME_TRAFFIC", "awareness": "OUTCOME_AWARENESS", "engagement": "OUTCOME_ENGAGEMENT",
               "leads": "OUTCOME_LEADS", "sales": "OUTCOME_SALES"}
@@ -699,6 +701,9 @@ def summarise(c, d=None, items=None):
     d = d or load()
     t = c.get("type")
     lvl = c.get("level", "ad")
+    if t in TEST_TYPES:
+        import meta_tests  # noqa: PLC0415
+        return meta_tests.summarise(c, d, items if items is not None else _items())
     if t == "meta_new_campaign":
         b = f"campaign budget {float(c['daily_budget']):.2f}/day" if c.get("daily_budget") else "ad set budgets"
         return f'Meta new campaign "{c["name"]}" ({_st(str(c.get("objective", "")).replace("OUTCOME_", ""))}, {b}, Paused)'
@@ -710,6 +715,13 @@ def summarise(c, d=None, items=None):
             camp = str(c.get("campaign_id"))
         b = f"daily {float(c['daily_budget']):.2f}" if c.get("daily_budget") else "campaign budget"
         age = f"age {c.get('age_min', 18)}-{c.get('age_max', 65)}"
+        if c.get("from_adset"):
+            diff = [x for x in (", ".join(c.get("countries") or []), f"age {c.get('age_min', '')}-{c.get('age_max', '')}"
+                                if c.get("age_min") or c.get("age_max") else "", _pl_text(c["placements"]) if c.get("placements") else "",
+                                f"optimisation {c['optimization_goal']}" if c.get("optimization_goal") else "",
+                                f"daily {float(c['daily_budget']):.2f}" if c.get("daily_budget") else "") if x]
+            return (f'Meta new ad set "{c["name"]}" in campaign "{camp}": copy of ad set "{_name(d, "adset", c["from_adset"])}"'
+                    f'{" with " + "; ".join(diff) if diff else " (no change)"} (Paused)')
         return (f'Meta new ad set "{c["name"]}" in campaign "{camp}" ({b}; {", ".join(c.get("countries") or [])}; {age}; '
                 f'{_pl_text(c.get("placements"))}; Paused)')
     if t == "meta_new_ad":
@@ -858,7 +870,12 @@ def check(c, d=None, items=None):
         if t not in TYPES:
             return [f"unknown Meta change type {t!r}"], []
         items = items if items is not None else _items()
-        if t == "meta_new_campaign":
+        if t in TEST_TYPES:
+            import meta_tests  # noqa: PLC0415
+            p_, w_ = meta_tests.check(c, d, items)
+            problems += p_
+            warnings += w_
+        elif t == "meta_new_campaign":
             if not c.get("name"):
                 problems.append("the new campaign needs a name")
             if c.get("objective") not in OBJECTIVES.values():
@@ -874,19 +891,22 @@ def check(c, d=None, items=None):
             if not c.get("name"):
                 problems.append("the new ad set needs a name")
             camp = _camp_facts(c.get("campaign_id"), d, items)
+            src = _find(d, "adset", c["from_adset"]) if c.get("from_adset") else None
             if camp["cbo"]:
                 if c.get("daily_budget") is not None:
                     problems.append("the campaign has a campaign budget (CBO): leave the ad set budget out")
+            elif src and c.get("daily_budget") is None and (src.get("daily_budget") or src.get("lifetime_budget")):
+                pass  # the copy keeps the source ad set's budget
             elif c.get("daily_budget") is None or float(c["daily_budget"]) < 1:
                 problems.append("the ad set needs a daily budget of at least 1.00 (the campaign has no campaign budget)")
             obj = camp["objective"]
             if obj in GOALS and c.get("optimization_goal") and c["optimization_goal"] != GOALS[obj][0] and c["optimization_goal"] not in GOALS[obj][1]:
                 problems.append(f"optimization_goal for {obj}: one of {', '.join((GOALS[obj][0],) + GOALS[obj][1])}")
-            if not c.get("countries"):
+            if not c.get("countries") and not src:
                 problems.append("the new ad set needs at least one country")
             elif any(not re.fullmatch(r"[A-Za-z]{2}", str(x)) for x in c["countries"]):
                 problems.append("countries are 2-letter codes, e.g. GB, DE")
-            lo, hi = int(c.get("age_min", 18)), int(c.get("age_max", 65))
+            lo, hi = int(c.get("age_min") or 18), int(c.get("age_max") or 65)
             if lo < 18 or hi > 65 or lo > hi:
                 problems.append("age must be 18-65 with min <= max")
             start = _future_date(c["start_date"], "start date", problems) if c.get("start_date") else None
@@ -1033,6 +1053,9 @@ def check(c, d=None, items=None):
 
 def _normalise(c):
     c = dict(c)
+    if c.get("type") in TEST_TYPES:
+        import meta_tests  # noqa: PLC0415
+        c = meta_tests.normalise(c)
     if c.get("status"):
         c["status"] = c["status"].lower().replace("enabled", "active")
     if c.get("type") == "meta_new_campaign":
@@ -1048,7 +1071,7 @@ def _normalise(c):
     if c.get("type") == "meta_boost_post":
         c["channel"] = str(c.get("channel") or "facebook").lower()
         c["post_id"] = str(c.get("post_id") or "")
-    for k in ("campaign_id", "adset_id", "from_ad", "id"):
+    for k in ("campaign_id", "adset_id", "from_ad", "from_adset", "id"):
         if c.get(k) is not None and not isinstance(c[k], str):
             c[k] = str(c[k])
     return c
@@ -1063,6 +1086,10 @@ def add(changes, by="you", note=None):
     items = []
     for c in changes:
         c = _normalise(c)
+        if c.get("type") == "meta_new_adset" and c.get("from_adset") and not c.get("campaign_id"):
+            src = next((s for s in d["adsets"] if s["id"] == c["from_adset"]), None)
+            if src:
+                c["campaign_id"] = src["campaign_id"]
         items.append({"id": uuid.uuid4().hex[:8], "change": c, "by": by, "note": note or "",
                       "ts": dt.datetime.now().isoformat(timespec="seconds")})
     refs = {it["change"].pop("ref"): it["id"] for it in items if it["change"].get("ref")}
@@ -1071,6 +1098,11 @@ def add(changes, by="you", note=None):
             r = _ref(it["change"].get(k))
             if r in refs:
                 it["change"][k] = "d-" + refs[r]
+        ch = it["change"]
+        for cell in ch.get("cells") or [] if ch.get("type") in TEST_TYPES else []:
+            cell["ids"] = ["d-" + refs[_ref(o)] if _ref(o) in refs else o for o in cell.get("ids") or []]
+        if ch.get("type") in TEST_TYPES and ch.get("ads"):
+            ch["ads"] = ["d-" + refs[_ref(o)] if _ref(o) in refs else o for o in ch["ads"]]
     pool = _items(items)
     for it in items:
         c = it["change"]
@@ -1122,12 +1154,22 @@ def _overlay(kind, out, campaign_id, adset_id):
             if t == "meta_new_adset":
                 if kind == "adsets" and (not campaign_id or str(campaign_id) == c.get("campaign_id")) and not adset_id:
                     camp = _camp_facts(c["campaign_id"], d, pool)
-                    tg = _apply_placements({"geo_locations": {"countries": c.get("countries") or []}, "age_min": c.get("age_min", 18),
-                                            "age_max": c.get("age_max", 65)}, c.get("placements") or {})
+                    src = next((x for x in d["adsets"] if x["id"] == c.get("from_adset")), None) if c.get("from_adset") else None
+                    if src:  # a copy: the source's targeting with the draft's change
+                        tg = json.loads(json.dumps(src.get("targeting") or {}))
+                        if c.get("countries"):
+                            tg["geo_locations"] = {"countries": c["countries"]}
+                        tg.update({k: int(c[k]) for k in ("age_min", "age_max") if c.get(k)})
+                        tg = _apply_placements(tg, c["placements"]) if c.get("placements") else tg
+                    else:
+                        tg = _apply_placements({"geo_locations": {"countries": c.get("countries") or []}, "age_min": c.get("age_min", 18),
+                                                "age_max": c.get("age_max", 65)}, c.get("placements") or {})
                     out.insert(0, {"id": f"d-{it['id']}", "campaign_id": c["campaign_id"], "ad_group_id": f"d-{it['id']}",
                                    "campaign": camp["name"], "ad_set": c.get("name"), "status": "Paused", "delivery": "draft",
-                                   "budget": None if camp["cbo"] else c.get("daily_budget"), "lifetime_budget": None, "cbo": camp["cbo"],
-                                   "optimisation": _st(c.get("optimization_goal") or GOALS.get(camp["objective"], ("",))[0]),
+                                   "budget": None if camp["cbo"] else c.get("daily_budget") or _money((src or {}).get("daily_budget"), d),
+                                   "lifetime_budget": None, "cbo": camp["cbo"],
+                                   "optimisation": _st(c.get("optimization_goal") or (src or {}).get("optimization_goal")
+                                                       or GOALS.get(camp["objective"], ("",))[0]),
                                    "end": c.get("end_date") or "", **_targeting(tg), "advantage_audience": bool(c.get("advantage_audience")),
                                    "_new": mark, **dict.fromkeys(INS_KEYS)})
                 continue
@@ -1431,13 +1473,21 @@ def _wider(old_tg, new_tg):
     return False
 
 
-PHASE = {"new_campaign": 0, "new_adset": 1, "new_ad": 2}
+PHASE = {"new_campaign": 0, "new_adset": 1, "new_ad": 2, "study": 4, "study_end": 5}  # edits: 3
 
 
 def ops_for(c, items=None):
     """Draft change -> list of steps. Each step: {line, kind, ...} with what to do, how to check it and how to undo it.
     Steps that create objects carry "refs" ({param: draft item id}) that the push fills with ids made earlier in it."""
     t = c["type"]
+    if t in TEST_TYPES:
+        import meta_tests  # noqa: PLC0415
+        steps = meta_tests.ops_for(c, items if items is not None else _items())
+        for s in steps:
+            s["needs"] = meta_tests.refs(c)
+        return steps
+    if t == "meta_new_adset" and c.get("from_adset"):
+        return _copy_adset_ops(c, items if items is not None else _items())
     if t == "meta_new_campaign":
         p = {"name": c["name"], "objective": c["objective"], "status": "PAUSED", "special_ad_categories": c.get("special_ad_categories") or []}
         if c.get("daily_budget"):
@@ -1623,9 +1673,94 @@ def ops_for(c, items=None):
     raise ValueError(f"'{t}' can't be pushed live")
 
 
+F_COPY = ("name,campaign_id,status,targeting,optimization_goal,billing_event,bid_strategy,bid_amount,promoted_object,"
+          "daily_budget,lifetime_budget,end_time,attribution_spec,destination_type")
+
+
+def _copy_adset_ops(c, items):
+    """meta_new_adset with from_adset: the source ad set's live settings (targeting, optimisation, bidding, budget,
+    conversion setup) with only the draft's fields changed. Created Paused, like every new ad set."""
+    src = get(str(c["from_adset"]), fields=F_COPY)
+    cref = _ref(c.get("campaign_id"))
+    cid = c.get("campaign_id") or src["campaign_id"]
+    if cref:
+        camp = _camp_facts(cid, {"campaigns": []}, items)
+    else:
+        lc = _live("campaign", cid)
+        camp = {"name": lc["name"], "objective": lc.get("objective"), "cbo": bool(lc.get("daily_budget") or lc.get("lifetime_budget"))}
+    tg = json.loads(json.dumps(src.get("targeting") or {}))
+    changed = []
+    if c.get("countries"):
+        tg["geo_locations"] = {"countries": [x.upper() for x in c["countries"]]}
+        changed.append(f'countries {", ".join(c["countries"])} (replaces every location of the original)')
+    for k in ("age_min", "age_max"):
+        if c.get(k):
+            tg[k] = int(c[k])
+    if c.get("age_min") or c.get("age_max"):
+        changed.append(f'age {tg.get("age_min", 18)}-{tg.get("age_max", 65)}')
+    if c.get("placements"):
+        tg = _apply_placements(tg, c["placements"])
+        changed.append(f'placements {_pl_text(c["placements"])}')
+    if c.get("advantage_audience") is not None:
+        tg.setdefault("targeting_automation", {})["advantage_audience"] = 1 if c["advantage_audience"] else 0
+    goal = c.get("optimization_goal") or src.get("optimization_goal")
+    p = {"name": c["name"], "status": "PAUSED", "billing_event": src.get("billing_event") or "IMPRESSIONS",
+         "optimization_goal": goal, "targeting": _pin_device(tg)}
+    for k in ("bid_strategy", "bid_amount", "attribution_spec", "destination_type"):
+        if src.get(k) not in (None, "", []):
+            p[k] = src[k]
+    if c.get("optimization_goal") and c["optimization_goal"] != src.get("optimization_goal"):
+        changed.append(f"optimisation {_st(src.get('optimization_goal'))} -> {_st(goal)}")
+    if goal == "OFFSITE_CONVERSIONS":
+        po = dict(src.get("promoted_object") or {})
+        if c.get("conversion_event") or not po.get("pixel_id"):
+            ev = c.get("conversion_event") or DEFAULT_EVENT.get(camp["objective"], "PURCHASE")
+            px = po.get("pixel_id") or c.get("pixel_id") or _pixel()
+            po = ({"pixel_id": px, "custom_event_type": ev.upper()} if ev.upper() in STD_EVENTS
+                  else {"pixel_id": px, "custom_event_type": "OTHER", "custom_event_str": ev})
+            if c.get("conversion_event"):
+                changed.append(f"conversion event {ev}")
+        p["promoted_object"] = po
+    elif goal == "LEAD_GENERATION":
+        p["promoted_object"] = src.get("promoted_object") or {"page_id": _page_for_account()}
+    elif src.get("promoted_object") and goal == src.get("optimization_goal"):
+        p["promoted_object"] = src["promoted_object"]
+    if c.get("start_date") and dt.date.fromisoformat(c["start_date"]) > dt.date.today():
+        p["start_time"] = f"{c['start_date']}T00:00:00+0000"
+    if c.get("end_date"):
+        p["end_time"] = f"{c['end_date']}T23:59:00+0000"
+    spend = ""
+    if not camp["cbo"]:
+        if c.get("daily_budget"):
+            p["daily_budget"] = int(round(float(c["daily_budget"]) * 100))
+        elif src.get("daily_budget"):
+            p["daily_budget"] = int(src["daily_budget"])
+        elif src.get("lifetime_budget"):
+            p["lifetime_budget"] = int(src["lifetime_budget"])
+            p.setdefault("end_time", src.get("end_time"))
+        p.setdefault("bid_strategy", "LOWEST_COST_WITHOUT_CAP")
+        b = p.get("daily_budget") or p.get("lifetime_budget")
+        spend = f'new ad set budget {_money_txt(b)}{"/day" if p.get("daily_budget") else " lifetime"} (Paused until you switch it on)'
+    if cref:
+        p.pop("campaign_id", None)
+    else:
+        p["campaign_id"] = str(cid)
+    line = (f'new ad set "{c["name"]}" in campaign "{camp["name"]}", a copy of ad set "{src.get("name")}" with '
+            f'{"; ".join(changed) or "no change"}, created Paused')
+    step = {"kind": "create", "phase": "new_adset", "edge": "adsets", "params": p, "refs": {"campaign_id": cref} if cref else {},
+            "line": line, "spend": spend}
+    if cref:
+        step["check_params"] = None
+        step["line"] += " (Meta can only check it once the new campaign exists, so at push)"
+    return [step]
+
+
 def _check_step(s):
     """Meta's own validate_only for one step. Returns an error string or ''."""
     try:
+        if s["kind"] in ("study", "study_end"):  # reads only: /ad_studies has no validate_only (meta_tests.py)
+            import meta_tests  # noqa: PLC0415
+            return meta_tests.check_step(s)
         if s["kind"] == "update":
             post(s["id"], s["params"], validate=True, retry_rate=False)
         elif s["kind"] == "create":
@@ -1671,7 +1806,7 @@ def plan(tick=False, only=None):
                         raise ValueError(f"the same field is changed twice in this draft (also in: {touched[key]})")
                     if s["kind"] == "update":
                         touched[key] = it["summary"]
-                    for ref in list((s.get("refs") or {}).values()) + ([s["adset_ref"]] if s.get("adset_ref") else []):
+                    for ref in list((s.get("refs") or {}).values()) + ([s["adset_ref"]] if s.get("adset_ref") else []) + list(s.get("needs") or []):
                         if ref not in pool:
                             raise ValueError("it belongs to a new campaign / ad set that is no longer in the draft (or not in this push)")
                     err = _check_step(s)
@@ -1684,12 +1819,14 @@ def plan(tick=False, only=None):
                     entry["lines"].append(s["line"])
                     if s.get("spend"):
                         entry["spend"].append(s["spend"])
+                    if s.get("permanent"):
+                        entry["permanent"].append(s["line"])
             except (MetaError, ValueError, KeyError) as ex:
                 entry["problems"].append(str(ex))
         per_item.append(entry)
     steps.sort(key=lambda s: PHASE.get(s.get("phase"), 3))  # campaign -> ad set -> ad -> edits; stable within a phase
     return {"items": per_item, "steps": steps, "ok": bool(steps) and not any(e["problems"] for e in per_item),
-            "spend": any(e["spend"] for e in per_item), "permanent": False, "channel": "meta"}
+            "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item), "channel": "meta"}
 
 
 def preview(enable_new=False, only=None):
@@ -1732,7 +1869,12 @@ def _do(s, ctx=None):
         adset = ctx[s["adset_ref"]] if s.get("adset_ref") else s["adset"]
         new_cr = post(f"{act()}/adcreatives", creative)["id"]
         ad = post(f"{act()}/ads", {"name": s["name"], "adset_id": adset, "status": "PAUSED", "creative": {"creative_id": new_cr}})["id"]
+        if s.get("item"):
+            ctx[s["item"]] = ad  # a creative test in this push can point at it
         return {"line": s["line"], "id": ad, "undo": {"status": "DELETED"}, "created": "ad", "created_ad": ad, "created_creative": new_cr, **rec}
+    if s["kind"] in ("study", "study_end"):
+        import meta_tests  # noqa: PLC0415
+        return meta_tests.do(s, ctx)
     raise ValueError(s["kind"])
 
 
@@ -1740,6 +1882,11 @@ def _reverse(done, tick=None):
     """tick(record, ok) after each reversal (for the progress list)."""
     errors = []
     for r in reversed(done):
+        if r.get("undo") is None:  # a test made or ended on Meta: nothing can reverse it (meta_tests.py)
+            errors.append(f"{r['line']}: {r.get('final') or 'this can not be undone'}")
+            if tick:
+                tick(r, False)
+            continue
         try:
             post(r["id"], r["undo"])
             ok = True
@@ -1772,6 +1919,9 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
         return {"ok": False, "message": "Not pushed - fix the problems in the preview first.", "preview": pub}
     if p["spend"] and not accept_spend:
         return {"ok": False, "message": "Not pushed - this push can raise spend; tick the box to accept.", "preview": pub}
+    if p["permanent"] and not accept_permanent:
+        return {"ok": False, "message": "Not pushed - this push has changes that can't be undone (tests); tick the box to accept.",
+                "preview": pub}
     done, error, ctx = [], None, {}
     progress.phase(acct(), "sending", "Sending to Meta, one change at a time")
     for s in p["steps"]:
@@ -1823,7 +1973,8 @@ def history(limit=20):
         out.append({"id": r["id"], "ts": r["ts"], "ok": r["ok"], "undo_of": r.get("undo_of"), "undone": r["id"] in undone,
                     "summaries": [i["summary"] for i in r.get("items", [])] + ([f"Failed: {r['error']}"] if r.get("error") else []),
                     "lines": [o["line"] for o in r.get("ops", [])],
-                    "can_undo": r["ok"] and not r.get("undo_of") and r["id"] not in undone and bool(r.get("ops"))})
+                    "can_undo": r["ok"] and not r.get("undo_of") and r["id"] not in undone
+                    and any(o.get("undo") is not None for o in r.get("ops") or [])})
     return out[:limit]
 
 

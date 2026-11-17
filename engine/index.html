@@ -469,6 +469,7 @@ const META_VIEWS = {
     ...STATS, {key:"creative_id",label:"Creative ID",hide:1}, UPD, IDC], bulk:1, open:r => metaAdDialog(r)},
   audiences:{label:"Audiences", cols:[{key:"audience",label:"Audience"}, {key:"type",label:"Type"}, {key:"size",label:"Size"}, {key:"status",label:"Status"}, {key:"updated",label:"Updated"}], ro:1},
   leadforms:{label:"Lead forms", cols:[{key:"lead_form",label:"Lead form"}, {key:"status",label:"Status"}, {key:"leads",label:"Leads",num:1}, {key:"created",label:"Created"}, IDC], ro:1},
+  tests:{label:"Tests", cols:[], ro:1, custom:1}, // [meta tests] static/meta_tests.js draws this tab
 };
 const GDPR_HINT = "Personal data: UK GDPR check needed before any upload/download. Studio reads names and counts only.";
 const isMeta = () => String(S.acct).startsWith("meta");
@@ -576,6 +577,7 @@ function scopeNames(){
 }
 async function loadGrid(){
   if (!V()[S.kind]) S.kind = "campaigns";
+  if (V()[S.kind].custom){ S.rows = []; S.sel.clear(); $("#gridNote").style.display = "none"; renderTabs(); return renderGrid() } // [meta tests]
   const kind = S.kind, seq = S.gridSeq = (S.gridSeq || 0) + 1;
   const rows = await api("/api/grid?" + qs({acct:S.acct, kind, campaign_id:S.camp, ad_group_id:S.ag, status:srvStatus(), search:$("#search").value, ...rangeQ()}));
   if (kind !== S.kind || seq !== S.gridSeq) return; // a newer request (other range, scope or tab) is on its way
@@ -617,6 +619,7 @@ function renderPills(){
 $("#fpills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; const was = S.filter; S.filter = b.dataset.f; localSet("filter", S.filter);
   if ((was === "removed") !== (S.filter === "removed")){ loadTree(); loadGrid() } else { renderPills(); renderGrid() } };
 function renderGrid(){
+  if (V()[S.kind] && V()[S.kind].custom){ $("#fpills").innerHTML = ""; return window.MetaTests ? MetaTests.render($("#grid")) : ($("#grid").innerHTML = `<div class="empty">Loading ...</div>`) } // [meta tests]
   const v = V()[S.kind], cols = colsFor();
   let rows = S.rows.filter(passFilter);
   if (S.sort){ const {key, dir} = S.sort, mc = cols.find(c => c.key === key && isMoney(c)), sv = r => { const x = r[key]; return mc && dispCur() && x != null && x !== "" ? toDisp(x) : x };
@@ -1193,6 +1196,7 @@ const META_SPECIAL = [["EMPLOYMENT", "Employment (job ads)"], ["HOUSING", "Housi
 const goalLabel = g => g.toLowerCase().replace(/_/g, " ").replace(/^./, x => x.toUpperCase());
 function readFile(f){ return new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => bad(new Error("Couldn't read the file")); fr.readAsDataURL(f) }) }
 const META_ADD = {
+  tests(){ return window.MetaTests && MetaTests.add("split") }, // [meta tests]
   campaigns(){
     showDialog("New Meta campaign", `<p class="hint">New campaigns are created <b>Paused</b>, with lowest-cost bidding. Nothing changes on Meta until you push live.</p>
       <div class="row"><label>Name</label><input id="f_name"></div>
@@ -1990,6 +1994,7 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
 <!-- [mac-app updater] end -->
 <script>window.addEventListener("unhandledrejection", e => { const m = e.reason && e.reason.message; if (m && typeof toast === "function"){ toast(m); e.preventDefault() } });</script>
 <script src="/static/setup.js"></script>
+<script src="/static/meta_tests.js"></script><!-- [meta tests] the Tests tab in the Meta ads area -->
 <script src="/static/team.js"></script>
 <script src="/static/team_reviews.js"></script>
 <script src="/static/team_marks.js"></script><!-- [team live] tints, locks, claims, comments, presence, mentions -->

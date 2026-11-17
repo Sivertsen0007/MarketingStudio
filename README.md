@@ -396,6 +396,14 @@ rate-limit usage. Each line says how to fix it.
 
 Meta apps start with *development access* (low rate limits). Apply for **Full access** to the Marketing API in App Review when you use Studio daily.
 
+**Tests (A/B and creative tests).** The **Tests** tab in a Meta ad account lists the tests on the business that owns it,
+with results per cell (spend, CTR, results, cost per result) and a plain verdict; creative tests show Meta's high
+performers with their confidence. New tests (from existing ad sets or campaigns, from 2 to 7 ads, or by duplicating an
+ad set with one change) and ending a test go into the draft like any other change. Meta can't test-run a test before
+it exists, so Push live checks its objects with reads, and asks you to accept that it is permanent: a test can't be
+removed once made, only ended, and ending is final. Undo deletes the variant ad sets and ads Studio created, not the test.
+The token needs access to that business (`business_management`), or set `META_BUSINESS_ID` in the environment.
+
 ### Google Ads
 
 | Key | What |
@@ -551,6 +559,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Setup | `setup_status` (which keys are set, never values), `setup_import_env_file` |
 | Accounts and data | `list_accounts`, `list_entities` (any grid, with stats for a period), `find_location`, `data_status`, `refresh_data` |
 | Ads draft | `get_draft`, `add_to_draft`, `remove_from_draft`, `check_draft`, `preview_live_push`, `live_push_history`, `send_draft_to_editor` (only after you say so) |
+| Meta tests | `meta_tests_list`, `meta_test_results` (read), `meta_test_add_to_draft` (A/B test, creative test, ad set variant, end a test; draft only) |
 | Email | `email_list_campaigns`, `email_get_campaign`, `email_list_drafts`, `email_add_draft` |
 | SEO | `seo_list_posts`, `seo_get_post`, `seo_opportunities`, `seo_list_drafts`, `seo_add_draft` |
 | Topical map | `seo_map_get` (nodes, numbers, issues, coverage; filter by state), `seo_map_unmapped`, `seo_map_propose` (changes you accept in Studio), `seo_write_page` (a new page for a node, into the draft) |

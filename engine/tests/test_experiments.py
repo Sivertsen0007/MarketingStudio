@@ -12,6 +12,7 @@ _EDITOR = _tf.mkdtemp(prefix="gae-editor-test-")
 _os.environ["GAE_EDITOR_DIR"] = _EDITOR
 
 import json
+import re
 import sqlite3
 import sys
 import unittest
@@ -91,6 +92,13 @@ class FakeApi:
             return ARM_ROWS
         if gaql.startswith("SELECT campaign.id, campaign.name FROM campaign"):
             return [{"campaign": {"id": r["campaign"]["id"], "name": r["campaign"]["name"]}} for r in CAMP_ROWS]
+        if "FROM campaign WHERE campaign.id IN" in gaql:
+            want = set(re.findall(r"\d+", gaql.split(" IN ", 1)[1]))
+            return [r for r in CAMP_ROWS if r["campaign"]["id"] in want]
+        if "FROM ad_group WHERE ad_group.id IN" in gaql:
+            want = set(re.findall(r"\d+", gaql.split(" IN ", 1)[1]))
+            return [{"adGroup": {"id": str(g)}, "campaign": next(r["campaign"] for r in CAMP_ROWS if r["campaign"]["id"] == str(c))}
+                    for g, c in ((201, 101), (202, 102), (203, 103)) if str(g) in want]
         if "FROM campaign WHERE campaign.resource_name" in gaql:
             return [{"campaign": {"status": "ENABLED", "campaignBudget": "customers/2/campaignBudgets/5", "biddingStrategyType": "MANUAL_CPC"},
                      "campaignBudget": {"amountMicros": "1000000", "explicitlyShared": False}}]
@@ -269,6 +277,68 @@ class PushLive(unittest.TestCase):
         self.assertFalse(p["ok"])
         self.assertIn(experiments.MSG, p["items"][0]["problems"][0])
         self.assertEqual(fake.mutates, [])
+
+
+
+def _op(res, kind="campaignOperation"):
+    return {kind: {"update": {"resourceName": res, "status": "PAUSED"}, "updateMask": "status"}}
+
+
+class Undo(unittest.TestCase):
+    """An undo is a push too: refused before anything is sent when it touches a trial campaign."""
+    ACCT = "4444444444"
+
+    def undo(self, rec, fake):
+        live._log(self.ACCT).parent.mkdir(parents=True, exist_ok=True)
+        live._log(self.ACCT).write_text(json.dumps({"id": "p1", "ts": "2026-11-01T10:00:00", "ok": True, **rec}) + "\n")
+        old = live.query, live.mutate
+        live.query, live.mutate = fake.query, fake.mutate
+        try:
+            return live.undo(self.ACCT, "p1")
+        finally:
+            live.query, live.mutate = old
+
+    def assert_refused(self, rec):
+        fake = FakeApi()
+        with self.assertRaises(ValueError) as cm:
+            self.undo(rec, fake)
+        self.assertIn(experiments.MSG, str(cm.exception))
+        self.assertEqual(fake.mutates, [])
+
+    def test_logged_change_on_trial(self):
+        self.assert_refused({"items": [_item({"type": "campaign", "campaign": TRIAL, "status": "paused"})],
+                             "ops": [{"line": "l", "op": _op("customers/4/campaigns/103"), "undo": _op("customers/4/campaigns/103")}]})
+
+    def test_remove_created_in_a_campaign_that_is_now_a_trial(self):
+        # the item names a plain campaign, but the created resource sits in campaign 103, a trial today
+        self.assert_refused({"items": [_item({"type": "negative", "campaign": PLAIN, "keywords": ["x"], "match": "phrase"})],
+                             "ops": [{"line": "l", "op": {"campaignCriterionOperation": {"create": {"campaign": "customers/4/campaigns/103"}}},
+                                      "undo": "remove-created", "resource": "customers/4/campaignCriteria/103~55"}]})
+
+    def test_ad_group_level_resource_in_a_trial(self):
+        self.assert_refused({"items": [_item({"type": "keyword", "campaign": PLAIN, "ad_group": "Wide", "keywords": ["x"], "match": "exact"})],
+                             "ops": [{"line": "l", "op": {"adGroupCriterionOperation": {"create": {"adGroup": "customers/4/adGroups/203"}}},
+                                      "undo": "remove-created", "resource": "customers/4/adGroupCriteria/203~7"}]})
+
+    def test_plain_undo_goes_ahead(self):
+        fake = FakeApi()
+        r = self.undo({"items": [_item({"type": "campaign", "campaign": PLAIN, "status": "paused"})],
+                       "ops": [{"line": "l", "op": _op("customers/4/campaigns/102"), "undo": _op("customers/4/campaigns/102")}]}, fake)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([a for _, a in fake.mutates], [False, True])  # validate first, then apply (fake)
+
+
+class KnownCache(unittest.TestCase):
+    def test_cached_until_a_file_changes(self):
+        experiments._KNOWN.clear()
+        a = experiments.known(ED_ACCT)
+        self.assertIs(experiments.known(ED_ACCT), a)
+        f = gae.editor_version_dir() / f"ape_{ED_ACCT}.db"
+        st = f.stat()
+        _os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 10 ** 9))
+        b = experiments.known(ED_ACCT)
+        self.assertIsNot(b, a)
+        self.assertEqual(b, a)
 
 
 if __name__ == "__main__":

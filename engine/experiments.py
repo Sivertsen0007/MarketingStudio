@@ -101,9 +101,39 @@ def fetch(acct, query):
     return from_api(camps, arms)
 
 
+_KNOWN = {}  # acct -> (stamp of the files it was read from, info)
+
+
+def _stamp(acct):
+    """Modification times of Editor's database and the API cache: known() reads them again only when they change."""
+    out = []
+    try:
+        import gae  # noqa: PLC0415
+        out.append((gae.editor_version_dir() / f"ape_{acct}.db").stat().st_mtime_ns)
+    except (SystemExit, Exception):  # noqa: BLE001 - no Editor
+        out.append(None)
+    try:
+        import gapi  # noqa: PLC0415
+        out.append(gapi._file(acct, "base").stat().st_mtime_ns)
+    except Exception:  # noqa: BLE001
+        out.append(None)
+    return tuple(out)
+
+
 def known(acct):
     """What this Mac already knows, without asking Google: Editor's database (when the account is downloaded) and the
-    API cache (gapi base). Used when a change is added to the draft and when the draft is sent to Editor."""
+    API cache (gapi base). Used when a change is added to the draft and when the draft is sent to Editor.
+    Kept per account until either file changes."""
+    st = _stamp(acct)
+    hit = _KNOWN.get(acct)
+    if hit and hit[0] == st:
+        return hit[1]
+    info = _known(acct)
+    _KNOWN[acct] = (st, info)
+    return info
+
+
+def _known(acct):
     infos = []
     try:
         import core  # noqa: PLC0415

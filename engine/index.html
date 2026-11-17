@@ -1004,6 +1004,7 @@ const val = id => document.getElementById(id).value.trim();
 const lines = id => val(id).split("\n").map(s => s.trim()).filter(Boolean);
 function needScope(level){
   const sc = scopeNames();
+  if (isTrial(S.tree.find(c => String(c.id) === S.camp))){ toast(EXP_MSG); return null }
   if (level === "ad_group" && !sc.ad_group){ toast("Pick an ad group in the tree first"); return null }
   if (level === "campaign" && !sc.campaign){ toast("Pick a campaign in the tree first"); return null }
   return sc;

@@ -15,6 +15,7 @@ import core
 import datasources
 import gapi
 import meta_ads as meta
+import meta_tests
 import areas
 
 PROTOCOL = "2025-06-18"
@@ -48,7 +49,7 @@ TOOLS = [
     {"name": "add_to_draft",
      "description": "Add changes to the shared draft. They appear live in the user's Ads Studio for review. Nothing is written "
                     "to Editor, Google or Meta. Items with problems must be fixed (remove + re-add) before the draft can be sent.\n\n"
-                    + core.CHANGE_REFERENCE + "\n\n" + meta.CHANGE_REFERENCE,
+                    + core.CHANGE_REFERENCE + "\n\n" + meta.CHANGE_REFERENCE + "\n\n" + meta_tests.CHANGE_REFERENCE,
      "inputSchema": {"type": "object", "properties": {
          "account": ACCT, "changes": {"type": "array", "items": {"type": "object"}},
          "note": {"type": "string", "description": "why - shown to the user next to each change"}}, "required": ["changes"]}},
@@ -357,7 +358,36 @@ def call_alerts(name, a):
     return alerts.add_rule(body, by="claude")
 
 
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS
+META_ACCT = {"type": "string", "description": "Meta ad account key: meta or meta_<id> (default meta)"}
+META_TEST_TOOLS = [  # [meta tests] meta_tests.py: two reads and one draft tool; tests reach Meta only by the user's Push live
+    {"name": "meta_tests_list",
+     "description": "Meta A/B tests and creative tests on the business that owns the ad account (Meta calls them ad studies): "
+                    "id, name, label (A/B test or Creative test), status (Scheduled, Running, Ended, Cancelled), start, end, "
+                    "cells (name, share, level, ids, names). Read-only, cached until a refresh.",
+     "inputSchema": {"type": "object", "properties": {"account": META_ACCT,
+                                                      "refresh": {"type": "boolean", "description": "fetch again (read-only)"}}}},
+    {"name": "meta_test_results",
+     "description": "Results of one Meta test: per cell spend, impressions, clicks, CTR, results and cost per result over the test "
+                    "dates; for creative tests Meta's high performers with confidence; a plain verdict and notes (thin data, what "
+                    "is compared). A/B tests have no Meta winner in the API: the verdict compares cost per result. Read-only.",
+     "inputSchema": {"type": "object", "properties": {"account": META_ACCT, "study_id": {"type": "string"},
+                                                      "refresh": {"type": "boolean"}}, "required": ["study_id"]}},
+    {"name": "meta_test_add_to_draft",
+     "description": "Draft a Meta test (nothing reaches Meta until the user presses Push live; team approval applies). mode:\n"
+                    "  split: test = {name, level: adset|campaign, end_date, start_date?, cells: [{name, ids, percent?}]} "
+                    "or {ids: [..]} for one object per cell; 2-5 cells, shares >= 10 adding up to 100 (equal if left out)\n"
+                    "  creative: test = {name, ads: [2-7 ad ids], daily_budget (test budget per day) or budget_percent, end_date, start_date?}\n"
+                    "  end: test = {study_id, pause?: also pause the ad sets / campaigns / ads in its cells}. Ending is final.\n"
+                    "Tests only use objects that already exist on Meta. A test can't be removed from Meta once pushed. "
+                    "Duplicating an ad set with one change (variant) is not available yet.\n\n"
+                    + meta_tests.CHANGE_REFERENCE,
+     "inputSchema": {"type": "object", "properties": {
+         "account": META_ACCT, "mode": {"type": "string", "enum": ["split", "creative", "end"]},
+         "test": {"type": "object"}, "note": {"type": "string", "description": "why - shown to the user next to each change"}},
+         "required": ["mode", "test"]}},
+]
+META_TEST_NAMES = {t["name"] for t in META_TEST_TOOLS}
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS + META_TEST_TOOLS
 TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
 
 
@@ -488,7 +518,18 @@ def call_area(name, a):
 AREA_NAMES = {t["name"] for t in AREA_TOOLS}
 
 
+def call_meta_tests(name, a):
+    meta.use(a.get("account") or "meta")
+    if name == "meta_tests_list":
+        return meta_tests.studies(refresh=bool(a.get("refresh")))
+    if name == "meta_test_results":
+        return meta_tests.results(a["study_id"], refresh=bool(a.get("refresh")))
+    return meta_tests.add(a["mode"], a.get("test") or {}, by="claude", note=a.get("note"))
+
+
 def call(name, a):
+    if name in META_TEST_NAMES:
+        return call_meta_tests(name, a)
     if name in AREA_NAMES:
         return call_area(name, a)
     if name in PACING_NAMES:

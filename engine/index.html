@@ -470,6 +470,7 @@ const META_VIEWS = {
     ...STATS, {key:"creative_id",label:"Creative ID",hide:1}, UPD, IDC], bulk:1, open:r => metaAdDialog(r)},
   audiences:{label:"Audiences", cols:[{key:"audience",label:"Audience"}, {key:"type",label:"Type"}, {key:"size",label:"Size"}, {key:"status",label:"Status"}, {key:"updated",label:"Updated"}], ro:1},
   leadforms:{label:"Lead forms", cols:[{key:"lead_form",label:"Lead form"}, {key:"status",label:"Status"}, {key:"leads",label:"Leads",num:1}, {key:"created",label:"Created"}, IDC], ro:1},
+  tests:{label:"Tests", cols:[], ro:1, custom:1}, // [meta tests] static/meta_tests.js draws this tab
 };
 const GDPR_HINT = "Personal data: UK GDPR check needed before any upload/download. Studio reads names and counts only.";
 const isMeta = () => String(S.acct).startsWith("meta");
@@ -577,6 +578,7 @@ function scopeNames(){
 }
 async function loadGrid(){
   if (!V()[S.kind]) S.kind = "campaigns";
+  if (V()[S.kind].custom){ S.rows = []; S.sel.clear(); $("#gridNote").style.display = "none"; renderTabs(); return renderGrid() } // [meta tests]
   const kind = S.kind, seq = S.gridSeq = (S.gridSeq || 0) + 1;
   const rows = await api("/api/grid?" + qs({acct:S.acct, kind, campaign_id:S.camp, ad_group_id:S.ag, status:srvStatus(), search:$("#search").value, ...rangeQ()}));
   if (kind !== S.kind || seq !== S.gridSeq) return; // a newer request (other range, scope or tab) is on its way
@@ -618,6 +620,7 @@ function renderPills(){
 $("#fpills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; const was = S.filter; S.filter = b.dataset.f; localSet("filter", S.filter);
   if ((was === "removed") !== (S.filter === "removed")){ loadTree(); loadGrid() } else { renderPills(); renderGrid() } };
 function renderGrid(){
+  if (V()[S.kind] && V()[S.kind].custom){ $("#fpills").innerHTML = ""; return window.MetaTests ? MetaTests.render($("#grid")) : ($("#grid").innerHTML = `<div class="empty">Loading ...</div>`) } // [meta tests]
   const v = V()[S.kind], cols = colsFor();
   let rows = S.rows.filter(passFilter);
   if (S.sort){ const {key, dir} = S.sort, mc = cols.find(c => c.key === key && isMoney(c)), sv = r => { const x = r[key]; return mc && dispCur() && x != null && x !== "" ? toDisp(x) : x };
@@ -890,7 +893,7 @@ async function livePreview(){
     ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then Undo or fix ${bad.length > 1 ? "them" : "it"} in the Draft tab.</div>` : ""}
     ${isMeta() ? "" : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
     ${p.spend ? `<label class="tick"><input type="checkbox" id="lv_spend"> <span>${nSpend} change${nSpend > 1 ? "s" : ""} can raise spend. I know.</span></label>` : ""}
-    ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (removals). I know.</span></label>` : ""}
+    ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (${isMeta() ? "permanent changes" : "removals"}). I know.</span></label>` : ""}
     <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary>${details}</details>${TR ? TR.section(p.team) : ""}`;
   showDialog("Push to " + where, body, [histLink(), ...(isMeta() ? [] : [["Send to Editor instead", sendToEditor]]), ["Push live", livePush, "live"]]);
   const btn = $("#dlgF .live");
@@ -937,10 +940,13 @@ async function livePush(){
   } catch(e) { toast(e.message) }
   poll(true);
 }
-async function liveUndo(id){
-  if (!confirm(`Reverse this push in ${isMeta() ? "Meta" : "Google Ads"} now?`)) return;
+async function liveUndo(id, spend){
+  if (!spend && !confirm(`Reverse this push in ${isMeta() ? "Meta" : "Google Ads"} now?`)) return;
   try {
-    const r = await withProgress("Undoing in " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/undo", {push_id:id});
+    const r = await withProgress("Undoing in " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/undo", {push_id:id, ...(spend ? {accept_spend:true} : {})});
+    if (r.needs_spend){ dlg.close(); // switching things back on can raise spend: ask, like the Push live tick
+      if (confirm(`This undo switches these back on, which can raise spend:\n\n${(r.spend || []).join("\n")}\n\nUndo anyway?`)) return liveUndo(id, true);
+      return poll(true) }
     const list = await lastProgress();
     showDialog(r.ok ? "Undone" : "Not undone", `${list}<p>${esc(r.message)}</p>${r.not_undone && r.not_undone.length ? `<p class="hint">Not reversed automatically:</p><ul>${r.not_undone.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}${r.errors ? `<pre class="out">${esc(JSON.stringify(r.errors, null, 1))}</pre>` : ""}`, []);
   } catch(e) { toast(e.message) }
@@ -1194,6 +1200,7 @@ const META_SPECIAL = [["EMPLOYMENT", "Employment (job ads)"], ["HOUSING", "Housi
 const goalLabel = g => g.toLowerCase().replace(/_/g, " ").replace(/^./, x => x.toUpperCase());
 function readFile(f){ return new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => bad(new Error("Couldn't read the file")); fr.readAsDataURL(f) }) }
 const META_ADD = {
+  tests(){ return window.MetaTests && MetaTests.add("split") }, // [meta tests]
   campaigns(){
     showDialog("New Meta campaign", `<p class="hint">New campaigns are created <b>Paused</b>, with lowest-cost bidding. Nothing changes on Meta until you push live.</p>
       <div class="row"><label>Name</label><input id="f_name"></div>
@@ -1993,6 +2000,7 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
 <!-- [mac-app updater] end -->
 <script>window.addEventListener("unhandledrejection", e => { const m = e.reason && e.reason.message; if (m && typeof toast === "function"){ toast(m); e.preventDefault() } });</script>
 <script src="/static/setup.js"></script>
+<script src="/static/meta_tests.js"></script><!-- [meta tests] the Tests tab in the Meta ads area -->
 <script src="/static/team.js"></script>
 <script src="/static/team_reviews.js"></script>
 <script src="/static/team_marks.js"></script><!-- [team live] tints, locks, claims, comments, presence, mentions -->

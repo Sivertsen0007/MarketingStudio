@@ -27,6 +27,7 @@ import datasources
 import fx
 import live
 import meta_ads as meta
+import meta_tests
 import overview
 import pacing  # budget pacing (Ads > Pacing, areas/pacing.py) and its daily check
 import alerts  # Ads alerts (areas/alerts.py): rules, hourly / daily checks, history
@@ -376,6 +377,8 @@ class H(BaseHTTPRequestHandler):
                 "/api/state": lambda: {**meta.state(), "pushing": PUSH_LOCK.locked()},
                 "/api/live/history": lambda: meta.history(),
                 "/api/live/progress": lambda: progress.get(meta.acct()),
+                "/api/meta/tests": lambda: meta_tests.studies(),  # [meta tests] read-only
+                "/api/meta/tests/results": lambda: meta_tests.results(q.get("id")),
             }
             return self._run(routes[u.path]) if u.path in routes else self._send(404, {"error": "not found"})
         acct = core.resolve(q.get("acct"))
@@ -547,7 +550,7 @@ class H(BaseHTTPRequestHandler):
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{meta.acct()}", body,
                                                                    lambda only: meta.preview(only=only)),
             "/api/live/push": live_push,
-            "/api/live/undo": lambda: _meta_after(meta.undo(body["push_id"])),
+            "/api/live/undo": lambda: _meta_after(meta.undo(body["push_id"], bool(body.get("accept_spend")))),
             "/api/draft/add": lambda: meta.add(body["changes"], body.get("by", "you"), body.get("note")),
             "/api/draft/remove": lambda: {"removed": core.remove(meta.acct(), body["ids"])},
             "/api/draft/clear": lambda: {"removed": core.clear(meta.acct())},
@@ -557,6 +560,10 @@ class H(BaseHTTPRequestHandler):
             "/api/meta/draft_preview": lambda: meta.draft_preview(body.get("ad_id"), body.get("placement", "facebook"),
                                                                   body.get("overrides"), body.get("draft_id")),
             "/api/meta/media": lambda: meta.store_media(body.get("filename"), body.get("data") or ""),
+            # [meta tests] drafts only; the tests themselves go to Meta with Push live (gated like every Meta change)
+            "/api/meta/tests/add": lambda: meta_tests.add(body.get("mode"), body.get("test") or {}, body.get("by", "you"), body.get("note")),
+            "/api/meta/tests/refresh": lambda: (meta_tests.results(body["id"], refresh=True) if body.get("id")
+                                                else meta_tests.studies(refresh=True)),
             "/api/push": no_editor,
         }
         if self.path in routes:

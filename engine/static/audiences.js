@@ -119,7 +119,8 @@
         if (!v("a_name")) return toast("Give the list a name");
         const c = {type: "user_list", action: "edit", list: r.name};
         if (v("a_name") !== r.name) c.new_name = v("a_name");
-        if (+v("a_days") !== r.membership_days) c.lifespan = +v("a_days");
+        const days = v("a_days");  // only when the user changed it: never lifespan 0 for a list without days
+        if (days !== "" && days !== String(r.membership_days ?? "")) c.lifespan = +days;
         if (v("a_desc") !== (r.description || "")) c.description = v("a_desc");
         Object.keys(c).length > 3 ? send([c]) : dlg.close();
       }, "primary"]]);

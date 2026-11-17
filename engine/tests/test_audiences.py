@@ -964,6 +964,66 @@ class SyncedGoogle(GBase):
                                                 "any": ["Egypt visitors", "Unused list"]})
 
 
+class SeedAllowList(MBase):
+    def test_only_allowed_seed_subtypes(self):
+        extra = [{"id": "o1", "name": "Offline", "subtype": "OFFLINE_CONVERSION", "approximate_count_lower_bound": 5000, "approximate_count_upper_bound": 6000},
+                 {"id": "p1", "name": "Partner", "subtype": "PARTNER", "approximate_count_lower_bound": 5000, "approximate_count_upper_bound": 6000},
+                 {"id": "n1", "name": "No type", "approximate_count_lower_bound": 5000, "approximate_count_upper_bound": 6000}]
+        with mock.patch.dict(DATA, {"audiences": AUDS + extra}):
+            for aid in ("o1", "p1", "n1", "c1", "l1"):
+                p = self.add1({"type": "meta_audience", "action": "create", "kind": "lookalike", "name": "L", "seed_id": aid, "ratio": 1})["problems"]
+                self.assertTrue(any(x.startswith("seed:") for x in p), (aid, p))
+            seeds = {r["id"]: r["seed_ok"] for r in ma.rows(DATA)["rows"]}
+            self.assertEqual({k for k, v in seeds.items() if v}, {"w1", "w2", "e1", "e2"})
+        self.assertEqual(self.f.posts, [])
+
+    def test_live_seed_type_missing_or_not_allowed(self):
+        core.clear(meta.acct())
+        meta.add([{"type": "meta_audience", "action": "create", "kind": "lookalike", "name": "LAL", "seed_id": "e1", "ratio": 1}])
+        orig = self.f.get
+        for live_type in ({}, {"subtype": "OFFLINE_CONVERSION"}, {"subtype": "CLAIM"}):
+            with mock.patch.object(meta, "get", lambda path, **k: live_type if path == "e1" and k.get("fields") == "subtype" else orig(path, **k)):
+                p = meta.preview()
+                res = meta.push(accept_spend=True, accept_permanent=True)
+            self.assertFalse(p["ok"] or res["ok"], live_type)
+            self.assertIn("seed:", " ".join(p["items"][0]["problems"]))
+        self.assertEqual(self.f.posts, [])
+
+
+class GoogleUndoInUse(GBase):
+    def test_undo_of_created_list_checks_use_live(self):
+        core.add(A, [WEBSITE])
+        res = live.push(A)
+        self.assertTrue(res["ok"], res)
+        self.g.camp_users[RES(900)] = [{"campaign": {"name": "Camp N"}, "campaignCriterion": {"negative": False}}]
+        n = len(self.g.mutates)
+        with self.assertRaises(ValueError) as ex:
+            live.undo(A, res["push_id"])
+        self.assertIn('campaign "Camp N"', str(ex.exception))
+        self.g.camp_users.pop(RES(900))
+        real = self.g.query
+
+        def broken(acct, q):
+            if "user_list.user_list" in q:
+                raise RuntimeError("down")
+            return real(acct, q)
+        with mock.patch.object(live, "query", broken), self.assertRaises(ValueError) as ex:
+            live.undo(A, res["push_id"])
+        self.assertIn("can't read", str(ex.exception))
+        self.assertEqual(len(self.g.mutates), n, "nothing sent")
+        self.assertTrue(live.undo(A, res["push_id"])["ok"])
+
+
+class UiText(unittest.TestCase):
+    def test_days_only_when_changed_and_generic_undo_text(self):
+        js = (HERE / "static/audiences.js").read_text()
+        self.assertNotIn('+v("a_days") !== r.membership_days', js)
+        self.assertIn('if (days !== "" && days !== String(r.membership_days ?? "")) c.lifespan = +days;', js)
+        page = (HERE / "index.html").read_text()
+        self.assertIn("This undo can raise spend:", page)
+        self.assertNotIn("This undo switches these back on", page)
+
+
 class Text(unittest.TestCase):
     def test_no_em_dash(self):
         for f in ("audiences.py", "meta_audiences.py", "static/audiences.js", "tests/test_audiences.py"):

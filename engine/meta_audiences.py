@@ -85,6 +85,18 @@ NO_COUNTRY = "Studio never sends a country or location for a lookalike: the ad s
 CUSTOMER_KEYS = ("schema", "payload", "emails", "phones", "members", "customer_file_source", "users", "hashed")
 EVENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,49}$")
 SEED_MIN = 100
+SEED_OK = ("WEBSITE", "ENGAGEMENT", "IG_BUSINESS", "APP")  # allow-list of lookalike seed subtypes; anything else is refused
+
+
+def seed_problem(subtype):
+    """'' when a lookalike may use a seed of this subtype, else why not (missing subtype included)."""
+    if subtype in SEED_OK:
+        return ""
+    if subtype == "CUSTOM":
+        return "seed: a customer list can't be a seed here. " + NO_CUSTOMER_DATA
+    if subtype == "LOOKALIKE":
+        return "seed: a lookalike can't be the seed of another lookalike"
+    return f"seed: Studio only makes lookalikes from website, engagement, Instagram or app audiences (this one is {subtype or 'of unknown type'})"
 SIZE_NOTE = ("Sizes are Meta's own estimates. Small audiences show only a floor value (Meta hides exact sizes under "
              "about 1,000); a lookalike shows no size until Meta has made it.")
 
@@ -159,7 +171,7 @@ def rows(d):
                     "editable": st in EDITABLE, "rules_editable": False,
                     "read_only_why": NO_CUSTOMER_DATA if crm else ("" if st in EDITABLE else "Studio can't edit this kind of audience"),
                     "customer_list": crm, "note": NO_CUSTOMER_DATA if crm else "",
-                    "seed_ok": st not in ("LOOKALIKE", "CUSTOM")})
+                    "seed_ok": st in SEED_OK})
     out.sort(key=lambda r: (r["customer_list"], r["type"], r["name"].lower()))
     return {"platform": "meta", "rows": out, "size_note": SIZE_NOTE, "customer_note": NO_CUSTOMER_DATA,
             "fetched_at": d.get("fetched_at"), "engagement": {k: sorted(v[1]) for k, v in ENGAGEMENT.items()}}
@@ -262,10 +274,8 @@ def check(c, d):
         seed = _find(d, c.get("seed_id"))
         if not seed:
             problems.append(f"seed audience {c.get('seed_id')} not found in this ad account")
-        elif seed.get("subtype") == "CUSTOM":
-            problems.append("seed: a customer list can't be a seed here. " + NO_CUSTOMER_DATA)
-        elif seed.get("subtype") == "LOOKALIKE":
-            problems.append("seed: a lookalike can't be the seed of another lookalike")
+        elif seed_problem(seed.get("subtype")):
+            problems.append(seed_problem(seed.get("subtype")))
         else:
             n, txt = seed_people(seed)
             if n is not None and n < SEED_MIN:
@@ -421,10 +431,8 @@ def ops_for(c, meta):
             raise ValueError(f"kind must be one of {', '.join(KINDS)}")
         if c["kind"] == "lookalike":
             seed = meta.get(str(c["seed_id"]), fields="subtype")  # live: the seed's type now, not the cached one
-            if seed.get("subtype") == "CUSTOM":
-                raise ValueError("seed: a customer list can't be a seed here. " + NO_CUSTOMER_DATA)
-            if seed.get("subtype") == "LOOKALIKE":
-                raise ValueError("seed: a lookalike can't be the seed of another lookalike")
+            if seed_problem(seed.get("subtype")):  # a missing subtype is refused too
+                raise ValueError(seed_problem(seed.get("subtype")))
             lo, hi = _ratio(c)
             spec = {"ratio": round(hi / 100, 2)} if not lo else {"starting_ratio": round(lo / 100, 2), "ratio": round(hi / 100, 2)}
             p = {"name": c["name"], "subtype": "LOOKALIKE", "origin_audience_id": c["seed_id"], "lookalike_spec": json.dumps(spec)}

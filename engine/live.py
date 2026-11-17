@@ -864,6 +864,22 @@ def _refuse_trial_undo(acct, rec):
         raise ValueError("Not undone: " + "; ".join(dict.fromkeys(bad)))
 
 
+def _refuse_list_in_use(acct, rec):
+    """[audiences] Undo removes a list Studio made in that push: first read live who uses it (as a remove does); refuse
+    when anything does, or when that can't be read."""
+    made = [o["resource"] for o in rec.get("ops", []) if o.get("undo") == "remove-created" and "userListOperation" in o.get("op", {})]
+    if not made:
+        return
+    ids = type("Acct", (), {"acct": acct})()
+    for res in made:
+        try:
+            users = core.audiences.live_users(ids, res)
+        except Exception:  # noqa: BLE001
+            raise ValueError("Not undone: Studio can't read whether the audience list it would remove is in use; try again")
+        if users:
+            raise ValueError(f"Not undone: the audience list this push made is now in use ({'; '.join(users)}). Detach it first")
+
+
 def _only(acct, only):
     """The draft items in this push: all of them, or (team approvals / push by person) only the ids in `only`."""
     items = core.draft(acct)["items"]
@@ -962,6 +978,7 @@ def _undo(acct, push_id, accept_spend=False):
         return {"ok": False, "needs_spend": True, "spend": on, "not_undone": [], "errors": None,
                 "message": f"Not undone - this undo can raise spend ({len(on)} change(s)); accept to undo."}
     _refuse_trial_undo(acct, rec)
+    _refuse_list_in_use(acct, rec)
     ops, notes = [], []
     for o in reversed(rec["ops"]):
         u = o.get("undo")

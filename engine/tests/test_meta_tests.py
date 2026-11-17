@@ -46,7 +46,8 @@ DATA = {"account": {"currency": "GBP"},
                     "daily_budget": "2000", "optimization_goal": "OFFSITE_CONVERSIONS", "targeting": TG}],
         "ads": [{"id": "a1", "name": "Ad one", "adset_id": "s1", "campaign_id": "c1", "status": "ACTIVE", "effective_status": "ACTIVE", "creative": SRC},
                 {"id": "a2", "name": "Ad two", "adset_id": "s1", "campaign_id": "c1", "status": "ACTIVE", "effective_status": "ACTIVE", "creative": SRC},
-                {"id": "a3", "name": "Ad three", "adset_id": "s2", "campaign_id": "c1", "status": "PAUSED", "effective_status": "PAUSED", "creative": SRC}],
+                {"id": "a3", "name": "Ad three", "adset_id": "s2", "campaign_id": "c1", "status": "PAUSED", "effective_status": "PAUSED", "creative": SRC},
+                {"id": "a4", "name": "Ad four", "adset_id": "s2", "campaign_id": "c1", "status": "ACTIVE", "effective_status": "ACTIVE", "creative": SRC}],
         "audiences": [], "insights": {}}
 TODAY = dt.date.today()
 D = lambda n: (TODAY + dt.timedelta(days=n)).isoformat()  # noqa: E731
@@ -85,12 +86,8 @@ class Fake:
         if path.endswith("/insights"):
             return {"data": self.insights.get(path.split("/")[0], [])}
         if path in ("s1", "s2"):
-            if params.get("fields") == meta_tests.meta.F_COPY:
-                s = next(x for x in DATA["adsets"] if x["id"] == path)
-                return {**s, "billing_event": "IMPRESSIONS", "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
-                        "promoted_object": {"pixel_id": "px1", "custom_event_type": "PURCHASE"}, "attribution_spec": [{"event_type": "CLICK_THROUGH", "window_days": 7}]}
             return {"id": path, "name": path, "account_id": "123", "effective_status": "ACTIVE"}
-        if path in ("a1", "a2", "a3", "c1"):
+        if path in ("a1", "a2", "a3", "a4", "c1"):
             return {"id": path, "name": path, "account_id": "123", "effective_status": "ACTIVE"}
         s = next((x for x in STUDIES if x["id"] == path), None)
         if s:
@@ -171,7 +168,7 @@ class Checks(Base):
                  ({"cells": [{"ids": ["s1"], "percent": 60}, {"ids": ["s2"], "percent": 30}]}, "add up to 100"),
                  ({"cells": [{"ids": ["s1"]}, {"ids": ["s1"]}]}, "more than one cell"),
                  ({"cells": [{"ids": ["s1"]}, {"ids": ["nope"]}]}, "not found"),
-                 ({"cells": [{"ids": ["s1"]}, {"ids": ["d-zzz"]}]}, "not a new ad set"),
+                 ({"cells": [{"ids": ["s1"]}, {"ids": ["d-zzz"]}]}, "only use ad sets that already exist"),
                  ({"end_date": D(-1)}, "end date must be after"),
                  ({"start_date": D(-2)}, "past"),
                  ({"end_date": None}, "needs an end date"),
@@ -210,24 +207,29 @@ class Checks(Base):
         self.assertTrue(any("final" in w for w in it["warnings"]))
         self.assertTrue(self.add1({"type": "meta_test_end", "study_id": "x"})["problems"])
 
-    def test_variant_builder(self):
-        ch = meta_tests.variant_changes("s1", {"what": "audience", "countries": ["de"], "age_min": 30}, end_date=D(14))
-        self.assertEqual([c["type"] for c in ch], ["meta_new_adset", "meta_new_ad", "meta_new_ad", "meta_test_split"])
-        self.assertEqual(ch[0]["from_adset"], "s1")
-        self.assertEqual(ch[-1]["cells"][1]["ids"], ["d-v1"])
-        items = meta.add(ch)
-        self.assertEqual([i["problems"] for i in items], [[]] * 4, [i["problems"] for i in items])
-        new_set = items[0]["id"]
-        self.assertEqual(items[1]["change"]["adset_id"], f"d-{new_set}")
-        self.assertEqual(items[-1]["change"]["cells"][1]["ids"], [f"d-{new_set}"])  # the ref became the draft item id
-        self.assertIn("copy of ad set", items[0]["summary"])
-        cr = meta_tests.variant_changes("s1", {"what": "creative", "headline": "New head"}, end_date=D(14))
-        self.assertTrue(all(c.get("headline") == "New head" for c in cr if c["type"] == "meta_new_ad"))
-        for bad in ({"what": "colour"}, {"what": "audience"}, {"what": "audience", "budget": 3}, {"what": "optimisation", "x": 1}):
+    def test_variant_flow_is_not_available(self):
+        for call in (lambda: meta_tests.variant_changes("s1", {"what": "audience", "countries": ["DE"]}, end_date=D(14)),
+                     lambda: meta_tests.build("variant", {"adset_id": "s1", "change": {"what": "audience"}})):
+            with self.assertRaises(ValueError) as cm:
+                call()
+            self.assertIn("not available yet", str(cm.exception))
+        items = meta.add([{"type": "meta_new_adset", "campaign_id": "c1", "name": "N", "daily_budget": 5, "countries": ["GB"],
+                           "from_adset": "s1"},
+                          {"type": "meta_new_adset", "campaign_id": "c1", "name": "M", "daily_budget": 5, "countries": ["GB"],
+                           "activate_with_test": True},
+                          {"type": "meta_new_ad", "adset_id": "s1", "name": "A", "from_ad": "a1", "activate_with_test": True}])
+        for it, k in zip(items, ("from_adset", "activate_with_test", "activate_with_test")):
+            self.assertTrue(any(x.startswith(k + ":") and "not available yet" in x for x in it["problems"]), it["problems"])
+        for it in items:  # refused at push time too, whatever the draft says
             with self.assertRaises(ValueError):
-                meta_tests.variant_changes("s1", bad, end_date=D(14))
-        with self.assertRaises(ValueError):
-            meta_tests.build("nope", {})
+                meta.ops_for(it["change"], {})
+        self.assertFalse(hasattr(meta, "_copy_adset_ops"))
+        self.assertFalse(hasattr(meta_tests, "variants_of"))
+
+    def test_tests_use_existing_objects_only(self):
+        items = meta.add([{"type": "meta_new_ad", "ref": "n1", "adset_id": "s1", "name": "Fresh", "from_ad": "a1"},
+                          {"type": "meta_test_creative", "name": "C", "ads": ["a1", "d-n1"], "daily_budget": 20, "end_date": D(10)}])
+        self.assertTrue(any("already exist on Meta" in x for x in items[1]["problems"]), items[1]["problems"])
 
     def test_end_changes_pause(self):
         out = meta_tests.end_changes("900", pause=True)
@@ -261,26 +263,11 @@ class Live(Base):
         self.assertEqual(st, int(dt.datetime.combine(TODAY + dt.timedelta(days=2), dt.time(0, 0), dt.timezone.utc).timestamp()))
 
     def test_preview_reads_only_for_tests(self):
-        meta.add(meta_tests.variant_changes("s1", {"what": "placement", "advantage": False, "publisher_platforms": ["facebook"]},
-                                            end_date=D(14)))
+        meta.add([{"type": "meta_test_creative", "name": "C", "ads": ["a1", "a2"], "daily_budget": 10, "end_date": D(10)}])
         p = meta.preview()
         self.assertTrue(p["ok"], p)
         self.assertTrue(p["permanent"])
-        self.assertTrue(any(e["permanent"] for e in p["items"]))
-        self.assertFalse(any("ad_studies" in path for path, _, _ in self.f.posts))
-        self.assertTrue(all(v for _, _, v in self.f.posts), "the preview only sends validate_only")
-        adset_checks = [prm for path, prm, v in self.f.posts if path == "act_123/adsets"]
-        self.assertEqual(len(adset_checks), 1)
-        prm = adset_checks[0]
-        self.assertEqual(prm["status"], "ACTIVE")  # the variant runs inside the test window (M3)
-        self.assertTrue(p["spend"])
-        self.assertEqual(prm["targeting"]["publisher_platforms"], ["facebook"])
-        self.assertEqual(prm["targeting"]["custom_audiences"], TG["custom_audiences"])  # the copy keeps the rest
-        self.assertEqual(prm["targeting"]["flexible_spec"], TG["flexible_spec"])
-        self.assertEqual(prm["daily_budget"], 2000)
-        self.assertEqual(prm["promoted_object"], {"pixel_id": "px1", "custom_event_type": "PURCHASE"})
-        self.assertEqual(prm["attribution_spec"], [{"event_type": "CLICK_THROUGH", "window_days": 7}])
-        self.assertEqual(prm["targeting"]["targeting_automation"]["individual_setting"], {"device": 0})
+        self.assertEqual(self.f.posts, [], "a test preview sends nothing at all, only reads")
 
     def test_preview_refuses_busy_objects(self):
         meta.add([{"type": "meta_test_split", "name": "T", "level": "adset", "end_date": D(10), "cells": [{"ids": ["s1"]}, {"ids": ["s2"]}]}])
@@ -296,57 +283,36 @@ class Live(Base):
             p = meta.preview()
         self.assertTrue(any("not in this ad account" in x for e in p["items"] for x in e["problems"]), p)
 
-    def test_push_variant_end_to_end_and_undo(self):
-        meta.add(meta_tests.variant_changes("s1", {"what": "audience", "countries": ["DE"]}, test_name="Geo", end_date=D(14)))
+    def test_push_creative_end_to_end_and_undo(self):
+        meta.add([{"type": "meta_test_creative", "name": "C", "ads": ["a1", "a2"], "daily_budget": 20, "end_date": D(10)}])
         r = meta.push(accept_spend=True)
         self.assertFalse(r["ok"])
         self.assertIn("can't be undone", r["message"])
-        self.assertEqual([x for x in self.f.posts if not x[2]], [], "nothing was sent for real without the tick")
+        self.assertEqual(self.f.posts, [], "nothing sent without the permanent tick")
         r = meta.push(accept_spend=True, accept_permanent=True)
         self.assertTrue(r["ok"], r)
-        real = [(path, prm) for path, prm, v in self.f.posts if not v]
-        self.assertEqual([p for p, _ in real], ["act_123/adsets", "act_123/adcreatives", "act_123/ads", "act_123/adcreatives",
-                                                "act_123/ads", "b1/ad_studies"])
-        study = real[-1][1]
-        self.assertEqual(study["type"], "SPLIT_TEST")
-        self.assertEqual(study["cells"][0]["adsets"], ["s1"])
-        self.assertEqual(study["cells"][1]["adsets"], ["new1"])  # the variant made earlier in this push
-        self.assertGreater(study["start_time"], time.time())
-        self.assertNotIn("cooldown_start_time", study)
-        self.assertEqual(real[0][1]["targeting"]["geo_locations"], {"countries": ["DE"]})
-        self.assertEqual(real[2][1]["adset_id"], "new1")
-        local = json.loads((TMP / "meta_tests_meta_123.json").read_text())
-        self.assertEqual(local["new6"]["cells"][1], {"name": "Variant", "level": "adset", "ids": ["new1"]})
-        h = meta.history()[0]
-        self.assertTrue(h["can_undo"])
-        self.f.posts.clear()
-        u = meta.undo(r["push_id"])
-        self.assertFalse(u["ok"])
-        self.assertTrue(any("can't be removed from Meta" in x for x in u["not_undone"]), u)
-        self.assertEqual(sorted(p for p, _, _ in self.f.posts), ["new1", "new3", "new5"])  # ads + ad set deleted, test left
-        self.assertTrue(all(prm == {"status": "DELETED"} for _, prm, _ in self.f.posts))
-
-    def test_creative_push_with_new_ad_and_rollback(self):
-        meta.add([{"type": "meta_new_ad", "ref": "n1", "adset_id": "s1", "name": "Fresh", "from_ad": "a1", "headline": "Other"},
-                  {"type": "meta_test_creative", "name": "C", "ads": ["a1", "d-n1"], "daily_budget": 20, "end_date": D(10)}])
-        d = core.draft(meta.acct())["items"]
-        self.assertEqual(d[1]["change"]["ads"], ["a1", "d-" + d[0]["id"]])
-        r = meta.push(accept_spend=True, accept_permanent=True)
-        self.assertTrue(r["ok"], r)
-        study = [prm for p, prm, v in self.f.posts if p == "b1/ad_studies"][0]
-        self.assertEqual(study["cells"][1]["ads"], ["new2"])
+        (path, study, v), = self.f.posts
+        self.assertEqual((path, v), ("b1/ad_studies", False))
+        self.assertEqual([c["ads"] for c in study["cells"]], [["a1"], ["a2"]])
         self.assertEqual((study["cooldown_start_time"], study["observation_end_time"]), (study["start_time"], study["end_time"]))
         self.assertEqual(study["creative_test_config"], {"daily_budget": 2000})
-        # Meta refuses the test: the new ad made in this push is deleted again, nothing kept
-        core.clear(meta.acct())
-        self.f.posts.clear()
-        self.f.fail_on = "ad_studies"
-        meta.add([{"type": "meta_new_ad", "ref": "n1", "adset_id": "s1", "name": "Fresh", "from_ad": "a1"},
-                  {"type": "meta_test_creative", "name": "C", "ads": ["a1", "d-n1"], "daily_budget": 20, "end_date": D(10)}])
+        self.assertGreater(study["start_time"], time.time())
+        local = json.loads((TMP / "meta_tests_meta_123.json").read_text())
+        self.assertEqual(local["new1"]["cells"][1], {"name": "Ad 2", "level": "ad", "ids": ["a2"]})
+        self.assertNotIn("created", local["new1"])
+        h = meta.history()[0]
+        self.assertFalse(h["can_undo"], "a test alone can't be undone")
+        self.assertEqual(core.draft(meta.acct())["items"], [])
+
+    def test_no_test_post_is_ever_active(self):
+        """Nothing Studio creates around a test is Active: every create in a push is Paused."""
+        meta.add([{"type": "meta_new_ad", "adset_id": "s1", "name": "Fresh", "from_ad": "a1"},
+                  {"type": "meta_test_creative", "name": "C", "ads": ["a1", "a2"], "daily_budget": 5, "end_date": D(10)}])
         r = meta.push(accept_spend=True, accept_permanent=True)
-        self.assertFalse(r["ok"])
-        self.assertIn("refused", r["message"])
-        self.assertEqual([(p, prm) for p, prm, v in self.f.posts if prm == {"status": "DELETED"}], [("new5", {"status": "DELETED"})])  # new4 is its creative
+        self.assertTrue(r["ok"], r)
+        for path, prm, v in self.f.posts:
+            if "status" in prm:
+                self.assertEqual(prm["status"], "PAUSED", (path, prm))
 
     def test_end_test(self):
         meta.add(meta_tests.end_changes("900"))
@@ -476,114 +442,64 @@ class Routes(Base):
             srv.server_close()
 
 
-class ReviewFixes(Base):
-    """Fixes from the independent review: M1 copy fields, M2 keep what a made test uses, M3 variants deliver."""
+class Safety(Base):
+    """Review fixes kept after the variant flow was taken out: what a made test keeps, stale dates, local note, LOWs."""
 
-    def test_m1_copy_keeps_regional_and_dsa_fields(self):
-        extra = {"regional_regulated_categories": ["SINGAPORE_UNIVERSAL"], "dsa_beneficiary": "B", "dsa_payor": "P",
-                 "regional_regulation_identities": {"singapore_universal_beneficiary": "1", "singapore_universal_payer": "1"}}
-        orig = self.f.get
-        with mock.patch.object(meta, "get", lambda path, **k: {**orig(path, **k), **extra} if path == "s1" else orig(path, **k)):
-            st = meta.ops_for(meta._normalise({"type": "meta_new_adset", "from_adset": "s1", "campaign_id": "c1", "name": "V"}), {})[0]
-        for k, v in extra.items():
-            self.assertEqual(st["params"][k], v, k)
-        self.assertIn("regional_regulation_identities", meta.F_COPY)
+    def real(self):
+        return [(p_, prm) for p_, prm, v in self.f.posts if not v]
 
-    def test_m1_age_on_advantage_audience_is_a_suggestion(self):
-        adv = {"age_min": 20, "age_max": 65, "age_range": [20, 65], "targeting_automation": {"advantage_audience": 1}}
-        tg, txt = meta._set_age(adv, 30, 50)
-        self.assertEqual((tg["age_range"], tg["age_min"], tg["age_max"]), ([30, 50], 20, 65))
-        self.assertIn("suggestion", txt)
-        tg, _ = meta._set_age(adv, 18, None)
-        self.assertEqual((tg["age_range"], tg["age_min"]), ([18, 65], 18))  # hard minimum lowered under a lower suggestion
-        tg, txt = meta._set_age({"age_min": 25, "age_max": 60, "age_range": [25, 60]}, 30, 55)
-        self.assertEqual((tg["age_min"], tg["age_max"], "age_range" in tg), (30, 55, False))
-        self.assertEqual(adv["age_range"], [20, 65])  # the input is not changed
-
-    def test_m3_variant_runs_in_the_test_window(self):
-        meta.add(meta_tests.variant_changes("s1", {"what": "audience", "countries": ["DE"]}, end_date=D(14)))
-        r = meta.push(accept_permanent=True)
-        self.assertFalse(r["ok"])
-        self.assertIn("raise spend", r["message"])  # Active variants need the spend tick
-        r = meta.push(accept_spend=True, accept_permanent=True)
-        self.assertTrue(r["ok"], r)
-        real = [(p_, prm) for p_, prm, v in self.f.posts if not v]
-        aset, study = real[0][1], real[-1][1]
-        self.assertEqual(aset["status"], "ACTIVE")
-        self.assertEqual((aset["start_time"], aset["end_time"]), (study["start_time"], study["end_time"]))  # one clock
-        self.assertTrue(all(prm["status"] == "ACTIVE" for p_, prm in real if p_ == "act_123/ads"))
-
-    def test_m3_paused_cells_warn_and_activate_rules(self):
-        paused = {**DATA, "adsets": [dict(DATA["adsets"][0]), {**DATA["adsets"][1], "status": "PAUSED", "effective_status": "PAUSED"}]}
-        with mock.patch.object(meta, "load", lambda *a, **k: paused):
-            it = meta.add([{"type": "meta_test_split", "name": "T", "end_date": D(10), "cells": [{"ids": ["s1"]}, {"ids": ["s2"]}]}])[0]
-            self.assertTrue(any("is paused" in w for w in it["warnings"]), it["warnings"])
-            core.clear(meta.acct())
-            it = meta.add([{"type": "meta_test_creative", "name": "C", "ads": ["a1", "a3"], "daily_budget": 5, "end_date": D(10)}])[0]
-            self.assertTrue(any("Ad 2" in w and "paused" in w for w in it["warnings"]), it["warnings"])
-        core.clear(meta.acct())
-        items = meta.add([{"type": "meta_new_adset", "ref": "x", "from_adset": "s1", "name": "Plain copy"},
-                          {"type": "meta_test_split", "name": "T", "end_date": D(10), "cells": [{"ids": ["s1"]}, {"ids": ["d-x"]}]}])
-        self.assertTrue(any("created Paused" in w for w in items[1]["warnings"]), items[1]["warnings"])
-        core.clear(meta.acct())
-        bad = meta.add([{"type": "meta_new_adset", "campaign_id": "c1", "name": "N", "daily_budget": 5, "countries": ["GB"],
-                         "activate_with_test": True},
-                        {"type": "meta_new_ad", "adset_id": "s1", "name": "A", "from_ad": "a1", "activate_with_test": True}])
-        self.assertTrue(any("only for a variant" in x for x in bad[0]["problems"]), bad[0]["problems"])
-        self.assertTrue(any("no A/B test in the draft uses this ad set" in x for x in bad[0]["problems"]))
-        self.assertTrue(any("only for ads in a new variant" in x for x in bad[1]["problems"]), bad[1]["problems"])
-
-    def two_tests(self):
-        meta.add([{"type": "meta_new_campaign", "name": "Other", "objective": "traffic"}])
-        meta.add(meta_tests.variant_changes("s1", {"what": "audience", "countries": ["DE"]}, test_name="First", end_date=D(14)))
-        meta.add([{"type": "meta_test_creative", "name": "Second", "ads": ["a3", "a2"], "daily_budget": 5, "end_date": D(10)}])
-
-    def test_m2_second_test_refused_keeps_first_and_what_it_uses(self):
-        self.two_tests()
-        calls = {"n": 0}
+    def refuse(self, pred):
         real_post = self.f.post
 
         def post(path, params, validate=False, retry_rate=True):
-            if path == "b1/ad_studies" and not validate:
-                calls["n"] += 1
-                if calls["n"] == 2:
-                    raise meta.MetaError({"message": "second test refused", "code": 100})
+            if not validate and pred(path, params):
+                raise meta.MetaError({"message": "refused", "code": 100})
             return real_post(path, params, validate, retry_rate)
-        with mock.patch.object(meta, "post", post):
+        return mock.patch.object(meta, "post", post)
+
+    def test_second_test_refused_keeps_the_first(self):
+        meta.add([{"type": "meta_new_campaign", "name": "Other", "objective": "traffic"},
+                  {"type": "meta_test_creative", "name": "First", "ads": ["a1", "a2"], "daily_budget": 5, "end_date": D(10)},
+                  {"type": "meta_test_creative", "name": "Second", "ads": ["a3", "a4"], "daily_budget": 5, "end_date": D(10)}])
+        n = {"k": 0}
+
+        def second(path, params):
+            if path == "b1/ad_studies":
+                n["k"] += 1
+                return n["k"] == 2
+            return False
+        with self.refuse(second):
             r = meta.push(accept_spend=True, accept_permanent=True)
         self.assertFalse(r["ok"])
         self.assertTrue(r["partial"])
-        made = [(p_, prm) for p_, prm, v in self.f.posts if not v and prm != {"status": "DELETED"}]
-        deleted = [p_ for p_, prm, v in self.f.posts if prm == {"status": "DELETED"}]
-        self.assertEqual(deleted, ["new1"], "only the unrelated new campaign is reversed")
-        self.assertEqual(r["kept"], 4)  # the variant ad set, its 2 ads and the first test
-        self.assertIn("Kept on Meta: 4 change(s)", r["message"])
+        self.assertEqual(r["kept"], 1)
+        self.assertIn("Kept on Meta: 1 change(s)", r["message"])
         self.assertIn("Reversed: 1 of 1", r["message"])
-        self.assertNotIn("nothing was kept", r["message"])
+        self.assertEqual([p_ for p_, prm in self.real() if prm == {"status": "DELETED"}], ["new1"])  # the unrelated campaign
         rec = json.loads((TMP / "live_meta_123.jsonl").read_text().splitlines()[-1])
         self.assertTrue(rec["partial"])
-        self.assertEqual(len(rec["ops"]), 4)
-        self.assertTrue(any(o.get("created") == "study" for o in rec["ops"]))
-        self.assertEqual(len(rec["rolled_back"]), 1)
-        left = [i["change"]["type"] for i in core.draft(meta.acct())["items"]]
-        self.assertEqual(sorted(left), ["meta_new_campaign", "meta_test_creative"])  # kept items left the draft
-        h = meta.history()[0]
-        self.assertTrue(h["can_undo"] and h["partial"])
-        self.assertIn("End the test first", h["undo_warning"])
-        u = meta.undo(h["id"])
-        self.assertTrue(any("End the test first" in x for x in u["not_undone"]))
+        self.assertEqual([o.get("created") for o in rec["ops"]], ["study"])
+        self.assertEqual(sorted(i["change"]["type"] for i in core.draft(meta.acct())["items"]),
+                         ["meta_new_campaign", "meta_test_creative"])
+        self.assertFalse(meta.history()[0]["can_undo"], "only a test was kept: nothing to undo")
 
-    def test_m2_test_then_refused_end(self):
-        meta.add(meta_tests.variant_changes("s1", {"what": "audience", "countries": ["DE"]}, end_date=D(14)))
+    def test_test_then_refused_end(self):
+        meta.add([{"type": "meta_test_creative", "name": "C", "ads": ["a1", "a2"], "daily_budget": 5, "end_date": D(10)}])
         meta.add(meta_tests.end_changes("900"))
-        real_post = self.f.post
-        with mock.patch.object(meta, "post", lambda path, params, validate=False, retry_rate=True:
-                               (_ for _ in ()).throw(meta.MetaError({"message": "end refused", "code": 100}))
-                               if path == "900" and not validate else real_post(path, params, validate, retry_rate)):
+        with self.refuse(lambda path, params: path == "900"):
             r = meta.push(accept_spend=True, accept_permanent=True)
         self.assertTrue(r["partial"])
-        self.assertEqual(r["kept"], 4)
-        self.assertFalse([p_ for p_, prm, v in self.f.posts if prm == {"status": "DELETED"}])
+        self.assertEqual(r["kept"], 1)
+
+    def test_refused_delete_falls_back_to_paused(self):
+        meta.add([{"type": "meta_new_campaign", "name": "Other", "objective": "traffic"},
+                  {"type": "meta_test_creative", "name": "C", "ads": ["a1", "a2"], "daily_budget": 5, "end_date": D(10)}])
+        with self.refuse(lambda path, params: path == "b1/ad_studies" or (path == "new1" and params == {"status": "DELETED"})):
+            r = meta.push(accept_spend=True, accept_permanent=True)
+        self.assertFalse(r["ok"])
+        self.assertIn("set to Paused instead", r["message"])
+        self.assertNotIn("nothing was kept", r["message"])
+        self.assertIn(("new1", {"status": "PAUSED"}), self.real())
 
     def test_keep_rules(self):
         done = [{"line": "camp", "id": "C", "undo": {"status": "DELETED"}, "created": "campaign"},
@@ -596,151 +512,62 @@ class ReviewFixes(Base):
         self.assertEqual([r["line"] for r in kept], ["camp", "set", "ad", "test"])
         self.assertEqual([r["line"] for r in back], ["other", "edit"])
         self.assertEqual(meta._keep(done[:5]), ([], done[:5]))
+        sib = [{"line": "new", "id": "N", "undo": {"status": "DELETED"}, "created": "ad", "parent": "s1"},
+               {"line": "unrelated", "id": "O", "undo": {"status": "DELETED"}, "created": "adset", "parent": "c1"},
+               {"line": "test", "id": "T", "undo": None, "created": "study", "uses": ["s1"]}]
+        kept, back = meta._keep(sib)  # an existing parent does not pull in its other children
+        self.assertEqual([r["line"] for r in back], ["unrelated"])
+
+    def test_stale_dates_are_refused_at_push(self):
+        meta.add([{"type": "meta_test_creative", "name": "C", "ads": ["a1", "a2"], "daily_budget": 5, "start_date": D(1),
+                   "end_date": D(10)}])
+        it = core.draft(meta.acct())["items"][0]
+        self.assertEqual(it["problems"], [])
+        with core._locked(meta.acct()) as dr:  # days later: the draft's start is now in the past (problems not re-run)
+            dr["items"][0]["change"]["start_date"] = D(-2)
+        r = meta.push(accept_spend=True, accept_permanent=True)
+        self.assertFalse(r["ok"])
+        self.assertTrue(any("past" in x for e in r["preview"]["items"] for x in e["problems"]), r["preview"])
+        self.assertEqual(self.f.posts, [])
+
+    def test_local_note_failure_still_logs_the_push(self):
+        meta.add([{"type": "meta_test_creative", "name": "C", "ads": ["a1", "a2"], "daily_budget": 5, "end_date": D(10)}])
+        with mock.patch.object(meta_tests, "_remember", side_effect=OSError("disk full")):
+            r = meta.push(accept_spend=True, accept_permanent=True)
+        self.assertTrue(r["ok"], r)
+        rec = json.loads((TMP / "live_meta_123.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(rec["ops"][0]["id"], "new1")
+        self.assertIn("could not save its note", rec["ops"][0]["line"])
+
+    def test_paused_cells_warn(self):
+        paused = {**DATA, "adsets": [dict(DATA["adsets"][0]), {**DATA["adsets"][1], "status": "PAUSED", "effective_status": "PAUSED"}]}
+        with mock.patch.object(meta, "load", lambda *a, **k: paused):
+            it = meta.add([{"type": "meta_test_split", "name": "T", "end_date": D(10), "cells": [{"ids": ["s1"]}, {"ids": ["s2"]}]}])[0]
+            self.assertTrue(any("is paused" in w for w in it["warnings"]), it["warnings"])
+            core.clear(meta.acct())
+            it = meta.add([{"type": "meta_test_creative", "name": "C", "ads": ["a1", "a3"], "daily_budget": 5, "end_date": D(10)}])[0]
+            self.assertTrue(any("Ad 2" in w and "paused" in w for w in it["warnings"]), it["warnings"])
 
     def test_lows(self):
-        # account time zone: days are midnight there
         with mock.patch.object(meta, "load", lambda *a, **k: {**DATA, "account": {"timezone_name": "Asia/Bangkok"}}):
             e = meta_tests._epoch(dt.date(2027, 1, 2))
             self.assertEqual(e, int(dt.datetime(2027, 1, 1, 17, 0, tzinfo=dt.timezone.utc).timestamp()))
             self.assertEqual(meta_tests._local_time("2027-01-01T17:00:00+0000"), "2027-01-02 00:00")
-        # Ads Manager creative tests: no ad sets or campaigns in the cells
         row = meta_tests._row({"id": "77", "type": "SPLIT_TEST_V2", "cells": {"data": [{"id": "x"}, {"id": "y"}]}})
         self.assertEqual(row["label"], "Creative test")
-        # ended split test with an empty cell
         data = {"study": {"status": "Ended", "kind": "split", "start": "", "cells": [
             {"id": "1", "name": "A", "ids": ["s1"], "names": ["A"], "spend": 10, "impressions": 2000, "results": 4, "cost_per_result": 2.5},
             {"id": "2", "name": "B", "ids": [], "names": [], "spend": 0, "impressions": 0, "results": 0, "cost_per_result": None}]},
             "meta": meta_tests.parse_results(None), "objective": {}, "period": {"since": None}}
         self.assertIn("Ended without results in B", meta_tests.verdict(data)["verdict"])
-        data["study"]["cells"][0].update(spend=0, impressions=0)
-        self.assertIn("Ended without results", meta_tests.verdict(data)["verdict"])
-        # two drafted tests on the same ad set
         meta.add([{"type": "meta_test_split", "name": "One", "end_date": D(10), "cells": [{"ids": ["s1"]}, {"ids": ["s2"]}]}])
         two = meta.add([{"type": "meta_test_split", "name": "Two", "end_date": D(10), "cells": [{"ids": ["s1"]}, {"ids": ["s2"]}]}])[0]
         self.assertTrue(any('also in the drafted test "One"' in x for x in two["problems"]), two["problems"])
-        # push tick wording
         self.assertIn('isMeta() ? "permanent changes" : "removals"', (HERE / "index.html").read_text())
-
-
-class RoundTwo(Base):
-    """Second review: an Active variant never spends outside its test."""
-
-    def real(self):
-        return [(p_, prm) for p_, prm, v in self.f.posts if not v]
-
-    def variant(self, **kw):
-        return meta.add(meta_tests.variant_changes("s1", {"what": "audience", "countries": ["DE"]}, end_date=D(14), **kw))
-
-    def test_variant_without_its_test_in_the_push_is_refused(self):
-        items = self.variant()
-        only = {i["id"] for i in items if i["change"]["type"] != "meta_test_split"}
-        r = meta.push(accept_spend=True, accept_permanent=True, only=only)
-        self.assertFalse(r["ok"])
-        self.assertEqual(self.real(), [], "nothing created, so nothing Active without a test")
-        probs = [x for e in r["preview"]["items"] for x in e["problems"]]
-        self.assertTrue(any("only together with its A/B test" in x for x in probs), probs)
-        # only the ad set: refused too
-        r = meta.push(accept_spend=True, accept_permanent=True, only={items[0]["id"]})
-        self.assertFalse(r["ok"])
-        self.assertEqual(self.real(), [])
-
-    def test_test_removed_from_the_draft(self):
-        items = self.variant()
-        core.remove(meta.acct(), [i["id"] for i in items if i["change"]["type"] == "meta_test_split"])
-        pv = meta.preview()
-        self.assertFalse(pv["ok"])
-        draft = core.draft(meta.acct())["items"]
-        meta.validate()
-        draft = core.draft(meta.acct())["items"]
-        self.assertTrue(any("no A/B test in the draft uses this ad set" in x for x in draft[0]["problems"]), draft[0]["problems"])
-        self.assertFalse(meta.push(accept_spend=True)["ok"])
-        self.assertEqual(self.real(), [])
-
-    def test_variant_follows_the_tests_window(self):
-        items = meta.add([{"type": "meta_new_adset", "ref": "v", "from_adset": "s1", "name": "V", "activate_with_test": True,
-                           "start_date": D(1), "end_date": D(30)},
-                          {"type": "meta_new_ad", "adset_id": "d-v", "name": "A", "from_ad": "a1", "activate_with_test": True},
-                          {"type": "meta_test_split", "name": "T", "start_date": D(5), "end_date": D(12),
-                           "cells": [{"ids": ["s1"]}, {"ids": ["d-v"]}]}])
-        self.assertTrue(any("follows its test's dates" in w for w in items[0]["warnings"]), items[0]["warnings"])
-        self.assertEqual([i["problems"] for i in items], [[], [], []])
-        r = meta.push(accept_spend=True, accept_permanent=True)
-        self.assertTrue(r["ok"], r)
-        rl = self.real()
-        aset, study = rl[0][1], rl[-1][1]
-        self.assertEqual((aset["start_time"], aset["end_time"]), (study["start_time"], study["end_time"]))
-        self.assertEqual(aset["start_time"], meta_tests._epoch(dt.date.fromisoformat(D(5))))
-
-    def test_ending_a_test_pauses_studio_variants_by_default(self):
-        self.variant()
-        r = meta.push(accept_spend=True, accept_permanent=True)
-        self.assertTrue(r["ok"], r)
-        sid = [p_ for p_, prm in self.real()][-1] and "new6"
-        self.assertEqual(meta_tests.variants_of(sid), [{"id": "new1", "level": "adset"}])
-        out = meta_tests.end_changes(sid)
-        self.assertEqual(out[1:], [{"type": "meta_status", "level": "adset", "id": "new1", "status": "paused"}])
-        self.assertEqual(meta_tests.end_changes(sid, pause_variants=False)[1:], [])
-        self.assertEqual(len(meta_tests.build("end", {"study_id": sid})), 2)
-        self.assertEqual(len(meta_tests.build("end", {"study_id": sid, "pause_variants": False})), 1)
-        with mock.patch.object(meta_tests, "status_of", lambda s, now=None: "Running"):
-            it = meta.add([{"type": "meta_test_end", "study_id": sid}])[0]
-        self.assertTrue(any("keep running and spending" in w for w in it["warnings"]), it["warnings"])
-        it2 = meta.add([{"type": "meta_status", "level": "adset", "id": "new1", "status": "paused"}])
-        meta.validate()
-        end = next(i for i in core.draft(meta.acct())["items"] if i["change"]["type"] == "meta_test_end")
-        self.assertFalse(any("keep running" in w for w in end["warnings"]))
-
-    def test_refused_delete_falls_back_to_paused(self):
-        self.variant()
-        real_post = self.f.post
-
-        def post(path, params, validate=False, retry_rate=True):
-            if path == "b1/ad_studies" and not validate:
-                raise meta.MetaError({"message": "study refused", "code": 100})
-            if params == {"status": "DELETED"} and path == "new1":
-                raise meta.MetaError({"message": "network", "code": 2})
-            return real_post(path, params, validate, retry_rate)
-        with mock.patch.object(meta, "post", post):
-            r = meta.push(accept_spend=True, accept_permanent=True)
-        self.assertFalse(r["ok"])
-        self.assertIn("set to Paused instead", r["message"])
-        self.assertIn(("new1", {"status": "PAUSED"}), [(p_, prm) for p_, prm in self.real()])
-        self.assertIn("2 change(s) already made were reversed", r["message"])  # 3 made: 2 deleted, the ad set only paused
-        self.assertNotIn("nothing was kept", r["message"])
-
-    def test_keep_ignores_siblings_under_an_existing_parent(self):
-        done = [{"line": "variant", "id": "V", "undo": {"status": "DELETED"}, "created": "adset", "parent": "c1"},
-                {"line": "unrelated", "id": "O", "undo": {"status": "DELETED"}, "created": "adset", "parent": "c1"},
-                {"line": "test", "id": "T", "undo": None, "created": "study", "uses": ["s1", "V"]}]
-        kept, back = meta._keep(done)
-        self.assertEqual([r["line"] for r in kept], ["variant", "test"])
-        self.assertEqual([r["line"] for r in back], ["unrelated"])
-
-    def test_grid_shows_advantage_age_as_suggestion(self):
         t = {"age_min": 20, "age_max": 65, "age_range": [30, 55], "targeting_automation": {"advantage_audience": 1}}
         self.assertEqual(meta._targeting(t)["age"], "30-55 (suggestion)")
-        self.assertEqual(meta._targeting({"age_min": 25, "age_max": 60})["age"], "25-60")
-        adv = {**DATA, "adsets": [{**DATA["adsets"][0], "targeting": {**TG, "targeting_automation": {"advantage_audience": 1}}}, DATA["adsets"][1]]}
-        with mock.patch.object(meta, "load", lambda *a, **k: adv):
-            meta.add(meta_tests.variant_changes("s1", {"what": "audience", "age_min": 30, "age_max": 50}, end_date=D(14)))
-            rows = meta.grid("adsets")
-        self.assertEqual(rows[0]["age"], "30-50 (suggestion)")
-
-    def test_variant_refuses_ad_sets_with_ads_it_cannot_copy(self):
-        flex = {**DATA, "ads": [DATA["ads"][0], {**DATA["ads"][1], "creative": {"id": "cr9", "asset_feed_spec": {"bodies": [{"text": "x"}]},
-                                                                               "object_story_spec": {"page_id": "p1"}}}]}
-        with mock.patch.object(meta, "load", lambda *a, **k: flex):
-            with self.assertRaises(ValueError) as cm:
-                meta_tests.variant_changes("s1", {"what": "audience", "countries": ["DE"]}, end_date=D(14))
-        self.assertIn("1 of the ad set's 2 ads can't be copied", str(cm.exception))
-        paused = {**DATA, "ads": [DATA["ads"][0], {**DATA["ads"][1], "status": "PAUSED"}]}
-        with mock.patch.object(meta, "load", lambda *a, **k: paused):
-            ch = meta_tests.variant_changes("s1", {"what": "audience", "countries": ["DE"]}, end_date=D(14))
-        self.assertEqual([c["from_ad"] for c in ch if c["type"] == "meta_new_ad"], ["a1"])  # paused ads are not copied Active
-
-    def test_ad_activate_in_existing_ad_set_refused(self):
-        it = meta.add([{"type": "meta_new_ad", "adset_id": "s1", "name": "A", "from_ad": "a1", "activate_with_test": True}])
-        self.assertTrue(any("only for ads in a new variant" in x for x in it[0]["problems"]))
+        js = (HERE / "static/meta_tests.js").read_text()
+        self.assertNotIn("variant", js.lower())
 
 
 class Mcp(Base):

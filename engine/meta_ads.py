@@ -718,14 +718,6 @@ def summarise(c, d=None, items=None):
             camp = str(c.get("campaign_id"))
         b = f"daily {float(c['daily_budget']):.2f}" if c.get("daily_budget") else "campaign budget"
         age = f"age {c.get('age_min', 18)}-{c.get('age_max', 65)}"
-        if c.get("from_adset"):
-            diff = [x for x in (", ".join(c.get("countries") or []), f"age {c.get('age_min', '')}-{c.get('age_max', '')}"
-                                if c.get("age_min") or c.get("age_max") else "", _pl_text(c["placements"]) if c.get("placements") else "",
-                                f"optimisation {c['optimization_goal']}" if c.get("optimization_goal") else "",
-                                f"daily {float(c['daily_budget']):.2f}" if c.get("daily_budget") else "") if x]
-            state = "Active from the test start to its end" if c.get("activate_with_test") else "Paused"
-            return (f'Meta new ad set "{c["name"]}" in campaign "{camp}": copy of ad set "{_name(d, "adset", c["from_adset"])}"'
-                    f'{" with " + "; ".join(diff) if diff else " (no change)"} ({state})')
         return (f'Meta new ad set "{c["name"]}" in campaign "{camp}" ({b}; {", ".join(c.get("countries") or [])}; {age}; '
                 f'{_pl_text(c.get("placements"))}; Paused)')
     if t == "meta_new_ad":
@@ -740,7 +732,7 @@ def summarise(c, d=None, items=None):
             src.append(f'uploaded {m.get("kind", "file")} "{m.get("name", c["media_id"][:8])}"')
         if c.get("from_ad"):
             src.append(f'copy of "{_name(d, "ad", c["from_ad"])}"')
-        return f'Meta new ad "{c["name"]}" in ad set "{where}" ({", ".join(src)}, {"Active with the test" if c.get("activate_with_test") else "Paused"})'
+        return f'Meta new ad "{c["name"]}" in ad set "{where}" ({", ".join(src)}, Paused)'
     if t == "meta_boost_post":
         items = items if items is not None else _items()
         try:
@@ -777,6 +769,11 @@ def summarise(c, d=None, items=None):
         bits = [f"{k} ({len(c[k])})" for k in ("bodies", "titles", "descriptions", "link_urls") if c.get(k) is not None]
         return f"Meta {who}: new text options ({', '.join(bits)})"
     return json.dumps(c, ensure_ascii=False)
+
+
+# Taken out of the tests step (a04): Studio never creates anything Active through a test. Refused on every change type.
+NOT_YET = {"from_adset": "copying an ad set (Duplicate with one change) is not available yet",
+           "activate_with_test": "creating objects Active for a test is not available yet: new objects are always created Paused"}
 
 
 PRICE = re.compile(r"(?:[$£€]\s?\d(?:[\d,.]*\d)?|\d(?:[\d,.]*\d)?\s?(?:USD|GBP|EUR))")
@@ -895,18 +892,15 @@ def check(c, d=None, items=None):
             if not c.get("name"):
                 problems.append("the new ad set needs a name")
             camp = _camp_facts(c.get("campaign_id"), d, items)
-            src = _find(d, "adset", c["from_adset"]) if c.get("from_adset") else None
             if camp["cbo"]:
                 if c.get("daily_budget") is not None:
                     problems.append("the campaign has a campaign budget (CBO): leave the ad set budget out")
-            elif src and c.get("daily_budget") is None and (src.get("daily_budget") or src.get("lifetime_budget")):
-                pass  # the copy keeps the source ad set's budget
             elif c.get("daily_budget") is None or float(c["daily_budget"]) < 1:
                 problems.append("the ad set needs a daily budget of at least 1.00 (the campaign has no campaign budget)")
             obj = camp["objective"]
             if obj in GOALS and c.get("optimization_goal") and c["optimization_goal"] != GOALS[obj][0] and c["optimization_goal"] not in GOALS[obj][1]:
                 problems.append(f"optimization_goal for {obj}: one of {', '.join((GOALS[obj][0],) + GOALS[obj][1])}")
-            if not c.get("countries") and not src:
+            if not c.get("countries"):
                 problems.append("the new ad set needs at least one country")
             elif any(not re.fullmatch(r"[A-Za-z]{2}", str(x)) for x in c["countries"]):
                 problems.append("countries are 2-letter codes, e.g. GB, DE")
@@ -917,23 +911,8 @@ def check(c, d=None, items=None):
             if c.get("end_date"):
                 _future_date(c["end_date"], "end date", problems, after=start)
             problems += _placement_problems(c.get("placements"))
-            if c.get("activate_with_test"):
-                if not src:
-                    problems.append("activate_with_test is only for a variant copied from an ad set (from_adset)")
-                own = _own_id(c, items)
-                test = _test_of(own, items) if own else None
-                if not test:
-                    problems.append("activate_with_test: no A/B test in the draft uses this ad set. It is only created Active "
-                                    "together with its test; add the test or remove activate_with_test")
-                elif (c.get("start_date"), c.get("end_date")) != (test.get("start_date"), test.get("end_date")):
-                    warnings.append(f'the variant follows its test\'s dates ({test.get("start_date") or "today"} to '
-                                    f'{test.get("end_date")}), not its own')
         elif t == "meta_new_ad":
             _adset_facts(c.get("adset_id"), d, items)
-            if c.get("activate_with_test"):
-                parent = (items.get(_ref(c.get("adset_id")) or "") or {}).get("change") or {}
-                if not parent.get("activate_with_test"):
-                    problems.append("activate_with_test is only for ads in a new variant ad set that is itself activate_with_test")
             if not c.get("name"):
                 problems.append("the new ad needs a name")
             if not c.get("from_ad") and not c.get("media_id"):
@@ -1036,6 +1015,9 @@ def check(c, d=None, items=None):
                 problems.append(f"card cta must be one of {', '.join(CTAS)}")
     except (KeyError, TypeError, ValueError) as ex:
         problems.append(f"invalid change: {ex}")
+    for k in NOT_YET:
+        if c.get(k):
+            problems.append(f"{k}: {NOT_YET[k]}")
     texts = _texts(c)
     try:
         import team_settings  # noqa: PLC0415 - copy rules (key copy_rules, area "meta_ads")
@@ -1090,7 +1072,7 @@ def _normalise(c):
     if c.get("type") == "meta_boost_post":
         c["channel"] = str(c.get("channel") or "facebook").lower()
         c["post_id"] = str(c.get("post_id") or "")
-    for k in ("campaign_id", "adset_id", "from_ad", "from_adset", "id"):
+    for k in ("campaign_id", "adset_id", "from_ad", "id"):
         if c.get(k) is not None and not isinstance(c[k], str):
             c[k] = str(c[k])
     return c
@@ -1105,10 +1087,6 @@ def add(changes, by="you", note=None):
     items = []
     for c in changes:
         c = _normalise(c)
-        if c.get("type") == "meta_new_adset" and c.get("from_adset") and not c.get("campaign_id"):
-            src = next((s for s in d["adsets"] if s["id"] == c["from_adset"]), None)
-            if src:
-                c["campaign_id"] = src["campaign_id"]
         items.append({"id": uuid.uuid4().hex[:8], "change": c, "by": by, "note": note or "",
                       "ts": dt.datetime.now().isoformat(timespec="seconds")})
     refs = {it["change"].pop("ref"): it["id"] for it in items if it["change"].get("ref")}
@@ -1173,23 +1151,12 @@ def _overlay(kind, out, campaign_id, adset_id):
             if t == "meta_new_adset":
                 if kind == "adsets" and (not campaign_id or str(campaign_id) == c.get("campaign_id")) and not adset_id:
                     camp = _camp_facts(c["campaign_id"], d, pool)
-                    src = next((x for x in d["adsets"] if x["id"] == c.get("from_adset")), None) if c.get("from_adset") else None
-                    if src:  # a copy: the source's targeting with the draft's change
-                        tg = json.loads(json.dumps(src.get("targeting") or {}))
-                        if c.get("countries"):
-                            tg["geo_locations"] = {"countries": c["countries"]}
-                        if c.get("age_min") or c.get("age_max"):
-                            tg, _ = _set_age(tg, c.get("age_min"), c.get("age_max"))
-                        tg = _apply_placements(tg, c["placements"]) if c.get("placements") else tg
-                    else:
-                        tg = _apply_placements({"geo_locations": {"countries": c.get("countries") or []}, "age_min": c.get("age_min", 18),
-                                                "age_max": c.get("age_max", 65)}, c.get("placements") or {})
+                    tg = _apply_placements({"geo_locations": {"countries": c.get("countries") or []}, "age_min": c.get("age_min", 18),
+                                            "age_max": c.get("age_max", 65)}, c.get("placements") or {})
                     out.insert(0, {"id": f"d-{it['id']}", "campaign_id": c["campaign_id"], "ad_group_id": f"d-{it['id']}",
                                    "campaign": camp["name"], "ad_set": c.get("name"), "status": "Paused", "delivery": "draft",
-                                   "budget": None if camp["cbo"] else c.get("daily_budget") or _money((src or {}).get("daily_budget"), d),
-                                   "lifetime_budget": None, "cbo": camp["cbo"],
-                                   "optimisation": _st(c.get("optimization_goal") or (src or {}).get("optimization_goal")
-                                                       or GOALS.get(camp["objective"], ("",))[0]),
+                                   "budget": None if camp["cbo"] else c.get("daily_budget"), "lifetime_budget": None, "cbo": camp["cbo"],
+                                   "optimisation": _st(c.get("optimization_goal") or GOALS.get(camp["objective"], ("",))[0]),
                                    "end": c.get("end_date") or "", **_targeting(tg), "advantage_audience": bool(c.get("advantage_audience")),
                                    "_new": mark, **dict.fromkeys(INS_KEYS)})
                 continue
@@ -1506,8 +1473,9 @@ def ops_for(c, items=None):
         for s in steps:
             s["needs"] = meta_tests.refs(c)
         return steps
-    if t == "meta_new_adset" and c.get("from_adset"):
-        return _copy_adset_ops(c, items if items is not None else _items())
+    for k in NOT_YET:  # never Active through a test, never a copy: refused here too, whatever the draft says
+        if c.get(k):
+            raise ValueError(f"{k}: {NOT_YET[k]}")
     if t == "meta_new_campaign":
         p = {"name": c["name"], "objective": c["objective"], "status": "PAUSED", "special_ad_categories": c.get("special_ad_categories") or []}
         if c.get("daily_budget"):
@@ -1576,12 +1544,9 @@ def ops_for(c, items=None):
             where = f'new ad set "{(items if items is not None else _items()).get(aref, {}).get("change", {}).get("name", c["adset_id"])}"'
         else:
             where = f"ad set {c['adset_id']}"
-        base = {"kind": "new_ad", "phase": "new_ad", "adset": None if aref else str(c["adset_id"]), "adset_ref": aref, "name": c["name"],
-                "status": "ACTIVE" if c.get("activate_with_test") else "PAUSED"}
-        if c.get("activate_with_test"):
-            base["spend"] = "new ad created Active: it delivers when its ad set runs (only inside the test window)"
+        base = {"kind": "new_ad", "phase": "new_ad", "adset": None if aref else str(c["adset_id"]), "adset_ref": aref, "name": c["name"]}
         if not c.get("media_id"):
-            return [{**base, "line": f'new ad "{c["name"]}" ({base["status"].title()}) in {where}, copy of ad {c["from_ad"]}',
+            return [{**base, "line": f'new ad "{c["name"]}" (Paused) in {where}, copy of ad {c["from_ad"]}',
                      "creative": _creative_params(src_cr, c, c["name"] + " (Studio)"), "source_creative": src_cr["id"]}]
         m = media_info(c["media_id"])
         have = (m.get("uploads") or {}).get(act())
@@ -1696,139 +1661,6 @@ def ops_for(c, items=None):
     raise ValueError(f"'{t}' can't be pushed live")
 
 
-F_COPY = ("name,campaign_id,status,targeting,optimization_goal,billing_event,bid_strategy,bid_amount,promoted_object,"
-          "daily_budget,lifetime_budget,end_time,attribution_spec,destination_type,"
-          "regional_regulated_categories,regional_regulation_identities,dsa_beneficiary,dsa_payor")
-# Copied as they are: without them Meta refuses a new ad set that reaches regulated regions (e.g. Singapore, Malaysia,
-# Thailand need a universal beneficiary / payer declaration; the EU needs the DSA beneficiary and payor).
-COPY_AS_IS = ("bid_strategy", "bid_amount", "attribution_spec", "destination_type", "regional_regulated_categories",
-              "regional_regulation_identities", "dsa_beneficiary", "dsa_payor")
-
-
-def _own_id(c, items):
-    """The draft item id of this change (by identity in the pool), or None."""
-    return next((k for k, it in items.items() if it["change"] is c), None)
-
-
-def _test_of(adset_item_id, items):
-    """The meta_test_split in `items` (the draft, or one push) whose cells use new ad set d-<adset_item_id>."""
-    ref = f"d-{adset_item_id}"
-    return next((it["change"] for it in items.values() if it["change"].get("type") == "meta_test_split"
-                 and any(ref in (x.get("ids") or []) for x in it["change"].get("cells") or [])), None)
-
-
-def _set_age(tg, lo, hi):
-    """Apply an age change to targeting -> (targeting, text). With Advantage+ audience on, Meta treats the ages as a
-    suggestion (targeting.age_range) and only the minimum can be a hard limit (age_max stays 65): the suggestion is set,
-    and the hard minimum is only lowered when the suggestion starts below it. Without it, age_min / age_max are the limits."""
-    tg = json.loads(json.dumps(tg))
-    adv = bool((tg.get("targeting_automation") or {}).get("advantage_audience"))
-    cur = tg.get("age_range") or [tg.get("age_min", 18), tg.get("age_max", 65)]
-    lo, hi = int(lo or cur[0] or 18), int(hi or cur[1] or 65)
-    if adv:
-        tg["age_range"] = [lo, hi]
-        if lo < int(tg.get("age_min") or 18):
-            tg["age_min"] = lo
-        tg["age_max"] = 65
-        return tg, (f"age {lo}-{hi} as a suggestion (Advantage+ audience: Meta may go beyond it; "
-                    f"hard minimum {tg.get('age_min', 18)})")
-    tg.pop("age_range", None)
-    tg["age_min"], tg["age_max"] = lo, hi
-    return tg, f"age {lo}-{hi}"
-
-
-def _copy_adset_ops(c, items):
-    """meta_new_adset with from_adset: the source ad set's live settings (targeting, optimisation, bidding, budget,
-    conversion setup) with only the draft's fields changed. Created Paused, like every new ad set."""
-    src = get(str(c["from_adset"]), fields=F_COPY)
-    cref = _ref(c.get("campaign_id"))
-    cid = c.get("campaign_id") or src["campaign_id"]
-    if cref:
-        camp = _camp_facts(cid, {"campaigns": []}, items)
-    else:
-        lc = _live("campaign", cid)
-        camp = {"name": lc["name"], "objective": lc.get("objective"), "cbo": bool(lc.get("daily_budget") or lc.get("lifetime_budget"))}
-    tg = json.loads(json.dumps(src.get("targeting") or {}))
-    changed = []
-    if c.get("countries"):
-        tg["geo_locations"] = {"countries": [x.upper() for x in c["countries"]]}
-        changed.append(f'countries {", ".join(c["countries"])} (replaces every location of the original)')
-    if c.get("age_min") or c.get("age_max"):
-        tg, txt = _set_age(tg, c.get("age_min"), c.get("age_max"))
-        changed.append(txt)
-    if c.get("placements"):
-        tg = _apply_placements(tg, c["placements"])
-        changed.append(f'placements {_pl_text(c["placements"])}')
-    if c.get("advantage_audience") is not None:
-        tg.setdefault("targeting_automation", {})["advantage_audience"] = 1 if c["advantage_audience"] else 0
-    goal = c.get("optimization_goal") or src.get("optimization_goal")
-    p = {"name": c["name"], "status": "PAUSED", "billing_event": src.get("billing_event") or "IMPRESSIONS",
-         "optimization_goal": goal, "targeting": _pin_device(tg)}
-    for k in COPY_AS_IS:
-        if src.get(k) not in (None, "", [], {}):
-            p[k] = src[k]
-    if c.get("optimization_goal") and c["optimization_goal"] != src.get("optimization_goal"):
-        changed.append(f"optimisation {_st(src.get('optimization_goal'))} -> {_st(goal)}")
-    if goal == "OFFSITE_CONVERSIONS":
-        po = dict(src.get("promoted_object") or {})
-        if c.get("conversion_event") or not po.get("pixel_id"):
-            ev = c.get("conversion_event") or DEFAULT_EVENT.get(camp["objective"], "PURCHASE")
-            px = po.get("pixel_id") or c.get("pixel_id") or _pixel()
-            po = ({"pixel_id": px, "custom_event_type": ev.upper()} if ev.upper() in STD_EVENTS
-                  else {"pixel_id": px, "custom_event_type": "OTHER", "custom_event_str": ev})
-            if c.get("conversion_event"):
-                changed.append(f"conversion event {ev}")
-        p["promoted_object"] = po
-    elif goal == "LEAD_GENERATION":
-        p["promoted_object"] = src.get("promoted_object") or {"page_id": _page_for_account()}
-    elif src.get("promoted_object") and goal == src.get("optimization_goal"):
-        p["promoted_object"] = src["promoted_object"]
-    window = None
-    if c.get("activate_with_test"):  # runs only from the test's start to its end (meta_tests: same clock as the test)
-        import meta_tests  # noqa: PLC0415
-        own = _own_id(c, items)
-        test = _test_of(own, items) if own else None
-        if not test:  # e.g. a push of approved items only, without the test: never Active on its own
-            raise ValueError("this variant is created Active only together with its A/B test, and the test is not in this "
-                             "push: push them together")
-        window = {k: test.get(k) for k in ("start_date", "end_date")}  # the test's window, whatever the variant says
-        p["status"] = "ACTIVE"
-        p["start_time"], p["end_time"] = meta_tests._times(window)
-    else:
-        if c.get("start_date") and dt.date.fromisoformat(c["start_date"]) > dt.date.today():
-            p["start_time"] = f"{c['start_date']}T00:00:00+0000"
-        if c.get("end_date"):
-            p["end_time"] = f"{c['end_date']}T23:59:00+0000"
-    spend = ""
-    if not camp["cbo"]:
-        if c.get("daily_budget"):
-            p["daily_budget"] = int(round(float(c["daily_budget"]) * 100))
-        elif src.get("daily_budget"):
-            p["daily_budget"] = int(src["daily_budget"])
-        elif src.get("lifetime_budget"):
-            p["lifetime_budget"] = int(src["lifetime_budget"])
-            p.setdefault("end_time", src.get("end_time"))
-        p.setdefault("bid_strategy", "LOWEST_COST_WITHOUT_CAP")
-        b = p.get("daily_budget") or p.get("lifetime_budget")
-        spend = f'new ad set budget {_money_txt(b)}{"/day" if p.get("daily_budget") else " lifetime"} (Paused until you switch it on)'
-    if cref:
-        p.pop("campaign_id", None)
-    else:
-        p["campaign_id"] = str(cid)
-    line = (f'new ad set "{c["name"]}" in campaign "{camp["name"]}", a copy of ad set "{src.get("name")}" with '
-            f'{"; ".join(changed) or "no change"}, ' +
-            ("created Active, scheduled to deliver only from the test's start to its end" if window else "created Paused"))
-    if window:
-        spend = (spend.replace(" (Paused until you switch it on)", "") or "variant ad set") + \
-            " - created Active: it spends from the test start to its end"
-    step = {"kind": "create", "phase": "new_adset", "edge": "adsets", "params": p, "refs": {"campaign_id": cref} if cref else {},
-            "line": line, "spend": spend, **({"window": window} if window else {})}
-    if cref:
-        step["check_params"] = None
-        step["line"] += " (Meta can only check it once the new campaign exists, so at push)"
-    return [step]
-
-
 def _check_step(s):
     """Meta's own validate_only for one step. Returns an error string or ''."""
     try:
@@ -1927,9 +1759,6 @@ def _do(s, ctx=None):
         params = dict(s["params"])
         for field, ref in (s.get("refs") or {}).items():
             params[field] = ctx[ref]
-        if s.get("window"):  # the test's own start / end, from the clock shared with the test in this push
-            import meta_tests  # noqa: PLC0415
-            params["start_time"], params["end_time"] = meta_tests._times(s["window"], ctx=ctx)
         new = post(f"{act()}/{s['edge']}", params)["id"]
         ctx[s["item"]] = new
         # created by Studio in this push: undo / rollback sets it to DELETED (never done to anything that existed before)
@@ -1946,8 +1775,7 @@ def _do(s, ctx=None):
             rec["uploaded"] = {"media_id": s["media_id"], **ref}
         adset = ctx[s["adset_ref"]] if s.get("adset_ref") else s["adset"]
         new_cr = post(f"{act()}/adcreatives", creative)["id"]
-        ad = post(f"{act()}/ads", {"name": s["name"], "adset_id": adset, "status": s.get("status") or "PAUSED",
-                                   "creative": {"creative_id": new_cr}})["id"]
+        ad = post(f"{act()}/ads", {"name": s["name"], "adset_id": adset, "status": "PAUSED", "creative": {"creative_id": new_cr}})["id"]
         if s.get("item"):
             ctx[s["item"]] = ad  # a creative test in this push can point at it
         return {"line": s["line"], "id": ad, "undo": {"status": "DELETED"}, "created": "ad", "created_ad": ad, "created_creative": new_cr,
@@ -2096,21 +1924,9 @@ def history(limit=20):
                     "summaries": [i["summary"] for i in r.get("items", [])] + ([f"Failed: {r['error']}"] if r.get("error") else [])
                     + ([f"Kept on Meta: {len(r['ops'])} change(s) a test uses"] if r.get("partial") else []),
                     "lines": [o["line"] for o in r.get("ops", [])], "partial": bool(r.get("partial")),
-                    "undo_warning": _undo_warning(r.get("ops") or []),
                     "can_undo": (r["ok"] or bool(r.get("partial"))) and not r.get("undo_of") and r["id"] not in undone
                     and any(o.get("undo") is not None for o in r.get("ops") or [])})
     return out[:limit]
-
-
-def _undo_warning(ops):
-    """Undo deletes variant objects a test made in the same push uses: say so before it runs."""
-    used = {str(x) for o in ops if o.get("created") == "study" for x in o.get("uses") or []}
-    hit = [o for o in ops if o.get("created") in ("adset", "campaign", "ad") and o.get("undo")
-           and (str(o["id"]) in used or str(o.get("parent") or "") in used)]
-    if not hit:
-        return ""
-    return (f"Undo deletes {len(hit)} object(s) the test made in this push uses: the test stays on Meta with those cells "
-            "empty. End the test first (End test in the Tests tab) if it should stop.")
 
 
 def undo(push_id):
@@ -2139,9 +1955,6 @@ def undo(push_id):
     except MetaError:
         pass
     n = len(rec["ops"]) - len(errors)
-    warn = _undo_warning(rec["ops"])
-    if warn:
-        errors.append(warn)
     return {"ok": not errors, "message": f"Undone: {n} change(s) reversed." if not errors else f"Partly undone ({n} of {len(rec['ops'])}).",
             "not_undone": errors, "errors": None}
 

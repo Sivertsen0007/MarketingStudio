@@ -297,17 +297,12 @@ META_TEST_TOOLS = [  # [meta tests] meta_tests.py: two reads and one draft tool;
                     "  split: test = {name, level: adset|campaign, end_date, start_date?, cells: [{name, ids, percent?}]} "
                     "or {ids: [..]} for one object per cell; 2-5 cells, shares >= 10 adding up to 100 (equal if left out)\n"
                     "  creative: test = {name, ads: [2-7 ad ids], daily_budget (test budget per day) or budget_percent, end_date, start_date?}\n"
-                    "  variant: duplicate an ad set with one change and A/B test it against the original: test = {adset_id, "
-                    "change: {what: audience (countries, age_min, age_max) | placement (advantage or publisher_platforms + positions) "
-                    "| creative (primary_text, headline, description, link, cta, media_id; applied to every copied ad) | "
-                    "optimisation (optimization_goal, conversion_event)}, name?, variant_name?, percent? (variant share, default 50), "
-                    "end_date, start_date?}. Adds a Paused copy of the ad set and its ads plus the test.\n"
-                    "  end: test = {study_id, pause_variants? (default true: pause the variants Studio created for it, which otherwise "
-                    "keep running to the planned end), pause?: also pause everything else in its cells}. Ending is final.\n"
-                    "A test can't be removed from Meta once pushed; undo only deletes the variant objects Studio created.\n\n"
+                    "  end: test = {study_id, pause?: also pause the ad sets / campaigns / ads in its cells}. Ending is final.\n"
+                    "Tests only use objects that already exist on Meta. A test can't be removed from Meta once pushed. "
+                    "Duplicating an ad set with one change (variant) is not available yet.\n\n"
                     + meta_tests.CHANGE_REFERENCE,
      "inputSchema": {"type": "object", "properties": {
-         "account": META_ACCT, "mode": {"type": "string", "enum": ["split", "creative", "variant", "end"]},
+         "account": META_ACCT, "mode": {"type": "string", "enum": ["split", "creative", "end"]},
          "test": {"type": "object"}, "note": {"type": "string", "description": "why - shown to the user next to each change"}},
          "required": ["mode", "test"]}},
 ]

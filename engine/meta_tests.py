@@ -14,14 +14,14 @@ What Meta offers (Marketing API, checked 17 November 2026):
   time just ahead (only to a future time, and only while it has not ended). Ending is final.
 - /ad_studies does not document execution_options=validate_only, so Studio never sends a test (or an end) to Meta
   before Push live: the preview checks what it can with reads (every object exists in this ad account and is not in
-  another running test) and Meta's own validate_only on any variant ad set / ad the draft creates.
+  another running test). Dates are checked again at push time, so a stale draft can't start a test in the past.
 
 Draft change types (pushed by meta_ads like every other Meta change; team approval applies the same way):
-  meta_test_split     A/B test from existing (or new, "d-<ref>") ad sets or campaigns
-  meta_test_creative  creative test from 2-7 existing (or new) ads
+  meta_test_split     A/B test between existing ad sets or campaigns
+  meta_test_creative  creative test between 2-7 existing ads
   meta_test_end       end a running test now (permanent)
-"Duplicate this ad set with one change" (variant_changes) is three ordinary draft changes: a meta_new_adset copied
-from the ad set (from_adset) with the one change, a meta_new_ad copy of each of its ads, and a meta_test_split.
+Tests only use objects that already exist on Meta; Studio never creates anything Active through a test. "Duplicate this
+ad set with one change" (a variant made for a test) is not available yet.
 """
 import datetime as dt
 import json
@@ -43,8 +43,9 @@ START_LEAD = 900  # seconds: a test starting "today" starts 15 minutes after the
 LONG_DAYS, SHORT_DAYS = 30, 7
 THIN_RESULTS = 20  # results per cell before Studio calls a split test
 CLOSE_PCT = 10     # cost per result within this % = too close to call
-FINAL = ("A test can't be removed from Meta: undo leaves it in place (end it with End test). "
-         "Variant ad sets and ads Studio created are deleted by undo as usual.")
+FINAL = "A test can't be removed from Meta: undo leaves it in place (end it with End test)."
+NOT_YET = ("Duplicate an ad set with one change is not available yet: A/B test existing ad sets or campaigns, "
+           "or run a creative test on existing ads")
 F_STUDY = ("id,name,type,description,start_time,end_time,canceled_time,created_time,updated_time,cooldown_start_time,"
            "observation_end_time,cells{id,name,treatment_percentage,campaigns{id,name},adsets{id,name}},"
            "objectives{id,name,type,is_primary}")
@@ -155,7 +156,7 @@ def _row(s, local=None):
             "start_time": s.get("start_time"), "end_time": s.get("end_time"), "created": (s.get("created_time") or "")[:10],
             "cells": cells, "objectives": [{"id": o["id"], "name": o.get("name", ""), "type": o.get("type", ""),
                                             "primary": bool(o.get("is_primary"))} for o in objs],
-            "by_studio": bool(lc), "variants": len(lc.get("created") or [])}
+            "by_studio": bool(lc)}
 
 
 def _cache_path(name):
@@ -425,15 +426,12 @@ def split_percent(n):
 
 
 def _obj_ok(level, oid, d, items, problems):
-    """An existing object at this level, or a new one in the draft ("d-<id>")."""
-    r = meta._ref(oid)
-    want = {"campaign": "meta_new_campaign", "adset": "meta_new_adset", "ad": ("meta_new_ad", "meta_boost_post")}[level]
-    if r:
-        it = items.get(r)
-        if not it or it["change"].get("type") not in ((want,) if isinstance(want, str) else want):
-            problems.append(f"{oid} is not a new {level.replace('adset', 'ad set')} in this draft")
-            return None
-        return {"name": it["change"].get("name", oid), "new": True}
+    """An existing object at this level. Tests only use objects that already exist on Meta: a new one would be created
+    Paused and deliver nothing in the test, and Studio does not create anything Active for a test."""
+    if meta._ref(oid):
+        problems.append(f"{oid}: tests only use {level.replace('adset', 'ad set')}s that already exist on Meta "
+                        "(push the new one first, switch it on, then test it)")
+        return None
     try:
         o = meta._find(d, level, oid)
     except ValueError as ex:
@@ -451,12 +449,6 @@ def check(c, d, items):
         if not re.fullmatch(r"\d+", str(c.get("study_id") or "")):
             problems.append("study_id must be a Meta test id")
         warnings.append("ending a test is final: it can't be undone or restarted")
-        paused = {(it["change"].get("level"), str(it["change"].get("id"))) for it in items.values()
-                  if it["change"].get("type") == "meta_status" and it["change"].get("status") == "paused"}
-        left = [v for v in variants_of(c.get("study_id")) if (v["level"], str(v["id"])) not in paused]
-        if left:
-            warnings.append(f"{len(left)} variant(s) Studio created for this test keep running and spending until the "
-                            "test's planned end unless you pause them: " + ", ".join(f'{v["level"]} {v["id"]}' for v in left))
         return problems, warnings
     if not str(c.get("name") or "").strip():
         problems.append("the test needs a name")
@@ -479,7 +471,7 @@ def check(c, d, items):
                     problems.append(f"{oid} is in more than one cell")
                 seen.add(oid)
                 o = _obj_ok(lvl, oid, d, items, problems)
-                if o and not o.get("new"):
+                if o:
                     b = o.get("daily_budget") or o.get("lifetime_budget")
                     if b:
                         budgets.append(int(b))
@@ -500,10 +492,8 @@ def check(c, d, items):
         sets = set()
         for i, a in enumerate(ads):
             o = _obj_ok("ad", a, d, items, problems)
-            if o and not o.get("new"):
+            if o:
                 sets.add(o.get("adset_id"))
-            elif o:
-                sets.add(items[meta._ref(a)]["change"].get("adset_id"))
             warnings += _paused("ad", a, o, d, items, f"Ad {i + 1}")
         if len(sets) > 1:
             warnings.append("the ads are in different ad sets: Meta's creative tests compare ads in one ad set and may refuse this")
@@ -518,18 +508,11 @@ def check(c, d, items):
 
 
 def _paused(level, oid, o, d, items, cell):
-    """Warnings for a cell object that would deliver nothing in the test: paused itself or above it (the ad set or
-    campaign), or a new object created Paused."""
+    """Warnings for a cell object that would deliver nothing in the test: paused itself or above it (its ad set or
+    campaign). Studio never switches them on for a test."""
     if not o:
         return []
-    r = meta._ref(oid)
     what = {"adset": "ad set", "campaign": "campaign", "ad": "ad"}[level]
-    if r:
-        ch = (items.get(r) or {}).get("change") or {}
-        if ch.get("activate_with_test"):
-            return []
-        return [f'{cell}: the new {what} "{ch.get("name", oid)}" is created Paused, so it delivers nothing in the test '
-                "unless you switch it on (Duplicate an ad set with one change creates its variant Active for the test window)"]
     chain = [(what, o)]
     try:
         if level == "ad":
@@ -635,7 +618,7 @@ def _epoch(day, end=False):
 
 def _times(c, now=None, ctx=None):
     """-> (start, end) as Unix seconds, days in the account's time zone. A start of today (or none) means 15 minutes
-    after the push. ctx: the push's shared clock, so a variant ad set and its test start at the same second."""
+    after the push. ctx: the push's shared clock (every test in one push starts at the same second)."""
     if now is None:
         now = ctx.setdefault("__test_now", int(time.time())) if ctx is not None else time.time()
     today = _today()
@@ -667,11 +650,14 @@ def ops_for(c, items):
                  "permanent": True,
                  "line": f'end test "{s.get("name")}" now (planned end {(s.get("end_time") or "")[:10]}); final, can\'t be undone. '
                          "Its ad sets and ads keep running as normal unless you pause them"}]
+    stale, _ = [], []
+    _dates(c, stale, _)  # again at push time: a draft made days ago must not start a test in the past
+    if stale:
+        raise ValueError("; ".join(stale))
     if t == "meta_test_split":
         cells = [{"name": x["name"], "treatment_percentage": int(x["percent"]),
                   f'{c["level"]}s': [o for o in x["ids"]]} for x in c["cells"]]
         params = {"name": c["name"], "type": "SPLIT_TEST", "cells": cells}
-        new = sum(1 for x in c["cells"] for o in x["ids"] if meta._ref(o))
         line = (f'new A/B test "{c["name"]}" ({len(cells)} cells: ' +
                 ", ".join(f'{x["name"]} {x["percent"]}%' for x in c["cells"]) +
                 f'; {c.get("start_date") or "today"} to {c["end_date"]})')
@@ -681,15 +667,13 @@ def ops_for(c, items):
         cfg = ({"daily_budget": int(round(float(c["daily_budget"]) * 100))} if c.get("daily_budget") is not None
                else {"lifetime_budget_percentage": float(c["budget_percent"])})
         params = {"name": c["name"], "type": "SPLIT_TEST_V2", "cells": cells, "creative_test_config": cfg}
-        new = sum(1 for a in c["ads"] if meta._ref(a))
         b = f'test budget {float(c["daily_budget"]):.2f}/day' if c.get("daily_budget") is not None else f'{c["budget_percent"]}% of the budget'
         line = f'new creative test "{c["name"]}" ({n} ads, one per cell; {b}; {c.get("start_date") or "today"} to {c["end_date"]})'
     if c.get("description"):
         params["description"] = str(c["description"])[:500]
     line += ("; Meta can't test-run a new test before it exists (its /ad_studies has no validate_only), so Studio checked "
-             "that every object is in this ad account and in no other running test" +
-             (f", and Meta checks the {new} new object(s) the test uses" if new else "") +
-             ". A test can't be removed once made, only ended")
+             "that every object is in this ad account and in no other running test. A test can't be removed once made, "
+             "only ended")
     return [{"kind": "study", "phase": "study", "params": params, "test": {k: c.get(k) for k in ("start_date", "end_date")},
              "study_kind": "creative" if t == "meta_test_creative" else "split", "permanent": True, "line": line,
              "spend": f'test budget {float(c["daily_budget"]):.2f}/day' if c.get("daily_budget") is not None else ""}]
@@ -738,105 +722,47 @@ def do(s, ctx):
         meta.post(s["study"], p)
         return {"line": s["line"], "id": s["study"], "undo": None, "final": "an ended test can't be restarted"}
     params = json.loads(json.dumps(s["params"]))
-    created = []  # objects Studio made in this push for the test: End test pauses them by default
     for cell in params["cells"]:
         for k in ("adsets", "campaigns", "ads"):
-            if k in cell:
-                created += [{"id": ctx[meta._ref(o)], "level": k[:-1]} for o in cell[k] if meta._ref(o)]
-                cell[k] = [ctx[meta._ref(o)] if meta._ref(o) else o for o in cell[k]]
+            if k in cell and any(meta._ref(o) for o in cell[k]):
+                raise ValueError("tests only use objects that already exist on Meta")
     start, end = _times(s["test"], ctx=ctx)
     params.update(start_time=start, end_time=end)
     if params["type"] == "SPLIT_TEST_V2":
         params.update(cooldown_start_time=start, observation_end_time=end)
     sid = meta.post(f"{business_id()}/ad_studies", params)["id"]
+    rec = {"line": s["line"], "id": sid, "undo": None, "created": "study", "final": FINAL, "uses": _cell_ids(params)}
     level = "ad" if s["study_kind"] == "creative" else ("adset" if "adsets" in params["cells"][0] else "campaign")
-    _remember(sid, {"kind": s["study_kind"], "name": params["name"],
-                    "cells": [{"name": c["name"], "level": level, "ids": c.get("ads") or c.get("adsets") or c.get("campaigns")}
-                              for c in params["cells"]], "created": created})
+    try:  # the test exists now: a local note that can't be saved must not lose the push record
+        _remember(sid, {"kind": s["study_kind"], "name": params["name"],
+                        "cells": [{"name": c["name"], "level": level, "ids": c.get("ads") or c.get("adsets") or c.get("campaigns")}
+                                  for c in params["cells"]]})
+    except (OSError, ValueError, TypeError) as ex:
+        rec["line"] += f" (made on Meta; Studio could not save its note of the test's ads: {ex})"
     _mem.pop((meta.acct(), "list"), None)
-    return {"line": s["line"], "id": sid, "undo": None, "created": "study", "final": FINAL, "uses": _cell_ids(params)}
+    return rec
 
 
 # ---------- building drafts (UI dialogs and MCP) ----------
 
-CHANGES = ("audience", "placement", "creative", "optimisation")
+def variant_changes(*_a, **_k):
+    """Duplicate an ad set with one change: not available yet (taken out of this step; nothing is made Active for a test)."""
+    raise ValueError(NOT_YET)
 
 
-def variant_changes(adset_id, change, test_name=None, variant_name=None, start_date=None, end_date=None, percent=50):
-    """"Duplicate this ad set with one change" -> draft changes: the variant ad set (Paused, copied from the ad set),
-    a Paused copy of each of its ads, and an A/B test of the two. change: {"what": audience|placement|creative|
-    optimisation, ...}: audience: countries, age_min, age_max; placement: the meta_placements fields; creative:
-    primary_text, headline, description, link, cta, media_id (applied to every copied ad); optimisation:
-    optimization_goal, conversion_event."""
-    d = meta.load()
-    src = meta._find(d, "adset", adset_id)
-    what = (change or {}).get("what")
-    if what not in CHANGES:
-        raise ValueError(f"change.what must be one of {', '.join(CHANGES)}")
-    ch = {k: v for k, v in change.items() if k != "what"}
-    if not ch:
-        raise ValueError("say what the one change is")
-    vname = variant_name or f'{src["name"]} - variant ({what})'
-    # Active, scheduled to the test window: a Paused variant would deliver nothing in the test (needs the spend tick)
-    new_set = {"type": "meta_new_adset", "ref": "v1", "from_adset": src["id"], "campaign_id": src["campaign_id"], "name": vname,
-               "activate_with_test": True, "start_date": start_date, "end_date": end_date}
-    if what == "audience":
-        bad = set(ch) - {"countries", "age_min", "age_max"}
-        if bad:
-            raise ValueError(f"an audience change takes countries, age_min, age_max (not {', '.join(sorted(bad))})")
-        new_set.update(ch)
-    elif what == "placement":
-        new_set["placements"] = ch
-    elif what == "optimisation":
-        if not ch.get("optimization_goal"):
-            raise ValueError("an optimisation change needs optimization_goal")
-        new_set.update({k: ch[k] for k in ("optimization_goal", "conversion_event") if ch.get(k)})
-    # the ads that run in the original (status Active): the variant gets an Active copy of each and nothing more,
-    # so paused ads are left out (they deliver nothing in the original either)
-    ads = [a for a in d["ads"] if a.get("adset_id") == src["id"] and a.get("status") == "ACTIVE"]
-    if not ads:
-        raise ValueError(f'ad set "{src["name"]}" has no active ads to copy into the variant')
-    stuck = [a["name"] for a in ads if not meta.creative_text(a.get("creative"))["editable"]]
-    if stuck:  # leaving them out would make the variant differ by more than the one change
-        raise ValueError(f'{len(stuck)} of the ad set\'s {len(ads)} ads can\'t be copied by Studio (flexible / Advantage+ or '
-                         f'post-based creative: {", ".join(stuck[:5])}), so the variant would differ by more than one change. '
-                         "Duplicate it in Ads Manager, or test ad sets whose ads are single image or video")
-    out = [new_set]
-    for a in ads:
-        ad = {"type": "meta_new_ad", "adset_id": "d-v1", "name": a["name"], "from_ad": a["id"], "activate_with_test": True}
-        if what == "creative":
-            ad.update({k: ch[k] for k in ("primary_text", "headline", "description", "link", "cta", "media_id") if ch.get(k) is not None})
-        out.append(ad)
-    p = int(percent)
-    out.append({"type": "meta_test_split", "name": test_name or f'{src["name"]}: {what} test', "level": "adset",
-                "start_date": start_date, "end_date": end_date,
-                "cells": [{"name": "Original", "ids": [src["id"]], "percent": 100 - p}, {"name": "Variant", "ids": ["d-v1"], "percent": p}]})
-    return out
-
-
-def variants_of(study_id):
-    """Objects Studio created for this test (its variants): [{id, level}]."""
-    return list((_local().get(str(study_id)) or {}).get("created") or [])
-
-
-def end_changes(study_id, pause=False, pause_variants=True):
-    """End a test now (meta_test_end). pause_variants (on by default) pauses the variants Studio created for it, which
-    otherwise keep running to the planned end; pause=True pauses everything in its cells (meta_status)."""
+def end_changes(study_id, pause=False):
+    """End a test now (meta_test_end); pause=True also pauses everything in its cells (meta_status)."""
     st = next((s for s in studies() if s["id"] == str(study_id)), None)
     out = [{"type": "meta_test_end", "study_id": str(study_id), "name": (st or {}).get("name", "")}]
-    seen = set()
-    todo = [(v["level"], v["id"]) for v in variants_of(study_id)] if pause_variants else []
     if pause and st:
-        todo += [(cell["level"], i) for cell in st["cells"] if cell["level"] in ("adset", "campaign", "ad") for i in cell["ids"]]
-    for lvl, i in todo:
-        if (lvl, i) not in seen:
-            seen.add((lvl, i))
-            out.append({"type": "meta_status", "level": lvl, "id": str(i), "status": "paused"})
+        for cell in st["cells"]:
+            if cell["level"] in ("adset", "campaign", "ad"):
+                out += [{"type": "meta_status", "level": cell["level"], "id": i, "status": "paused"} for i in cell["ids"]]
     return out
 
 
 def build(mode, a):
-    """One entry point for the UI and MCP: mode split | creative | variant | end -> draft changes (not added yet)."""
+    """One entry point for the UI and MCP: mode split | creative | end -> draft changes (not added yet)."""
     dates = {k: a.get(k) for k in ("start_date", "end_date")}
     if mode == "split":
         cells = a.get("cells")
@@ -851,11 +777,10 @@ def build(mode, a):
                 c[k] = float(a[k])
         return [c]
     if mode == "variant":
-        return variant_changes(a.get("adset_id"), a.get("change") or {}, a.get("name"), a.get("variant_name"),
-                               a.get("start_date"), a.get("end_date"), a.get("percent") or 50)
+        raise ValueError(NOT_YET)
     if mode == "end":
-        return end_changes(a.get("study_id"), bool(a.get("pause")), a.get("pause_variants") is not False)
-    raise ValueError("mode must be split, creative, variant or end")
+        return end_changes(a.get("study_id"), bool(a.get("pause")))
+    raise ValueError("mode must be split, creative or end")
 
 
 def add(mode, a, by="you", note=None):
@@ -864,17 +789,13 @@ def add(mode, a, by="you", note=None):
 
 CHANGE_REFERENCE = """Meta tests (A/B and creative tests; Meta calls them ad studies). Draft only; pushed with Push live.
   {"type":"meta_test_split","name":"..","level":"adset|campaign","start_date":"YYYY-MM-DD (optional, default today)",
-   "end_date":"YYYY-MM-DD","cells":[{"name":"A","ids":["<ad set id>"],"percent":50},{"name":"B","ids":["d-s1"],"percent":50}]}
-     (2-5 cells, whole-number shares of at least 10 adding up to 100; leave all percents out for equal shares)
+   "end_date":"YYYY-MM-DD","cells":[{"name":"A","ids":["<ad set id>"],"percent":50},{"name":"B","ids":["<ad set id>"],"percent":50}]}
+     (2-5 cells of ad sets or campaigns that already exist; whole-number shares of at least 10 adding up to 100;
+      leave all percents out for equal shares)
   {"type":"meta_test_creative","name":"..","ads":["<ad id>","<ad id>"],"daily_budget":30.0,"end_date":".."}
-     (2-7 ads, one per cell, ideally in one ad set; daily_budget = test budget per day, or "budget_percent":20 instead)
-  {"type":"meta_test_end","study_id":".."}   (ends a running test now: final, can't be undone; variants Studio made for
-     it keep running to the planned end unless paused with meta_status - the end mode of meta_test_add_to_draft does that)
-  A test can't be removed from Meta once made, and Meta can't test-run one first: Push live checks the objects with reads.
-  Variant: meta_new_adset takes "from_adset":"<ad set id>" to copy that ad set (targeting, optimisation, bidding, budget,
-  regional and DSA declarations) and change only the fields given (countries, age_min/age_max, placements,
-  optimization_goal, conversion_event). "activate_with_test":true (also on its meta_new_ad copies) creates it Active,
-  scheduled to the start and end of the A/B test that uses it (the test's dates win); it needs that test in the draft and
-  in the same push, and Push live needs the spend tick.
-  With Advantage+ audience on, an age change is a suggestion (age_range), not a hard limit.
+     (2-7 existing ads, one per cell, ideally in one ad set; daily_budget = test budget per day, or "budget_percent":20)
+  {"type":"meta_test_end","study_id":".."}   (ends a running test now: final, can't be undone)
+  A test can't be removed from Meta once made, and Meta can't test-run one first: Push live checks the objects with reads
+  and checks the dates again. Studio never switches anything on for a test: paused objects in a cell get a warning.
+  Not available yet: duplicating an ad set with one change (from_adset / activate_with_test are refused).
   Dates are days in the ad account's time zone."""

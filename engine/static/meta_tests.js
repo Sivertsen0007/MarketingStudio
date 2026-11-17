@@ -46,7 +46,7 @@
     const head = `<div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <b>Tests on Meta</b><span class="hint" style="margin:0">A/B tests and creative tests on the business behind this ad account. New tests and ends go into the draft; Push live sends them.</span>
       <span style="flex:1"></span>
-      <button data-t-new="split">New A/B test</button><button data-t-new="variant">Duplicate an ad set with one change</button>
+      <button data-t-new="split">New A/B test</button>
       <button data-t-new="creative">New creative test</button><button data-t-refresh="1">Refresh</button></div>`;
     if (!T.list.length){ el.innerHTML = head + `<div class="empty">No tests on this business yet.</div>`; return }
     let h = head + `<table><thead><tr><th>Test</th><th>Type</th><th>Status</th><th>Start (${esc((T.list[0] || {}).tz || "UTC")})</th><th>End</th><th>Cells</th><th></th></tr></thead><tbody>`;
@@ -82,7 +82,7 @@
     <div class="row"><label>End</label><input id="t_end" type="date" value="${plus(14)}"></div>
     <p class="hint">Days in the ad account's time zone. Meta suggests 7 to 30 days. A test that starts today starts 15 minutes after the push.</p>`;
   const noteRow = `<div class="row"><label>Why (optional)</label><input id="t_note" placeholder="Shown in the draft and the changelog"></div>`;
-  const honest = `<p class="hint">A test can't be removed from Meta once it is pushed, only ended, and Meta can't test-run it first: Push live checks the objects with reads, and Meta checks any new ad set or ad. Undo deletes the variant objects Studio created, not the test.</p>`;
+  const honest = `<p class="hint">A test can't be removed from Meta once it is pushed, only ended, and Meta can't test-run it first: Push live checks the objects with reads. Studio doesn't switch anything on for a test: paused objects deliver nothing in it.</p>`;
   const picks = (rows, label) => `<div style="max-height:260px;overflow:auto;border:1px solid var(--line2);padding:6px">${rows.map(r =>
     `<label class="tick" style="margin:2px 0"><input type="checkbox" data-t-pick="${esc(r.id)}" data-t-name="${esc(label(r))}"> ${esc(label(r))} <span class="hint">${esc(r.status || "")}</span></label>`).join("") || `<div class="hint">Nothing to pick.</div>`}</div>`;
   const picked = () => [...document.querySelectorAll("[data-t-pick]:checked")].map(b => ({id: b.dataset.tPick, name: b.dataset.tName}));
@@ -118,59 +118,12 @@
       }), "primary"]]);
   }
 
-  const CHANGE_FIELDS = {
-    audience: `<div class="row"><label>Countries</label><input id="t_c_countries" placeholder="GB, DE (replaces every location)"></div>
-      <div class="row"><label>Age</label><span><input id="t_c_amin" type="number" min="18" max="65" style="width:70px"> to <input id="t_c_amax" type="number" min="18" max="65" style="width:70px"></span></div>`,
-    placement: `<div class="row"><label>Placements</label><select id="t_c_adv"><option value="1">Advantage+ (Meta picks)</option><option value="0">Only these platforms</option></select></div>
-      <div class="row"><label>Platforms</label><span>${["facebook", "instagram", "audience_network", "messenger", "threads"].map(p => `<label class="tick" style="margin:2px 0"><input type="checkbox" data-t-plat="${p}"> ${p.replace("_", " ")}</label>`).join("")}</span></div>`,
-    creative: `<p class="hint">Applied to every copied ad in the variant. Leave a field blank to keep it.</p>
-      <div class="row"><label>Primary text</label><textarea id="t_c_text" rows="3"></textarea></div>
-      <div class="row"><label>Headline</label><input id="t_c_head"></div><div class="row"><label>Link</label><input id="t_c_link"></div>`,
-    optimisation: `<div class="row"><label>Optimisation goal</label><select id="t_c_goal">${["LANDING_PAGE_VIEWS", "LINK_CLICKS", "OFFSITE_CONVERSIONS", "REACH", "IMPRESSIONS", "THRUPLAY", "LEAD_GENERATION", "POST_ENGAGEMENT"].map(g => `<option>${g}</option>`).join("")}</select></div>
-      <div class="row"><label>Conversion event</label><input id="t_c_event" placeholder="for conversions, e.g. PURCHASE (optional)"></div>`,
-  };
-  function changeFrom(what){
-    if (what === "audience"){
-      const c = {}; const cs = v("t_c_countries").split(/[,\s]+/).filter(Boolean).map(x => x.toUpperCase());
-      if (cs.length) c.countries = cs; if (v("t_c_amin")) c.age_min = +v("t_c_amin"); if (v("t_c_amax")) c.age_max = +v("t_c_amax"); return c;
-    }
-    if (what === "placement"){
-      if (v("t_c_adv") === "1") return {advantage: true};
-      return {advantage: false, publisher_platforms: [...document.querySelectorAll("[data-t-plat]:checked")].map(b => b.dataset.tPlat)};
-    }
-    if (what === "creative"){ const c = {}; if (v("t_c_text")) c.primary_text = v("t_c_text"); if (v("t_c_head")) c.headline = v("t_c_head"); if (v("t_c_link")) c.link = v("t_c_link"); return c }
-    const c = {optimization_goal: v("t_c_goal")}; if (v("t_c_event")) c.conversion_event = v("t_c_event"); return c;
-  }
-
-  async function newVariant(){
-    const sets = await grid("adsets");
-    showDialog("Duplicate an ad set with one change", `<p class="hint">Studio copies the ad set and its ads, changes one thing, and A/B tests the copy against the original. The copy is created <b>Active</b>, scheduled to deliver only from the test's start to its end (a paused copy would get nothing in the test), so Push live asks you to accept the spend.</p>
-      <div class="row"><label>Ad set</label><select id="t_set">${sets.map(r => `<option value="${esc(r.id)}" ${S.ag === String(r.id) ? "selected" : ""}>${esc(r.campaign + " / " + r.ad_set)}</option>`).join("")}</select></div>
-      <div class="row"><label>The one change</label><select id="t_what"><option value="audience">Audience</option><option value="placement">Placement</option><option value="creative">Creative</option><option value="optimisation">Optimisation</option></select></div>
-      <div id="t_fields">${CHANGE_FIELDS.audience}</div>
-      <div class="row"><label>Test name</label><input id="t_name" placeholder="optional"></div>
-      <div class="row"><label>Variant share</label><input id="t_pct" type="number" min="10" max="90" value="50"></div>
-      ${dates}${honest}${noteRow}`,
-      [["Add to draft", go("variant", () => {
-        if (!v("t_set")) return toast("Pick an ad set");
-        const what = v("t_what"), change = changeFrom(what);
-        if (Object.keys(change).length === 0) return toast("Say what the one change is");
-        return {adset_id: v("t_set"), change: {what, ...change}, name: v("t_name") || undefined, percent: +v("t_pct") || 50, start_date: v("t_start"), end_date: v("t_end")};
-      }), "primary"]]);
-    document.getElementById("t_what").onchange = e => { document.getElementById("t_fields").innerHTML = CHANGE_FIELDS[e.target.value] };
-  }
-
   function endDialog(id){
     const r = (T.list || []).find(x => x.id === id); if (!r) return;
     showDialog("End test", `<p>End <b>${esc(r.name)}</b> now? This goes into the draft; it ends when you push live.</p>
       <p class="hint">Ending is final: an ended test can't be restarted or undone. The ad sets and ads in it keep running as normal unless you pause them.</p>
-      ${r.variants ? `<label class="tick"><input type="checkbox" id="t_pvar" checked> <span>Pause the ${esc(r.variants)} variant(s) Studio created for this test</span></label>
-      <p class="hint" id="t_pvar_warn" style="display:none">Unticked: the variants keep running and spending until the test's planned end.</p>` : ""}
-      <label class="tick"><input type="checkbox" id="t_pause"> <span>Also pause everything else in the test's cells</span></label>${noteRow}`,
-      [["Add to draft", go("end", () => ({study_id: id, pause: document.getElementById("t_pause").checked,
-        pause_variants: !document.getElementById("t_pvar") || document.getElementById("t_pvar").checked})), "primary"]]);
-    const pv = document.getElementById("t_pvar");
-    if (pv) pv.onchange = () => { document.getElementById("t_pvar_warn").style.display = pv.checked ? "none" : "" };
+      <label class="tick"><input type="checkbox" id="t_pause"> <span>Also pause the ad sets, campaigns or ads in the test's cells</span></label>${noteRow}`,
+      [["Add to draft", go("end", () => ({study_id: id, pause: document.getElementById("t_pause").checked})), "primary"]]);
   }
 
   async function render(grid){
@@ -192,7 +145,7 @@
     draw(el);
   }
   async function add(mode){
-    try { await ({split: newSplit, creative: newCreative, variant: newVariant}[mode || "split"])() } catch(e) { toast(e.message) }
+    try { await ({split: newSplit, creative: newCreative}[mode || "split"])() } catch(e) { toast(e.message) }
   }
   window.MetaTests = {render, add};
 })();

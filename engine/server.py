@@ -31,6 +31,7 @@ import overview
 import health
 import gapi
 import progress
+import scheduler  # background jobs (one thread, started in main)
 import areas
 import setup_routes  # keys (Keychain), Sign in with Google, .env import
 import team  # team sync: join a team server, sync drafts (team.py)
@@ -329,6 +330,8 @@ class H(BaseHTTPRequestHandler):
             return self._run(lambda: data_cached(q))
         if u.path == "/api/data/calls" and os.environ.get("STUDIO_CALL_LOG"):
             return self._run(lambda: datapolicy.calls(q.get("reset") == "1"))
+        if u.path == "/api/scheduler":
+            return self._run(scheduler.status)
         if u.path == "/api/health":
             return self._run(lambda: {"summary": health.summary(), **(health.cached() or {"checked_at": None, "results": []})})
         if meta.is_meta(q.get("acct")):
@@ -490,6 +493,7 @@ class H(BaseHTTPRequestHandler):
             "/api/settings/view/delete": del_view,
             "/api/settings/currency": lambda: set_display_currency(body.get("currency")),
             "/api/settings/fx/refresh": lambda: {**fx.info(force=True), "display_currency": display_currency()},
+            "/api/settings/scheduler": lambda: scheduler.set_enabled(body["name"], bool(body.get("enabled"))),
             "/api/settings/health/check": lambda: {"summary": health.summary(health.check_all(save=True)), **(health.cached() or {})},
         }
         if self.path in routes:
@@ -554,6 +558,10 @@ def main():
             so.start_scheduler()
         except Exception:  # noqa: BLE001 - the studio must start even if SoMe can't
             traceback.print_exc()
+    try:  # Studio's background jobs (scheduler.py): one thread, only here (never on import)
+        scheduler.start()
+    except Exception:  # noqa: BLE001 - the studio must start even if the scheduler can't
+        traceback.print_exc()
     try:
         team.start_listener()  # live updates from the team server (no-op when not in a team)
     except Exception:  # noqa: BLE001 - the studio must start even if the team server can't be reached

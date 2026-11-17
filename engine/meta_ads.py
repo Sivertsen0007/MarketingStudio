@@ -1271,6 +1271,38 @@ def _new_feed(feed, c):
     return f
 
 
+# ---------- Marketing API v27: say every new default out loud, so nothing turns on without the user ----------
+# v27.0 (Meta, 4 November 2026) turns two things on when a request leaves them out. Studio always sends them:
+#  - ad sets: "Reach more people across other mobile devices" (targeting_automation.individual_setting.device) turns on
+#    for eligible ad sets that leave it out. Studio sends 0, or keeps what the ad set already has.
+#  - creatives: Meta may switch Product showcase on (product_extensions) for a creative that leaves it out. Studio sends
+#    OPT_OUT, or keeps what the source creative already has.
+# advantage_audience is still always set on new ad sets (0 or 1, from the draft).
+
+def _pin_device(tg):
+    """A copy of targeting with targeting_automation.individual_setting.device and targeting_automation
+    .advantage_audience set: each kept as it is, else 0 (off)."""
+    tg = json.loads(json.dumps(tg or {}))
+    ta = tg.get("targeting_automation") if isinstance(tg.get("targeting_automation"), dict) else {}
+    ind = ta.get("individual_setting") if isinstance(ta.get("individual_setting"), dict) else {}
+    if ind.get("device") is None:
+        ind["device"] = 0
+    tg["targeting_automation"] = {**ta, "advantage_audience": ta.get("advantage_audience") or 0, "individual_setting": ind}
+    return tg
+
+
+def _pin_showcase(p):
+    """Creative params with degrees_of_freedom_spec.creative_features_spec.product_extensions set: kept as it is,
+    else OPT_OUT (Product showcase off, as before v27). Returns p (changed in place on a deep copy of the spec)."""
+    dof = json.loads(json.dumps(p.get("degrees_of_freedom_spec") or {}))
+    cfs = dof.get("creative_features_spec") if isinstance(dof.get("creative_features_spec"), dict) else {}
+    if not cfs.get("product_extensions"):
+        cfs["product_extensions"] = {"enroll_status": "OPT_OUT"}
+    dof["creative_features_spec"] = cfs
+    p["degrees_of_freedom_spec"] = dof
+    return p
+
+
 def _creative_params(cr, c, name):
     if cr.get("asset_feed_spec"):  # the texts live in the feed spec; the story spec only carries page, media and link
         p = {"name": name[:100], "object_story_spec": _clean_oss(json.loads(json.dumps(cr["object_story_spec"]))),
@@ -1281,18 +1313,19 @@ def _creative_params(cr, c, name):
         p["url_tags"] = cr["url_tags"]
     if cr.get("degrees_of_freedom_spec"):
         p["degrees_of_freedom_spec"] = cr["degrees_of_freedom_spec"]
-    return p
+    return _pin_showcase(p)
 
 
-def _identity(src_cr=None):
-    """page_id (+ instagram_user_id) for a new creative: from the source ad, else the pair most ads in the account use."""
+def _identity(src_cr=None, need_ig=False):
+    """page_id (+ instagram_user_id) for a new creative: from the source ad, else the pair most ads in the account use.
+    need_ig: only pairs with an Instagram account count (an Instagram boost), even when most ads have none."""
     if src_cr and src_cr.get("object_story_spec", {}).get("page_id"):
         o = src_cr["object_story_spec"]
         return {k: o[k] for k in ("page_id", "instagram_user_id") if o.get(k)}
     pairs = collections.Counter()
     for a in load()["ads"]:
         o = (a.get("creative") or {}).get("object_story_spec") or {}
-        if o.get("page_id"):
+        if o.get("page_id") and (o.get("instagram_user_id") or not need_ig):
             pairs[(o["page_id"], o.get("instagram_user_id"))] += 1
     if pairs:
         page, ig = pairs.most_common(1)[0][0]
@@ -1332,7 +1365,7 @@ def _media_creative(c, src_cr, kind, name):
     for k in ("url_tags", "degrees_of_freedom_spec"):
         if src_cr and src_cr.get(k):
             p[k] = src_cr[k]
-    return p
+    return _pin_showcase(p)
 
 
 def _stand_in_media(kind):
@@ -1429,7 +1462,7 @@ def ops_for(c, items=None):
         goal = c.get("optimization_goal") or GOALS.get(obj, ("LINK_CLICKS",))[0]
         tg = {"geo_locations": {"countries": c["countries"]}, "age_min": int(c.get("age_min", 18)), "age_max": int(c.get("age_max", 65)),
               "targeting_automation": {"advantage_audience": 1 if c.get("advantage_audience") else 0}}
-        tg = _apply_placements(tg, c.get("placements") or {})
+        tg = _pin_device(_apply_placements(tg, c.get("placements") or {}))
         p = {"name": c["name"], "status": "PAUSED", "billing_event": "IMPRESSIONS", "optimization_goal": goal, "targeting": tg}
         if not cref:
             p["campaign_id"] = str(c["campaign_id"])
@@ -1506,13 +1539,13 @@ def ops_for(c, items=None):
         else:
             where = f"ad set {c['adset_id']}"
         if c["channel"] == "instagram":  # an existing Instagram post as the ad (Meta: source_instagram_media_id)
-            ident = _identity()
+            ident = _identity(need_ig=True)
             if not ident.get("instagram_user_id"):
                 raise ValueError("no Instagram account found on the ads in this ad account")
-            cr = {"name": c["name"][:100] + " (Studio boost)", "object_id": ident["page_id"],
-                  "instagram_user_id": ident["instagram_user_id"], "source_instagram_media_id": c["post_id"]}
+            cr = _pin_showcase({"name": c["name"][:100] + " (Studio boost)", "object_id": ident["page_id"],
+                                "instagram_user_id": ident["instagram_user_id"], "source_instagram_media_id": c["post_id"]})
         else:  # an existing Page post as the ad (object_story_id): likes and comments stay on the post
-            cr = {"name": c["name"][:100] + " (Studio boost)", "object_story_id": c["post_id"]}
+            cr = _pin_showcase({"name": c["name"][:100] + " (Studio boost)", "object_story_id": c["post_id"]})
         src = "Instagram" if c["channel"] == "instagram" else "Facebook"
         return [{"kind": "new_ad", "phase": "new_ad", "adset": None if aref else str(c["adset_id"]), "adset_ref": aref, "name": c["name"],
                  "line": f'new ad "{c["name"]}" (Paused) in {where}, boosting {src} post {c["post_id"]}', "creative": cr,
@@ -1559,13 +1592,13 @@ def ops_for(c, items=None):
                     spend.append("wider age")
                 tg[k] = int(c[k])
         after = _targeting(tg)
-        return [{"kind": "update", "id": oid, "params": {"targeting": tg}, "undo": {"targeting": cur.get("targeting") or {}},
+        return [{"kind": "update", "id": oid, "params": {"targeting": _pin_device(tg)}, "undo": {"targeting": _pin_device(cur.get("targeting"))},
                  "line": f'ad set "{nm}": countries {before["countries"]} -> {after["countries"]}; age {before["age"]} -> {after["age"]}',
                  "spend": ", ".join(spend)}]
     if t == "meta_placements":
         old_tg = cur.get("targeting") or {}
         tg = _apply_placements(old_tg, c)
-        return [{"kind": "update", "id": oid, "params": {"targeting": tg}, "undo": {"targeting": old_tg},
+        return [{"kind": "update", "id": oid, "params": {"targeting": _pin_device(tg)}, "undo": {"targeting": _pin_device(old_tg)},
                  "line": f'ad set "{nm}": placements {_placements(old_tg)} -> {_placements(tg)}',
                  "spend": "more placements" if _wider(old_tg, tg) else ""}]
     if t in ("meta_copy", "meta_carousel_copy", "meta_feed_copy"):

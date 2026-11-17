@@ -227,7 +227,7 @@ def get_state(q):
     return {"test_mode": test_mode(), "settings": {k: s[k] for k in ("vps_job", "local_scheduler", "late_minutes", "slots", "utm", "utm_campaign", "competitors")},
             "team_fields": _team_fields(),
             "vps_installed": False, "vps_parked": VPS_PARKED, "queue_mode": queue_mode(),
-            "scheduler_running": bool(_sched.get("thread") and _sched["thread"].is_alive()), "last_tick": _sched.get("last"),
+            "scheduler_running": scheduler_running(), "last_tick": _sched.get("last"), "scheduler_error": _sched.get("error", ""),
             "meta": meta, "meta_error": meta_err, "linkedin_connected": li.connected(),
             "posts": [_view(p) for p in sorted(store.posts(), key=lambda p: p.get("when") or p["updated"], reverse=True)]}
 
@@ -955,31 +955,44 @@ def tick(at=None):
     return r
 
 
+JOB = "social.publisher"  # the job's name on Studio's scheduler (scheduler.py)
+JOB_TIMEOUT = 15 * 60  # a round with a video upload can take minutes; the next round waits for it either way
+
+
+def _job():
+    """One round on Studio's scheduler. An error is kept for SoMe settings (as before) and shown on the scheduler row."""
+    try:
+        tick()
+        _sched.pop("error", None)
+    except Exception as ex:  # noqa: BLE001 - keep the scheduler alive, show the error in settings
+        _sched["error"] = str(ex)[:300]
+        raise
+
+
 def start_scheduler(interval=30):
-    """Start Studio's scheduler thread (daemon). Called once from server.py main(); never on import (the MCP server imports
-    the areas too). Safe to call twice, also at the same moment (a lock)."""
+    """Put Studio's SoMe publisher on Studio's scheduler (scheduler.py: one thread for every background job) and start
+    it. A round every `interval` seconds, the first one interval after start, never two at once. The publisher only
+    posts when "Let Studio on this Mac publish scheduled posts" is on (tick() checks it), so that setting is the switch,
+    not the scheduler's. Called once from server.py main(); never on import (the MCP server imports the areas too).
+    Safe to call twice, also at the same moment (a lock). -> True the first time."""
+    import scheduler  # noqa: PLC0415 - studio root module
     with _sched_lock:
-        if _sched.get("thread") and _sched["thread"].is_alive():
+        if _sched.get("registered") and scheduler.running():
             return False
-        return _start_thread(interval)
+        scheduler.register(JOB, _job, every=interval, enabled_default=True, can_disable=False, timeout=JOB_TIMEOUT, resume=False,
+                           label="SoMe: publish scheduled posts",
+                           note='Posts only when "Let Studio on this Mac publish scheduled posts" is on in SoMe settings')
+        scheduler.start()
+        _sched["registered"] = True
+        return True
+
+
+def scheduler_running():
+    import scheduler  # noqa: PLC0415
+    return bool(_sched.get("registered") and scheduler.running())
 
 
 _sched_lock = threading.Lock()
-
-
-def _start_thread(interval):
-    stop = threading.Event()
-
-    def loop():
-        while not stop.wait(interval):
-            try:
-                tick()
-            except Exception as ex:  # noqa: BLE001 - keep the scheduler alive, show the error in settings
-                _sched["error"] = str(ex)[:300]
-    t = threading.Thread(target=loop, name="social-scheduler", daemon=True)
-    _sched.update(thread=t, stop=stop)
-    t.start()
-    return True
 
 
 def test_tick(body):
@@ -1318,7 +1331,7 @@ def health(today=None):
                      "Connected." if li.connected() else "Not connected.", "See the README: LinkedIn developer app + Community Management API."))
     s = store.settings()
     rows.append(_row("SoMe scheduling", "Studio on this Mac", "Scheduler", True if s["local_scheduler"] else None,
-                     ("On: scheduled Instagram and LinkedIn posts go out while Studio is open" + ("" if _sched.get("thread") else " (the thread is not running yet)"))
+                     ("On: scheduled Instagram and LinkedIn posts go out while Studio is open" + ("" if scheduler_running() else " (the scheduler is not running yet)"))
                      if s["local_scheduler"] else "Off: Instagram and LinkedIn can't be scheduled (Facebook uses Meta's own scheduling).",
                      "Turn it on in SoMe settings if this Mac is on and Studio open at the times you schedule."))
     rows.append(_row("SoMe scheduling", "VPS publisher job", "Parked", None, "Parked: not available yet.",

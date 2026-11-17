@@ -1879,8 +1879,10 @@ async function settingsDialog(){
       <p class="hint" id="fxNote">${esc(st.fx.note)}${st.fx.fallback ? ". Built-in rough rates: Frankfurter could not be reached." : ""}</p>
       <p class="hint">Account currencies: ${(S.accts || []).map(a => `${esc(a.name)} ${esc(a.currency || "unknown")}`).join(" · ")}. Stats for a period are converted at today's ECB rate, not each day's rate. Rates are kept for 12 hours.</p>
       <button id="fxRefresh">Refresh rates</button></div>
-    <div class="set-sec"><h3>Saved views</h3>${st.views.length ? st.views.map(v => `<div class="set-row"><div class="grow">${esc(v.name)}<div class="sub">${v.channel === "meta" ? "Meta" : "Google"} · ${esc(v.kind)} · ${v.cols.length} columns${v.filter && v.filter !== "all" ? " · filter: " + esc(v.filter) : ""}</div></div><button class="danger" data-vdel='${esc(JSON.stringify({name:v.name, channel:v.channel, kind:v.kind}))}'>Delete</button></div>`).join("") : `<p class="hint">None yet. Use the View menu above the grid to save one.</p>`}</div>`;
+    <div class="set-sec"><h3>Saved views</h3>${st.views.length ? st.views.map(v => `<div class="set-row"><div class="grow">${esc(v.name)}<div class="sub">${v.channel === "meta" ? "Meta" : "Google"} · ${esc(v.kind)} · ${v.cols.length} columns${v.filter && v.filter !== "all" ? " · filter: " + esc(v.filter) : ""}</div></div><button class="danger" data-vdel='${esc(JSON.stringify({name:v.name, channel:v.channel, kind:v.kind}))}'>Delete</button></div>`).join("") : `<p class="hint">None yet. Use the View menu above the grid to save one.</p>`}</div>
+    <div class="set-sec" id="jobSec"><h3>Background jobs</h3><div id="jobRows" class="hint">Loading ...</div></div>`;
   const b = $("#dlgB");
+  loadJobs();
   b.onchange = async e => {
     if (e.target.id === "dispCur"){ try { await api("/api/settings/currency", {currency:e.target.value}); await loadFx(); toast(S.disp === "own" ? "Showing each account's own currency" : "Showing money in " + S.disp); reshowMoney() } catch(err) { toast(err.message) } return }
     const k = e.target.dataset.gsrc; if (!k) return;
@@ -1893,6 +1895,9 @@ async function settingsDialog(){
       if (t.dataset.mrn){ await api("/api/settings/meta/rename", {act:t.dataset.mrn, name:document.querySelector(`[data-mname="${t.dataset.mrn}"]`).value}); toast("Name saved"); await reloadAccounts() }
       if (t.dataset.mrm){ if (!confirm("Hide this ad account in Studio? Nothing changes in Meta. Its draft and push log stay on disk.")) return; await api("/api/settings/meta/remove", {act:t.dataset.mrm}); await reloadAccounts(); settingsDialog() }
       if (t.id === "m_add" || t.dataset.madd){ t.disabled = true; const r = await api("/api/settings/meta/add", {act:t.dataset.madd || val("m_act"), name:t.dataset.madd ? "" : val("m_name")}); toast("Added " + r.name); await reloadAccounts(); settingsDialog() }
+      if (t.dataset.job){ t.disabled = true; const on = t.checked;
+        try { await api("/api/settings/scheduler", {name:t.dataset.job, enabled:on}); toast(on ? "Job switched on" : "Job switched off") }
+        catch(err) { t.checked = !on; toast(err.message) } finally { t.disabled = false } loadJobs(); return }
       if (t.dataset.vdel){ await api("/api/settings/view/delete", JSON.parse(t.dataset.vdel)); await loadViews(); settingsDialog() }
     } catch(err) { t.disabled = false; toast(err.message) }
   };
@@ -1901,6 +1906,20 @@ async function settingsDialog(){
       $("#metaVis").innerHTML = "<b>Ad accounts the token can reach:</b> " + vis.map(a => `${esc(a.name)} (${esc(a.act)}, ${esc(a.currency)})${a.active ? "" : " - not active"} ${a.added ? "<span class='chip ok'>in Studio</span>" : `<button class="link" data-madd="${esc(a.act)}">Add</button>`}`).join(" · ");
     } catch(e) { $("#metaVis").textContent = "Couldn't list ad accounts: " + e.message }
   }
+}
+// Background jobs (scheduler.py): one row per job with its switch, last run and next run. Read-only apart from the switch.
+async function loadJobs(){
+  const el = $("#jobRows"); if (!el) return;
+  let st; try { st = await api("/api/scheduler") } catch(e) { el.innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
+  const when = v => v ? esc(String(v).replace("T", " ").slice(0, 16)) : "never";
+  const res = j => j.running ? "running now" : j.last_status === "ok" ? "OK" : j.last_status === "held" ? "held (manual data policy)" : j.last_status ? esc(j.last_status) : "not run yet";
+  el.className = "";
+  el.innerHTML = (st.jobs.length ? st.jobs.map(j => `<div class="set-row"><div class="grow"><div>${esc(j.label)}</div>
+      <div class="sub">${esc(j.schedule)} · last run ${when(j.last_run)}: ${res(j)}${j.enabled ? " · next " + when(j.next_run) : ""}${j.refresh ? " · fetches data, so it runs only when the data policy is auto" : ""}</div>
+      ${j.last_error && j.last_status !== "ok" ? `<div class="sub" style="color:var(--bad)">${esc(j.last_error)}</div>` : ""}${j.note ? `<div class="sub">${esc(j.note)}</div>` : ""}</div>
+      ${j.can_disable ? `<label class="sub"><input type="checkbox" data-job="${esc(j.name)}" ${j.enabled ? "checked" : ""}> On</label>` : `<span class="sub">always on</span>`}</div>`).join("")
+    : `<p class="hint">No background jobs yet.</p>`)
+    + `<p class="hint">${st.running ? "The scheduler is running." : "The scheduler starts with Studio."}${st.error ? " Scheduler error: " + esc(st.error) : ""} Jobs never run twice at once; a failed or slow run is shown here and the job tries again at its next time.</p>`;
 }
 $("#setBtn").onclick = settingsDialog;
 function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage(); if (S.rows) renderGrid(); const r = S.focus && S.rows.find(x => String(x.id) === S.focus); if (r) renderEdit(r) }

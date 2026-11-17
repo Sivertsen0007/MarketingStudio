@@ -26,15 +26,20 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# Version check, 10 November 2026, from Meta for Developers:
-#   https://developers.facebook.com/docs/graph-api/changelog/versions
-#     v26.0 released 29 July 2026, expiry TBD; v25.0 until 29 July 2028; v21.0 until 21 January 2027.
-#   https://developers.facebook.com/docs/marketing-api/marketing-api-changelog
-#     Marketing API: v27.0 (4 November 2026, TBD), v26.0 (29 July 2026, TBD), v25.0 until 23 February 2027,
-#     v24.0 until 10 November 2026. v21.0 is no longer listed for the Marketing API.
-# Chosen: v26.0, the newest version listed as supported on both pages. v27.0 was 6 days old and not yet on
-# the Graph API table, so it is left for the next check.
-GRAPH_VERSION = "v26.0"
+# Version check, 17 November 2026, from Meta for Developers:
+#   https://developers.facebook.com/documentation/ads-commerce/marketing-api/marketing-api-changelog
+#     Marketing API: v27.0 (4 November 2026, TBD), v26.0 (29 July 2026, TBD), v25.0 until 23 February 2027.
+# Chosen: v27.0. Its changes that touch Studio's calls are handled in meta_ads.py (see V27 there):
+#   - ad sets: "Reach more people across other mobile devices" turns on when targeting_automation.individual_setting
+#     .device is left out, so Studio always sends it (0 unless the ad set already has it on);
+#   - creatives: Meta may switch Product showcase on when product_extensions is left out, so Studio sends
+#     degrees_of_freedom_spec.creative_features_spec.product_extensions.enroll_status OPT_OUT unless it is already set;
+#   - Lookalike audiences: lookalike_spec.country / location_spec are refused (Studio creates no audiences);
+#   - meta_moment_maker_spec is gone from ad set reads and writes (Studio never used it).
+# Checked on v27.0 on 17 November 2026: every read Studio makes (GET), and with validate_only the writes Push live
+# builds (new campaign, ad set, creative, ad; status, budget, name, targeting, placements, copy edits). Not checkable
+# that way, so not run on v27: media uploads (adimages, advideos) and organic SoMe publishing.
+GRAPH_VERSION = "v27.0"
 GRAPH_HOST = "https://graph.facebook.com"
 API = f"{GRAPH_HOST}/{GRAPH_VERSION}"
 

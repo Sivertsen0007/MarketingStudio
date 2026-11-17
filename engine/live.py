@@ -34,7 +34,8 @@ RESULT_KEY = {"campaignBudgetOperation": "campaignBudgetResult", "campaignOperat
               "adGroupCriterionOperation": "adGroupCriterionResult", "campaignCriterionOperation": "campaignCriterionResult",
               "adGroupAdOperation": "adGroupAdResult", "adOperation": "adResult", "assetOperation": "assetResult",
               "campaignAssetOperation": "campaignAssetResult", "customerAssetOperation": "customerAssetResult",
-              "campaignSharedSetOperation": "campaignSharedSetResult", "assetGroupAssetOperation": "assetGroupAssetResult"}
+              "campaignSharedSetOperation": "campaignSharedSetResult", "assetGroupAssetOperation": "assetGroupAssetResult",
+              "userListOperation": "userListResult"}
 
 
 def _log(acct):
@@ -319,6 +320,8 @@ class Ids:
 
     def user_list(self, name):
         what = f'audience list "{name}"'
+        if ("user_list", name) in self.new:  # [audiences] Google can't point at a list made in the same push (checked live)
+            raise ValueError(f'{what} is new in this push: push it first, then combine or attach it in the next push')
 
         def ed():
             r = self.db.execute("select remoteId from UserList where name = ?", (name,)).fetchall()
@@ -648,6 +651,8 @@ def ops_for(ids, c, enable_new):
     if t == "audience":
         return _audience_ops(ids, c)
 
+    if t == "user_list":  # [audiences] website / combined lists (audiences.py)
+        return core.audiences.ops(ids, c)
     if t == "pmax_asset":
         return _pmax_asset_ops(ids, c, enable_new)
 

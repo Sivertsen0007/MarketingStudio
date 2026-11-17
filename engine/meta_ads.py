@@ -18,6 +18,7 @@ from pathlib import Path
 
 import core
 import datapolicy
+import meta_audiences  # [audiences] Audiences view + meta_audience change type
 import progress
 
 import appconfig  # noqa: E402  (keys + vendor_hub on sys.path)
@@ -127,6 +128,11 @@ def get_all(path, **params):
     return meta_api.get_all(path, **params)
 
 
+def delete(path):
+    """DELETE one object (used only for audiences: undo of one Studio made, or a delete the user pushed)."""
+    return meta_api.call("DELETE", path)
+
+
 # ---------- reading (cached) ----------
 
 F_CAMP = "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,start_time,stop_time,updated_time"
@@ -135,7 +141,8 @@ F_ADSET = ("id,name,campaign_id,status,effective_status,daily_budget,lifetime_bu
 F_AD = ("id,name,adset_id,campaign_id,status,effective_status,updated_time,"
         "creative{id,name,object_type,object_story_spec,asset_feed_spec,object_story_id,thumbnail_url,image_url,url_tags,degrees_of_freedom_spec,"
         "body,title,link_url,call_to_action_type,effective_object_story_id}")
-F_AUD = "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,time_updated,operation_status"
+F_AUD = ("id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,time_updated,operation_status,"
+         "description,retention_days,lookalike_spec,data_source")  # [audiences] rule is read per audience (too big for the list)
 F_INS = "spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,actions,conversions"
 # Custom pixel events Meta reports under "conversions" (offsite_conversion.fb_pixel_custom.<Event>): our column key -> event name.
 # SelectCabin is the website's cabin-selection event (one of ML's main conversions; it is a pixel event, not a saved custom conversion).
@@ -154,7 +161,7 @@ def refresh():
             "campaigns": get_all(f"{act()}/campaigns", fields=F_CAMP),
             "adsets": get_all(f"{act()}/adsets", fields=F_ADSET),
             "ads": get_all(f"{act()}/ads", fields=F_AD),
-            "audiences": get_all(f"{act()}/customaudiences", fields=F_AUD),
+            "audiences": get_all(f"{act()}/customaudiences", fields=F_AUD, limit=100),  # [audiences] Meta refuses big pages with these fields
             "insights": {}}
     for level in ("campaign", "adset", "ad"):
         rows = get_all(f"{act()}/insights", level=level, date_preset="last_7d", fields=f"{level}_id," + F_INS)
@@ -492,13 +499,15 @@ def rows(d, kind):
                         "image": (a.get("creative") or {}).get("image_url") or (a.get("creative") or {}).get("thumbnail_url", ""),
                         "updated": (a.get("updated_time") or "")[:10], **_ins(d, "ad", a["id"])})
         return out
-    if kind == "audiences":
-        return [{"id": a["id"], "campaign_id": None, "ad_group_id": None, "audience": a["name"], "type": _st(a.get("subtype", "")),
-                 "size": f"{a.get('approximate_count_lower_bound', '?'):,}-{a.get('approximate_count_upper_bound', '?'):,}"
-                 if isinstance(a.get("approximate_count_lower_bound"), int) and a.get("approximate_count_lower_bound", -1) >= 0 else "",
+    if kind == "audiences":  # [audiences] honest sizes, retention, where used (meta_audiences.py)
+        used = meta_audiences.users(d)
+        return [{"id": a["id"], "campaign_id": None, "ad_group_id": None, "audience": a["name"],
+                 "type": meta_audiences.SUBTYPE.get(a.get("subtype", ""), _st(a.get("subtype", ""))), "size": meta_audiences.size_text(a),
+                 "retention": f"{a['retention_days']} days" if a.get("retention_days") else "",
+                 "used_by": "; ".join(used.get(str(a["id"]), [])),
                  "status": (a.get("operation_status") or {}).get("description", ""),
                  "updated": dt.datetime.fromtimestamp(a["time_updated"]).strftime("%Y-%m-%d") if a.get("time_updated") else "",
-                 "note": GDPR_NOTE}
+                 "note": meta_audiences.NO_CUSTOMER_DATA if a.get("subtype") == "CUSTOM" else GDPR_NOTE}
                 for a in d["audiences"]]
     if kind == "leadforms":
         return [{"id": f["id"], "campaign_id": None, "ad_group_id": None, "lead_form": f.get("name", ""), "status": _st(f.get("status", "")),
@@ -637,7 +646,8 @@ def _name(d, level, oid):
 
 TYPES = ("meta_status", "meta_budget", "meta_end", "meta_rename", "meta_targeting", "meta_placements", "meta_copy",
          "meta_carousel_copy", "meta_feed_copy", "meta_new_campaign", "meta_new_adset", "meta_new_ad", "meta_boost_post",
-         "meta_test_split", "meta_test_creative", "meta_test_end")  # tests: meta_tests.py
+         "meta_test_split", "meta_test_creative", "meta_test_end",  # tests: meta_tests.py
+         "meta_audience")  # [audiences] meta_audiences.py
 TEST_TYPES = ("meta_test_split", "meta_test_creative", "meta_test_end")
 NEW_TYPES = ("meta_new_campaign", "meta_new_adset", "meta_new_ad")
 OBJECTIVES = {"traffic": "OUTCOME_TRAFFIC", "awareness": "OUTCOME_AWARENESS", "engagement": "OUTCOME_ENGAGEMENT",
@@ -707,6 +717,8 @@ def summarise(c, d=None, items=None):
     if t in TEST_TYPES:
         import meta_tests  # noqa: PLC0415
         return meta_tests.summarise(c, d, items if items is not None else _items())
+    if t == meta_audiences.TYPE:
+        return meta_audiences.summarise(c, d)
     if t == "meta_new_campaign":
         b = f"campaign budget {float(c['daily_budget']):.2f}/day" if c.get("daily_budget") else "ad set budgets"
         return f'Meta new campaign "{c["name"]}" ({_st(str(c.get("objective", "")).replace("OUTCOME_", ""))}, {b}, Paused)'
@@ -753,7 +765,8 @@ def summarise(c, d=None, items=None):
         return f"Meta {who}: rename to \"{c['new_name']}\""
     if t == "meta_targeting":
         bits = [f"countries {', '.join(c['countries'])}" if c.get("countries") else "",
-                f"age {c.get('age_min', '')}-{c.get('age_max', '')}" if c.get("age_min") or c.get("age_max") else ""]
+                f"age {c.get('age_min', '')}-{c.get('age_max', '')}" if c.get("age_min") or c.get("age_max") else "",
+                meta_audiences.targeting_words(c, d)]
         return f"Meta {who}: " + "; ".join(b for b in bits if b)
     if t == "meta_placements":
         return f"Meta {who}: placements {_pl_text(c)}"
@@ -885,6 +898,10 @@ def check(c, d=None, items=None):
             p_, w_ = meta_tests.check(c, d, items)
             problems += p_
             warnings += w_
+        elif t == meta_audiences.TYPE:
+            p_, w_ = meta_audiences.check(c, d)
+            problems += p_
+            warnings += w_
         elif t == "meta_new_campaign":
             if not c.get("name"):
                 problems.append("the new campaign needs a name")
@@ -972,6 +989,10 @@ def check(c, d=None, items=None):
                     problems.append("this campaign has ad set budgets: change the ad sets instead")
             if t in ("meta_end", "meta_targeting", "meta_placements") and c["level"] != "adset":
                 problems.append("only ad sets have an end date, targeting and placements")
+            if t == "meta_targeting":  # [audiences] attach / detach audiences on the ad set
+                problems += meta_audiences.targeting_problems(c, d)
+                if not any(c.get(k) for k in ("countries", "age_min", "age_max") + meta_audiences.AUD_KEYS):
+                    problems.append("nothing to change: give countries, age_min / age_max or audiences_add / _remove, excluded_add / _remove")
             if t == "meta_end" and c.get("end_date"):
                 try:
                     if dt.date.fromisoformat(c["end_date"]) <= dt.date.today():
@@ -1066,6 +1087,11 @@ def _normalise(c):
     if c.get("type") in TEST_TYPES:
         import meta_tests  # noqa: PLC0415
         c = meta_tests.normalise(c)
+    if c.get("type") == meta_audiences.TYPE:
+        c = meta_audiences.normalise(c)
+    for k in meta_audiences.AUD_KEYS:
+        if c.get(k):
+            c[k] = [str(x) for x in c[k]]
     if c.get("status"):
         c["status"] = c["status"].lower().replace("enabled", "active")
     if c.get("type") == "meta_new_campaign":
@@ -1093,6 +1119,9 @@ def add(changes, by="you", note=None):
     if isinstance(changes, dict):
         changes = [changes]
     d = load()
+    refused = meta_audiences.refusals([_normalise(c) for c in changes], d)  # [audiences] an audience in use can't be removed
+    if refused:
+        raise ValueError("Not added to the draft. " + "; ".join(refused))
     items = []
     for c in changes:
         c = _normalise(c)
@@ -1202,6 +1231,8 @@ def _overlay(kind, out, campaign_id, adset_id):
         elif t == "meta_rename":
             r["_draft"][{"campaign": "campaign", "adset": "ad_set", "ad": "ad"}[c["level"]]] = {**mark, "value": c["new_name"]}
         elif t == "meta_targeting":
+            if any(c.get(k) for k in meta_audiences.AUD_KEYS):
+                r["_draft"]["audiences"] = {**mark, "value": meta_audiences.targeting_words(c, d)}
             if c.get("countries"):
                 r["_draft"]["countries"] = {**mark, "value": ", ".join(c["countries"])}
             if c.get("age_min") or c.get("age_max"):
@@ -1469,7 +1500,7 @@ def _wider(old_tg, new_tg):
     return False
 
 
-PHASE = {"new_campaign": 0, "new_adset": 1, "new_ad": 2, "study": 4, "study_end": 5}  # edits: 3
+PHASE = {"audience": -1, "new_campaign": 0, "new_adset": 1, "new_ad": 2, "study": 4, "study_end": 5, "audience_delete": 6}  # edits: 3
 
 
 def ops_for(c, items=None):
@@ -1484,6 +1515,8 @@ def ops_for(c, items=None):
         for s in steps:
             s["needs"] = meta_tests.refs(c)
         return steps
+    if t == meta_audiences.TYPE:  # [audiences] reads only here; nothing reaches Meta before Push live
+        return meta_audiences.ops_for(c, sys.modules[__name__])
     if t == "meta_new_campaign":
         p = {"name": c["name"], "objective": c["objective"], "status": "PAUSED", "special_ad_categories": c.get("special_ad_categories") or []}
         if c.get("daily_budget"):
@@ -1642,9 +1675,15 @@ def ops_for(c, items=None):
                 if (k == "age_min" and int(c[k]) < int(tg.get(k, 18))) or (k == "age_max" and int(c[k]) > int(tg.get(k, 65))):
                     spend.append("wider age")
                 tg[k] = int(c[k])
+        if any(c.get(k) for k in meta_audiences.AUD_KEYS):  # [audiences] include / exclude custom audiences
+            tg, wider = meta_audiences.apply_targeting(tg, c, load())
+            if wider:
+                spend.append("wider audience (an audience left out)")
         after = _targeting(tg)
+        aud = (f'; audiences {before["audiences"] or "none"} -> {after["audiences"] or "none"}; excluded {before["excluded"] or "none"} -> '
+               f'{after["excluded"] or "none"}') if any(c.get(k) for k in meta_audiences.AUD_KEYS) else ""
         return [{"kind": "update", "id": oid, "params": {"targeting": _pin_device(tg)}, "undo": {"targeting": _pin_device(cur.get("targeting"))},
-                 "line": f'ad set "{nm}": countries {before["countries"]} -> {after["countries"]}; age {before["age"]} -> {after["age"]}',
+                 "line": f'ad set "{nm}": countries {before["countries"]} -> {after["countries"]}; age {before["age"]} -> {after["age"]}' + aud,
                  "spend": ", ".join(spend)}]
     if t == "meta_placements":
         old_tg = cur.get("targeting") or {}
@@ -1680,6 +1719,8 @@ def _check_step(s):
         if s["kind"] in ("study", "study_end"):  # reads only: /ad_studies has no validate_only (meta_tests.py)
             import meta_tests  # noqa: PLC0415
             return meta_tests.check_step(s)
+        if s["kind"] in meta_audiences.STEP_KINDS:  # [audiences] no validate_only POST for audiences (not proven on Meta)
+            return meta_audiences.check_step(s)
         if s["kind"] == "update":
             post(s["id"], s["params"], validate=True, retry_rate=False)
         elif s["kind"] == "create":
@@ -1796,6 +1837,8 @@ def _do(s, ctx=None):
     if s["kind"] in ("study", "study_end"):
         import meta_tests  # noqa: PLC0415
         return meta_tests.do(s, ctx)
+    if s["kind"] in meta_audiences.STEP_KINDS:
+        return meta_audiences.do(s, sys.modules[__name__])
     raise ValueError(s["kind"])
 
 
@@ -1832,7 +1875,10 @@ def _reverse(done, tick=None):
                 tick(r, False)
             continue
         try:
-            post(r["id"], r["undo"])
+            if r["undo"] == "delete-audience":  # [audiences] an audience Studio made in that push
+                delete(r["id"])
+            else:
+                post(r["id"], r["undo"])
             ok = True
         except MetaError as ex:
             ok = False
@@ -2020,7 +2066,20 @@ CHANGE_REFERENCE = """Meta (account "meta") draft changes. ids are Meta ids from
   "ref" names a new campaign / ad set inside one add_to_draft call; "d-<ref or draft item id>" points at it.
   Push order: new campaigns, then new ad sets, then new ads, then edits. Rollback and undo set to DELETED only what that
   push created; anything that existed before only gets its old values back.
-Read only (no change types): audiences and leadforms. Personal data: UK GDPR check needed before any upload/download.
+  {"type":"meta_targeting","level":"adset","id":"..","audiences_add":["<audience id>"],"audiences_remove":[..],
+   "excluded_add":[..],"excluded_remove":[..]}   (include / exclude custom audiences on an ad set; leaving one out widens reach)
+Audiences (meta_audience; created / changed on Meta only at Push live, never checked on Meta before it; see audience_add_to_draft):
+  {"type":"meta_audience","action":"create","kind":"website","name":"..","retention_days":30 (1-180),
+   "rules":[{"field":"url","op":"contains|equals|not_contains","value":"/egypt"},{"field":"event","value":"SelectCabin"}],
+   "match":"any|all","exclude":[..],"prefill":true}
+  {"type":"meta_audience","action":"create","kind":"engagement","name":"..","source":"page|instagram|video|lead_form",
+   "event":"page: engaged|visited|messaged|cta|saved|post; instagram: engaged|all|visited|messaged; video: 3s|thruplay|25|50|75|95;
+   lead_form: opened|not_submitted|submitted","retention_days":365 (1-365),"video_ids":[..] (video)}
+  {"type":"meta_audience","action":"create","kind":"lookalike","name":"..","seed_id":"<audience id>","ratio":1 (1-10 %)}
+     or "from":1,"to":3 for a 1-3% band. Never a country: the ad set's location decides. Seed needs 100+ people.
+  {"type":"meta_audience","action":"edit","id":"..","name":"..","description":"..","retention_days":60,"rules":[..]}
+  {"type":"meta_audience","action":"remove","id":".."}   (final; refused while an ad set or lookalike uses it)
+Customer lists (subtype CUSTOM) and lead forms are read only. Personal data: UK GDPR check needed before any upload/download.
   Studio never uploads customer lists and never downloads leads.
 Rules: primary text ends with a blank line + the link; no commas in prices; no em dash, Bahamas, cabins, yacht,
 guarantees, Expeditions, emojis; prices and % in the copy must be on the linked page; dead links block."""

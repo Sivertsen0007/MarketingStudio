@@ -16,6 +16,8 @@ import datasources
 import gapi
 import meta_ads as meta
 import meta_tests
+import audiences  # [audiences]
+import meta_audiences  # [audiences]
 import areas
 
 PROTOCOL = "2025-06-18"
@@ -387,7 +389,56 @@ META_TEST_TOOLS = [  # [meta tests] meta_tests.py: two reads and one draft tool;
          "required": ["mode", "test"]}},
 ]
 META_TEST_NAMES = {t["name"] for t in META_TEST_TOOLS}
-TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS + META_TEST_TOOLS
+AUDIENCE_TOOLS = [  # [audiences] one read and one draft tool; audiences reach Google / Meta only by the user's Push live
+    {"name": "audiences_list",
+     "description": "Audiences of one ad account. Google: every audience list (user list) with type, size (Google's rounded estimate "
+                    "and range), membership days, the rule in words, where it is used (campaigns, ad groups, combined lists) and "
+                    "whether Studio can edit it. Meta: every custom audience with type, size (Meta shows small audiences only as a "
+                    "floor value), retention, lookalike seed and size, where it is used (ad sets, lookalike seeds), status. "
+                    "Customer lists are shown read-only: Studio never uploads, reads or changes customer data. Read-only, cached.",
+     "inputSchema": {"type": "object", "properties": {"account": ACCT}}},
+    {"name": "audience_add_to_draft",
+     "description": "Draft audience changes (nothing reaches Google or Meta until the user presses Push live; team approval applies). "
+                    "Only audience changes are accepted here: Google user_list (website / combined lists) and audience (attach / "
+                    "detach lists on a campaign); Meta meta_audience (website, engagement, lookalike; edit; remove) and "
+                    "meta_targeting with audiences_add / audiences_remove / excluded_add / excluded_remove. Removing an audience "
+                    "that is in use is refused and the users are named. No customer lists, no customer data.\n\n"
+                    + "Google lists are named by their exact name, Meta audiences by id (see audiences_list).\nGoogle:\n" + audiences.__doc__.split("Draft change (gae plan format, one JSON object):")[1]
+                    + "\nGoogle attach: {\"type\":\"audience\",\"campaign\":\"..\",\"lists\":[\"..\"]} (\"remove\":true to detach)\n"
+                    + "\nMeta:\n" + meta_audiences.__doc__.split("Draft change (one JSON object):")[1]
+                    + "Engagement events per source: " + "; ".join(f"{k}: {', '.join(v[1])}" for k, v in meta_audiences.ENGAGEMENT.items()),
+     "inputSchema": {"type": "object", "properties": {
+         "account": ACCT, "changes": {"type": "array", "items": {"type": "object"}},
+         "note": {"type": "string", "description": "why - shown to the user next to each change"}}, "required": ["changes"]}},
+]
+AUDIENCE_NAMES = {t["name"] for t in AUDIENCE_TOOLS}
+AUDIENCE_GOOGLE_TYPES = (audiences.TYPE, "audience")
+
+
+def call_audiences(name, a):
+    changes = a.get("changes") or []
+    if isinstance(changes, dict):
+        changes = [changes]
+    if meta.is_meta(a.get("account")):
+        meta.use(a.get("account"))
+        if name == "audiences_list":
+            return meta_audiences.rows(meta.load())
+        bad = [c for c in changes if not (c.get("type") == meta_audiences.TYPE or (
+            c.get("type") == "meta_targeting" and any(c.get(k) for k in meta_audiences.AUD_KEYS)
+            and not any(c.get(k) for k in ("countries", "age_min", "age_max"))))]
+        if bad:
+            raise ValueError("audience_add_to_draft takes Meta audience changes only (meta_audience, or meta_targeting with "
+                             "audiences_add / audiences_remove / excluded_add / excluded_remove); use add_to_draft for the rest")
+        return meta.add(changes, by="claude", note=a.get("note"))
+    acct = core.resolve(a.get("account"))
+    if name == "audiences_list":
+        return audiences.rows(acct)
+    bad = [c for c in changes if c.get("type") not in AUDIENCE_GOOGLE_TYPES or (c.get("type") == "audience" and c.get("mode"))]
+    if bad:
+        raise ValueError("audience_add_to_draft takes Google audience changes only (user_list, or audience to attach / detach lists); "
+                         "use add_to_draft for the rest")
+    return core.add(acct, changes, by="claude", note=a.get("note"))
+TOOLS += AREA_TOOLS + DATA_TOOLS + SETUP_TOOLS + TEAM_TOOLS + SHARED_TOOLS + TEAM_LIVE_TOOLS + NOTIFY_TOOLS + PACING_TOOLS + ALERT_TOOLS + META_TEST_TOOLS + AUDIENCE_TOOLS
 TEAM_LIVE_NAMES = {t["name"] for t in TEAM_LIVE_TOOLS}
 
 
@@ -528,6 +579,8 @@ def call_meta_tests(name, a):
 
 
 def call(name, a):
+    if name in AUDIENCE_NAMES:
+        return call_audiences(name, a)
     if name in META_TEST_NAMES:
         return call_meta_tests(name, a)
     if name in AREA_NAMES:

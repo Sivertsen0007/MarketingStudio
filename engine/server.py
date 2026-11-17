@@ -28,6 +28,8 @@ import fx
 import live
 import meta_ads as meta
 import meta_tests
+import audiences  # [audiences] Google Audience lists view (audiences.py)
+import meta_audiences  # [audiences] Meta Audiences view
 import overview
 import pacing  # budget pacing (Ads > Pacing, areas/pacing.py) and its daily check
 import alerts  # Ads alerts (areas/alerts.py): rules, hourly / daily checks, history
@@ -379,6 +381,8 @@ class H(BaseHTTPRequestHandler):
                 "/api/live/progress": lambda: progress.get(meta.acct()),
                 "/api/meta/tests": lambda: meta_tests.studies(),  # [meta tests] read-only
                 "/api/meta/tests/results": lambda: meta_tests.results(q.get("id")),
+                "/api/audiences": lambda: meta_audiences.rows(meta.load()),  # [audiences] read-only (cached)
+                "/api/audiences/detail": lambda: meta_audiences.detail(q["id"], meta),  # one read: the audience's rule
             }
             return self._run(routes[u.path]) if u.path in routes else self._send(404, {"error": "not found"})
         acct = core.resolve(q.get("acct"))
@@ -390,6 +394,7 @@ class H(BaseHTTPRequestHandler):
             "/api/geo": lambda: gapi.geo_any(acct, q.get("q", "")),
             "/api/live/history": lambda: live.history(acct),
             "/api/live/progress": lambda: progress.get(acct),
+            "/api/audiences": lambda: audiences.rows(acct),  # [audiences] read-only (cached account data)
         }
         if u.path in routes:
             return self._run(routes[u.path])

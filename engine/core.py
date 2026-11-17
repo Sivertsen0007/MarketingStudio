@@ -14,6 +14,7 @@ import appconfig  # noqa: E402,F401
 import draftstore  # noqa: E402
 import experiments  # noqa: E402
 import gae  # noqa: E402
+import audiences  # noqa: E402  [audiences] user_list change type (Push live only)
 
 STUDIO_DIR = gae.OUT_DIR / "studio"
 LOW32, P_ACCOUNT, P_CAMPAIGN, P_ADGROUP = gae.LOW32, 1, gae.PARENT_CAMPAIGN, gae.PARENT_ADGROUP
@@ -377,7 +378,7 @@ AUDIENCE_MODES = ("observation", "targeting")
 
 def live_only(change):
     t = change.get("type")
-    return t == "pmax_asset" or (t == "audience" and bool(change.get("remove") or change.get("mode")))
+    return t in ("pmax_asset", audiences.TYPE) or (t == "audience" and bool(change.get("remove") or change.get("mode")))
 
 
 def _warn(rows):
@@ -391,6 +392,8 @@ def _warn(rows):
 
 
 def _check_live_only(c):
+    if c["type"] == audiences.TYPE:  # [audiences] website / combined lists: audiences.py
+        return audiences.check(c)
     problems = [f"{k} is missing" for k in ("campaign",) if not c.get(k)]
     if c["type"] == "pmax_asset":
         if not c.get("asset_group"):
@@ -450,6 +453,7 @@ def add(acct, changes, by="you", note=None):
         changes = [changes]
     exps = experiments.known(acct)
     refused = [f"{_summary(c)}: {p}" for c in changes for p in experiments.check(exps, c)[0]]
+    refused += audiences.refusals(acct, changes)  # [audiences] a list in use can't be removed
     if refused:
         raise ValueError("Not added to the draft. " + "; ".join(refused))
     items = []
@@ -467,6 +471,8 @@ def add(acct, changes, by="you", note=None):
 
 def _summary(c):
     t = c.get("type")
+    if t == audiences.TYPE:
+        return audiences.summary(c)
     if t == "pmax_asset":
         texts = c.get("texts", [c.get("text")])
         return (f"{'Remove' if c.get('remove') else 'Add'} {str(c.get('field', '')).replace('_', ' ')}s in asset group "

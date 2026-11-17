@@ -78,6 +78,8 @@ class GFake:
         if "FROM user_list WHERE user_list.name = " in q:
             name = q.split("user_list.name = '", 1)[1].rsplit("'", 1)[0].replace("\\'", "'")
             return [{"userList": json.loads(json.dumps(u))} for u in LISTS if u["name"] == name]
+        if "FROM user_list WHERE user_list.type = CRM_BASED" in q:
+            return [{"userList": {"name": u["name"]}} for u in LISTS if u["type"] == "CRM_BASED"]
         if "FROM user_list WHERE user_list.type = LOGICAL" in q:
             return [{"userList": COMBO}]
         if q.startswith("SELECT user_list.id, user_list.name FROM user_list"):
@@ -457,7 +459,9 @@ class MetaChecks(MBase):
         self.assertEqual(it["problems"], [])
         self.assertIn("Instagram account", it["summary"])
         for extra, want in (({"source": "tiktok"}, "source must be"), ({"event": "page_visited"}, "event for instagram"),
-                            ({"retention_days": 400}, "1-365"), ({"source": "video", "event": "thruplay"}, "video_ids")):
+                            ({"retention_days": 731}, "1-730"), ({"source": "video", "event": "3s"}, "not available yet"),
+                            ({"source": "lead_form", "event": "opened"}, "form_ids"),
+                            ({"source": "lead_form", "event": "opened", "form_ids": ["77"], "retention_days": 91}, "1-90")):
             self.assertTrue(any(want in p for p in self.add1({**eng, **extra})["problems"]), extra)
 
     def test_lookalike(self):
@@ -504,8 +508,8 @@ class MetaLive(MBase):
 
     def test_push_create_and_undo_deletes(self):
         meta.add([MWEB, {"type": "meta_audience", "action": "create", "kind": "lookalike", "name": "LAL", "seed_id": "e1", "from": 1, "to": 3},
-                  {"type": "meta_audience", "action": "create", "kind": "engagement", "name": "Video", "source": "video", "event": "thruplay",
-                   "video_ids": ["555"], "retention_days": 30}])
+                  {"type": "meta_audience", "action": "create", "kind": "engagement", "name": "Leads", "source": "lead_form", "event": "opened",
+                   "form_ids": ["777"], "retention_days": 90}])
         res = meta.push()
         self.assertTrue(res["ok"], res)
         made = [(p, x) for p, x, v in self.f.posts if p.endswith("/customaudiences")]
@@ -523,8 +527,9 @@ class MetaLive(MBase):
                          ("LOOKALIKE", "e1", {"starting_ratio": 0.01, "ratio": 0.03}))
         self.assertNotIn("country", json.dumps(made).lower(), "never a country")
         self.assertNotIn("location", json.dumps(made).lower())
-        vid = json.loads(next(x for _, x in made if x["name"] == "Video")["rule"])["inclusions"]["rules"][0]
-        self.assertEqual((vid["event_sources"], vid["filter"]["filters"][0]["value"]), ([{"type": "video", "id": "555"}], "thruplay_watched"))
+        lead = json.loads(next(x for _, x in made if x["name"] == "Leads")["rule"])["inclusions"]["rules"][0]
+        self.assertEqual((lead["event_sources"], lead["filter"]["filters"][0]["value"], lead["retention_seconds"]),
+                         ([{"type": "lead", "id": "777"}], "lead_generation_opened", 90 * 86400), "the lead form id, not the Page id")
         out = meta.undo(res["push_id"])
         self.assertTrue(out["ok"], out)
         self.assertEqual(sorted(self.f.deletes), ["new1", "new2", "new3"])
@@ -644,6 +649,89 @@ class Routes(MBase):
         finally:
             srv.shutdown()
             srv.server_close()
+
+
+PARAM = {**WEB, "resourceName": RES(16), "id": "16", "name": "Param list", "ruleBasedUserList": {"flexibleRuleUserList": {
+    "inclusiveRuleOperator": "OR", "inclusiveOperands": [
+        {"rule": {"ruleItemGroups": [{"ruleItems": [{"name": "url__", "stringRuleItem": {"operator": "CONTAINS", "value": "/a"}},
+                                                    {"name": "ecomm_pagetype", "stringRuleItem": {"operator": "EQUALS", "value": "cart"}}]}]},
+         "lookbackWindowDays": "30"}],
+    "exclusiveOperands": [{"rule": {"ruleItemGroups": [{"ruleItems": [{"name": "ecomm_pagetype", "stringRuleItem": {"operator": "EQUALS", "value": "x"}}]}]}}]}}}
+
+
+class ReviewFixes(GBase):
+    """a08 review: customer lists never combined; rules Studio can't rebuild are never rewritten."""
+
+    def test_customer_list_never_combined(self):
+        for c in ({"type": "user_list", "action": "create", "kind": "combined", "name": "Mix", "any": ["Egypt visitors", "Customer list one"]},
+                  {"type": "user_list", "action": "edit", "list": "Combined one", "any": ["Egypt visitors", "Customer list one"]}):
+            with self.assertRaises(ValueError) as ex:
+                core.add(A, [c])
+            self.assertIn("customer list", str(ex.exception))
+        self.assertEqual(core.draft(A)["items"], [])
+        # the push checks it live too (a stale cache, or a draft made elsewhere)
+        with mock.patch.object(audiences, "crm_member_refusals", lambda a, c: []):
+            p = self.preview([{"type": "user_list", "action": "create", "kind": "combined", "name": "Mix", "any": ["Egypt visitors", "Customer list one"]}])
+        self.assertFalse(p["ok"])
+        self.assertIn("customer list", " ".join(p["items"][0]["problems"]))
+        self.assertFalse(any(apply is False and "Mix" in json.dumps(o) for o, apply in self.g.mutates), "never sent to Google")
+
+    def test_rules_with_custom_parameters_stay_read_only(self):
+        LISTS.append(PARAM)
+        base = {**BASE, "rows": {**BASE["rows"], "user_lists": BASE["rows"]["user_lists"] + [ul_row(PARAM)]}}
+        try:
+            with mock.patch.object(gapi, "base", lambda *a, **k: base):
+                r = next(x for x in audiences.rows(A)["rows"] if x["name"] == "Param list")
+                self.assertTrue(r["editable"])
+                self.assertFalse(r["rules_editable"])
+                self.assertEqual((r["rules"], r["exclude"]), ([], []), "never shown as URL rules")
+                self.assertIn('custom rule "ecomm_pagetype"', r["rule"])
+                p = self.preview([{"type": "user_list", "action": "edit", "list": "Param list", "new_name": "Param list 2"}])
+                self.assertTrue(p["ok"], p)
+                op = self.g.mutates[-1][0][0]["userListOperation"]
+                self.assertEqual(op["updateMask"], "name", "a rename touches the name only")
+                p = self.preview([{"type": "user_list", "action": "edit", "list": "Param list", "new_name": "Param list 2",
+                                   "rules": [{"op": "contains", "value": "/a"}], "exclude": [], "match": "any"}])
+                self.assertFalse(p["ok"])
+                self.assertIn("change them in Google Ads", " ".join(p["items"][0]["problems"]))
+            and_group = {"inclusiveRuleOperator": "OR", "inclusiveOperands": [{"rule": {"ruleItemGroups": [{"ruleItems": [
+                {"name": "url__", "stringRuleItem": {"operator": "CONTAINS", "value": "/a"}},
+                {"name": "url__", "stringRuleItem": {"operator": "CONTAINS", "value": "/b"}}]}]}}]}
+            self.assertFalse(audiences.rules_rebuildable(and_group)[0], "AND groups are not flattened")
+            self.assertTrue(audiences.rules_rebuildable(WEB["ruleBasedUserList"]["flexibleRuleUserList"])[0])
+        finally:
+            LISTS.remove(PARAM)
+
+
+class MetaReviewFixes(MBase):
+    def spend(self, c):
+        core.clear(meta.acct())
+        self.add1({"type": "meta_targeting", "level": "adset", "id": "s1", **c})
+        p = meta.preview()
+        self.assertTrue(p["ok"], p)
+        return p["spend"]
+
+    def test_widening_needs_the_tick(self):
+        self.assertTrue(self.spend({"audiences_add": ["w2"]}), "a second include (OR) adds people")
+        self.assertTrue(self.spend({"audiences_remove": ["w1"]}))
+        self.assertTrue(self.spend({"excluded_remove": ["c1"]}))
+        self.assertFalse(self.spend({"excluded_add": ["w2"]}), "an exclusion narrows")
+
+    def test_undo_that_widens_needs_the_tick(self):
+        core.clear(meta.acct())
+        self.add1({"type": "meta_targeting", "level": "adset", "id": "s1", "excluded_add": ["w2"]})
+        res = meta.push()
+        self.assertTrue(res["ok"], res)
+        n = len(self.f.posts)
+        out = meta.undo(res["push_id"])
+        self.assertTrue(out.get("needs_spend"), out)
+        self.assertEqual(len(self.f.posts), n, "nothing sent before the tick")
+        self.assertTrue(meta.history()[0]["undo_spend"])
+        self.assertTrue(meta.undo(res["push_id"], accept_spend=True)["ok"])
+        core.clear(meta.acct())
+        self.add1({"type": "meta_targeting", "level": "adset", "id": "s1", "age_min": 30})
+        res = meta.push()
+        self.assertTrue(meta.undo(res["push_id"]).get("needs_spend"), "undoing a narrower age range widens it again")
 
 
 class Text(unittest.TestCase):

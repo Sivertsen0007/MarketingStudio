@@ -1675,16 +1675,24 @@ def ops_for(c, items=None):
                 if (k == "age_min" and int(c[k]) < int(tg.get(k, 18))) or (k == "age_max" and int(c[k]) > int(tg.get(k, 65))):
                     spend.append("wider age")
                 tg[k] = int(c[k])
+        undo_wider = []
+        if c.get("countries") and set((cur.get("targeting") or {}).get("geo_locations", {}).get("countries") or []) - {x.upper() for x in c["countries"]}:
+            undo_wider.append("brings back countries")
+        if (c.get("age_min") and int(c["age_min"]) > int((cur.get("targeting") or {}).get("age_min", 18))) or \
+                (c.get("age_max") and int(c["age_max"]) < int((cur.get("targeting") or {}).get("age_max", 65))):
+            undo_wider.append("widens the age range again")
         if any(c.get(k) for k in meta_audiences.AUD_KEYS):  # [audiences] include / exclude custom audiences
-            tg, wider = meta_audiences.apply_targeting(tg, c, load())
+            tg, wider, narrower = meta_audiences.apply_targeting(tg, c, load())
             if wider:
-                spend.append("wider audience (an audience left out)")
+                spend.append("wider audience (more people can see the ads)")
+            if narrower:
+                undo_wider.append("widens the audience again")
         after = _targeting(tg)
         aud = (f'; audiences {before["audiences"] or "none"} -> {after["audiences"] or "none"}; excluded {before["excluded"] or "none"} -> '
                f'{after["excluded"] or "none"}') if any(c.get(k) for k in meta_audiences.AUD_KEYS) else ""
         return [{"kind": "update", "id": oid, "params": {"targeting": _pin_device(tg)}, "undo": {"targeting": _pin_device(cur.get("targeting"))},
                  "line": f'ad set "{nm}": countries {before["countries"]} -> {after["countries"]}; age {before["age"]} -> {after["age"]}' + aud,
-                 "spend": ", ".join(spend)}]
+                 "spend": ", ".join(spend), "undo_spend": ", ".join(undo_wider)}]
     if t == "meta_placements":
         old_tg = cur.get("targeting") or {}
         tg = _apply_placements(old_tg, c)
@@ -1804,7 +1812,8 @@ def _do(s, ctx=None):
     ctx = {} if ctx is None else ctx
     if s["kind"] == "update":
         post(s["id"], s["params"])
-        return {"line": s["line"], "id": s["id"], "undo": s["undo"], **({"final": s["final"]} if s.get("final") else {})}
+        return {"line": s["line"], "id": s["id"], "undo": s["undo"], **({"final": s["final"]} if s.get("final") else {}),
+                **({"undo_spend": s["undo_spend"]} if s.get("undo_spend") else {})}
     if s["kind"] == "copy":
         new = post(f"{act()}/adcreatives", s["creative"])["id"]
         post(s["id"], {"creative": {"creative_id": new}})
@@ -1990,8 +1999,9 @@ def history(limit=20):
 
 
 def undo_spend(ops):
-    """Undo steps that would switch something back on (status ACTIVE): they can raise spend, like Push live."""
-    return [o["line"] for o in ops if isinstance(o.get("undo"), dict) and str(o["undo"].get("status") or "").upper() == "ACTIVE"]
+    """Undo steps that would switch something back on (status ACTIVE) or widen targeting again: they can raise spend, like Push live."""
+    return [o["line"] for o in ops if (isinstance(o.get("undo"), dict) and str(o["undo"].get("status") or "").upper() == "ACTIVE")
+            or o.get("undo_spend")]
 
 
 def undo(push_id, accept_spend=False):
@@ -2072,9 +2082,10 @@ Audiences (meta_audience; created / changed on Meta only at Push live, never che
   {"type":"meta_audience","action":"create","kind":"website","name":"..","retention_days":30 (1-180),
    "rules":[{"field":"url","op":"contains|equals|not_contains","value":"/egypt"},{"field":"event","value":"SelectCabin"}],
    "match":"any|all","exclude":[..],"prefill":true}
-  {"type":"meta_audience","action":"create","kind":"engagement","name":"..","source":"page|instagram|video|lead_form",
-   "event":"page: engaged|visited|messaged|cta|saved|post; instagram: engaged|all|visited|messaged; video: 3s|thruplay|25|50|75|95;
-   lead_form: opened|not_submitted|submitted","retention_days":365 (1-365),"video_ids":[..] (video)}
+  {"type":"meta_audience","action":"create","kind":"engagement","name":"..","source":"page|instagram|lead_form",
+   "event":"page: engaged|visited|messaged|cta|saved|post; instagram: engaged|all|visited|messaged;
+   lead_form: opened|not_submitted|submitted","retention_days":365 (page / instagram 1-730, lead_form 1-90),
+   "form_ids":[..] (lead_form: lead form ids)}   (video viewer audiences: not available yet)
   {"type":"meta_audience","action":"create","kind":"lookalike","name":"..","seed_id":"<audience id>","ratio":1 (1-10 %)}
      or "from":1,"to":3 for a 1-3% band. Never a country: the ad set's location decides. Seed needs 100+ people.
   {"type":"meta_audience","action":"edit","id":"..","name":"..","description":"..","retention_days":60,"rules":[..]}

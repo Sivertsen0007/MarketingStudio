@@ -14,8 +14,6 @@
   const ENG = {page: ["Facebook Page", {engaged: "Engaged with the Page", visited: "Visited the Page", messaged: "Messaged the Page", cta: "Clicked a call-to-action button",
                                        saved: "Saved the Page or a post", post: "Engaged with a post or ad"}],
                instagram: ["Instagram account", {engaged: "Engaged with the account", all: "Any interaction", visited: "Visited the profile", messaged: "Sent a message"}],
-               video: ["Video viewers", {"3s": "Watched at least 3 seconds", thruplay: "ThruPlay (15 seconds or the whole video)", "25": "Watched 25%", "50": "Watched 50%",
-                                         "75": "Watched 75%", "95": "Watched 95%"}],
                lead_form: ["Lead form", {opened: "Opened the form", not_submitted: "Opened but didn't submit", submitted: "Submitted the form"}]};
 
   async function load(){
@@ -96,14 +94,15 @@
     const edit = !!r;
     showDialog(edit ? `Edit list: ${r.name}` : "New website list", `<p class="hint">People who visit pages that match. Push live only (Editor can't take audience lists).</p>
       <div class="row"><label>Name</label><input id="a_name" value="${h(edit ? r.name : "")}"></div>
-      <div class="row"><label>Visitors who match</label><select id="a_match"><option value="any">any rule</option><option value="all" ${edit && r.match === "all" ? "selected" : ""}>every rule</option></select></div>
-      ${ruleBox("a_inc", URL_OPS, edit ? r.rules.filter(x => x.op !== "all visitors" && x.op !== "other") : null)}
-      <p class="hint">Leave out people who visited (optional):</p>${ruleBox("a_exc", URL_OPS, edit ? r.exclude : null)}
+      ${!edit || r.rules_editable ? `<div class="row"><label>Visitors who match</label><select id="a_match"><option value="any">any rule</option><option value="all" ${edit && r.match === "all" ? "selected" : ""}>every rule</option></select></div>
+      ${ruleBox("a_inc", URL_OPS, edit ? r.rules : null)}
+      <p class="hint">Leave out people who visited (optional):</p>${ruleBox("a_exc", URL_OPS, edit ? r.exclude : null)}`
+        : `<p class="hint">Rules: ${h(r.rule)}. This list has ${h(r.rules_why || "rules Studio can't rebuild")}; the name, description and days can change here.</p>`}
       <div class="row"><label>Membership (days)</label><input id="a_days" type="number" min="1" max="540" value="${h(edit ? r.membership_days : 30)}"> <span class="hint">1-540</span></div>
       ${edit ? "" : `<label class="tick"><input type="checkbox" id="a_pre" checked> <span>Fill it with recent visitors (Google uses up to the last 30 days, Display only)</span></label>`}
       <div class="row"><label>Description</label><input id="a_desc" value="${h(edit ? r.description : "")}"></div>${noteRow}`,
       [[edit ? "Save to draft" : "Add to draft", () => {
-        const rules = readRules("a_inc"), exclude = readRules("a_exc");
+        const canRules = !!document.getElementById("a_inc") && (!edit || r.rules_editable), rules = canRules ? readRules("a_inc") : [], exclude = canRules ? readRules("a_exc") : [];
         if (!v("a_name")) return toast("Give the list a name");
         if (!edit) return send([{type: "user_list", action: "create", kind: "website", name: v("a_name"), rules, exclude, match: v("a_match"),
                                  lifespan: +v("a_days"), prepopulate: checked("a_pre"), ...(v("a_desc") ? {description: v("a_desc")} : {})}]);
@@ -111,19 +110,20 @@
         if (v("a_name") !== r.name) c.new_name = v("a_name");
         if (+v("a_days") !== r.membership_days) c.lifespan = +v("a_days");
         if (v("a_desc") !== (r.description || "")) c.description = v("a_desc");
-        if (JSON.stringify([rules, exclude, v("a_match")]) !== JSON.stringify([r.rules.filter(x => x.op !== "all visitors"), r.exclude, r.match])){ c.rules = rules; c.exclude = exclude; c.match = v("a_match") }
+        // rules only when the user changed them (a rename never rewrites a list's rules)
+        if (canRules && JSON.stringify([rules, exclude, v("a_match")]) !== JSON.stringify([r.rules, r.exclude, r.match])){ c.rules = rules; c.exclude = exclude; c.match = v("a_match") }
         Object.keys(c).length > 3 ? send([c]) : dlg.close();
       }, "primary"]]);
     wireRuleButtons(URL_OPS);
   }
   function listPicker(id, chosen){
-    const opts = A.data.rows.map(x => `<option ${chosen && chosen.includes(x.name) ? "selected" : ""}>${h(x.name)}</option>`).join("");
+    const opts = A.data.rows.filter(x => !x.customer_list).map(x => `<option ${chosen && chosen.includes(x.name) ? "selected" : ""}>${h(x.name)}</option>`).join("");
     return `<select id="${id}" multiple size="6" style="width:100%">${opts}</select>`;
   }
   const picked = id => [...document.getElementById(id).selectedOptions].map(o => o.value);
   function gCombined(r){
     const edit = !!r, cb = (r && r.combine) || {};
-    showDialog(edit ? `Edit combined list: ${r.name}` : "New combined list", `<p class="hint">Combine lists: people on all of the first, or any of the second, and none of the third. Lists made in this same push can be combined from the next push.</p>
+    showDialog(edit ? `Edit combined list: ${r.name}` : "New combined list", `<p class="hint">Customer lists can't be combined (Studio doesn't use customer data). Combine lists: people on all of the first, or any of the second, and none of the third. Lists made in this same push can be combined from the next push.</p>
       ${edit ? "" : `<div class="row"><label>Name</label><input id="a_name"></div>`}
       <div class="row"><label>On all of</label>${listPicker("a_all", cb.all)}</div>
       <div class="row"><label>On any of</label>${listPicker("a_any", cb.any)}</div>
@@ -153,7 +153,7 @@
       ${!edit || r.rules_editable && rules ? `<div class="row"><label>People who match</label><select id="a_match"><option value="any">any rule</option><option value="all" ${rules && rules.match === "all" ? "selected" : ""}>every rule (same visit)</option></select></div>
       ${ruleBox("a_inc", META_OPS, rules && rules.rules)}<p class="hint">Leave out (optional):</p>${ruleBox("a_exc", META_OPS, rules && rules.exclude)}`
         : edit ? `<p class="hint">${r.rules_editable ? "This audience's rule has parts Studio can't rebuild: change the rule in Ads Manager." : "Only the name, description and retention can change here."}</p>` : ""}
-      ${edit && r.type_code === "LOOKALIKE" ? "" : `<div class="row"><label>Retention (days)</label><input id="a_days" type="number" min="1" max="${!edit || r.type_code === "WEBSITE" ? 180 : 365}" value="${h(edit ? cur.retention_days : 30)}"></div>`}
+      ${edit && r.type_code === "LOOKALIKE" ? "" : `<div class="row"><label>Retention (days)</label><input id="a_days" type="number" min="1" max="${!edit || r.type_code === "WEBSITE" ? 180 : 730}" value="${h(edit ? cur.retention_days : 30)}"></div>`}
       ${edit ? "" : `<label class="tick"><input type="checkbox" id="a_pre" checked> <span>Include people from before today (up to the retention)</span></label>`}
       <div class="row"><label>Description</label><input id="a_desc" value="${h(edit ? cur.description : "")}"></div>${noteRow}`,
       [[edit ? "Save to draft" : "Add to draft", () => {
@@ -172,20 +172,23 @@
   }
   function mEngagement(){
     const srcOpts = Object.entries(ENG).map(([k, x]) => `<option value="${k}">${h(x[0])}</option>`).join("");
-    showDialog("New engagement audience", `<p class="hint">People who interacted with your Page, Instagram account, videos or lead forms. Created on Meta only when you push live.</p>
+    showDialog("New engagement audience", `<p class="hint">People who interacted with your Page, Instagram account or lead forms. Created on Meta only when you push live.</p>
       <div class="row"><label>Name</label><input id="a_name"></div>
       <div class="row"><label>Source</label><select id="a_src">${srcOpts}</select></div>
       <div class="row"><label>People who</label><select id="a_ev"></select></div>
-      <div class="row" id="a_vids_row" style="display:none"><label>Video ids</label><input id="a_vids" placeholder="1234567890, 2345678901"></div>
-      <div class="row"><label>Retention (days)</label><input id="a_days" type="number" min="1" max="365" value="365"> <span class="hint">1-365</span></div>${noteRow}`,
+      <div class="row" id="a_forms_row" style="display:none"><label>Lead form ids</label><input id="a_forms" placeholder="from the Lead forms tab"></div>
+      <div class="row"><label>Retention (days)</label><input id="a_days" type="number" min="1" max="730" value="365"> <span class="hint" id="a_dayshint">1-730</span></div>
+      <p class="hint">Video viewer audiences are not available yet.</p>${noteRow}`,
       [["Add to draft", () => {
         if (!v("a_name")) return toast("Give the audience a name");
         const src = v("a_src");
         send([{type: "meta_audience", action: "create", kind: "engagement", name: v("a_name"), source: src, event: v("a_ev"), retention_days: +v("a_days"),
-               ...(src === "video" ? {video_ids: v("a_vids").split(/[ ,]+/).filter(Boolean)} : {})}]);
+               ...(src === "lead_form" ? {form_ids: v("a_forms").split(/[ ,]+/).filter(Boolean)} : {})}]);
       }, "primary"]]);
     const fill = () => { const s = v("a_src"); document.getElementById("a_ev").innerHTML = Object.entries(ENG[s][1]).map(([k, l]) => `<option value="${k}">${h(l)}</option>`).join("");
-      document.getElementById("a_vids_row").style.display = s === "video" ? "" : "none" };
+      document.getElementById("a_forms_row").style.display = s === "lead_form" ? "" : "none";
+      const max = s === "lead_form" ? 90 : 730, d = document.getElementById("a_days"); d.max = max; if (+d.value > max) d.value = max;
+      document.getElementById("a_dayshint").textContent = "1-" + max };
     document.getElementById("a_src").onchange = fill; fill();
   }
   function mLookalike(seedId){

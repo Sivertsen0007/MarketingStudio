@@ -101,14 +101,43 @@ def _rule_items(operands):
     return out
 
 
+def _item_text(x):
+    if x["op"] == "all visitors":
+        return "all visitors"
+    if x["op"] == "other":
+        return f'custom rule "{x["value"]}"'
+    return f'URL {x["op"]} "{x["value"]}"'
+
+
+def rules_rebuildable(f):
+    """(ok, why not) for a flexible rule list: Studio rebuilds its rules only when every operand is one URL item (or the
+    list is "all visitors" alone). Anything else (custom parameters, several items ANDed in one group, other operators)
+    keeps its rules read-only, so an edit never drops or flattens what Studio can't show."""
+    if not f:
+        return False, "no rules"
+    inc, exc = f.get("inclusiveOperands") or [], f.get("exclusiveOperands") or []
+    for o in inc + exc:
+        groups = (o.get("rule") or {}).get("ruleItemGroups") or []
+        if not groups:
+            if o in exc or len(inc) != 1:
+                return False, "rules Studio can't rebuild"
+            continue
+        if len(groups) != 1 or len(groups[0].get("ruleItems") or []) != 1:
+            return False, "rules with several conditions in one group: change them in Google Ads"
+        it = groups[0]["ruleItems"][0]
+        if it.get("name") != "url__" or (it.get("stringRuleItem") or {}).get("operator") not in OP_LABEL:
+            return False, "rules with custom parameters or other conditions: change them in Google Ads"
+    return True, ""
+
+
 def describe(u, names=None):
     """Plain-text rule of a list ('URL contains /egypt or URL contains /red-sea; not URL contains /booking')."""
     names = names or {}
     rb = (u.get("ruleBasedUserList") or {}).get("flexibleRuleUserList")
     if rb:
         joiner = " and " if rb.get("inclusiveRuleOperator") == "AND" else " or "
-        inc = [("all visitors" if x["op"] == "all visitors" else f'URL {x["op"]} "{x["value"]}"') for x in _rule_items(rb.get("inclusiveOperands"))]
-        exc = [f'URL {x["op"]} "{x["value"]}"' for x in _rule_items(rb.get("exclusiveOperands"))]
+        inc = [_item_text(x) for x in _rule_items(rb.get("inclusiveOperands"))]
+        exc = [_item_text(x) for x in _rule_items(rb.get("exclusiveOperands"))]
         return joiner.join(inc) + (f"; not {' or '.join(exc)}" if exc else "")
     lg = (u.get("logicalUserList") or {}).get("rules")
     if lg:
@@ -177,8 +206,7 @@ def rows(acct):
                     "used_by": used.get(str(u["id"]), []), "status": u.get("status", ""),
                     "editable": ok, "read_only_why": why, "customer_list": crm,
                     "note": NO_CUSTOMER_DATA if crm else "",
-                    "rules": _rule_items(((raw.get("ruleBasedUserList") or {}).get("flexibleRuleUserList") or {}).get("inclusiveOperands")),
-                    "exclude": _rule_items(((raw.get("ruleBasedUserList") or {}).get("flexibleRuleUserList") or {}).get("exclusiveOperands")),
+                    **_rules_view(raw),
                     "match": "all" if ((raw.get("ruleBasedUserList") or {}).get("flexibleRuleUserList") or {}).get("inclusiveRuleOperator") == "AND" else "any",
                     "combine": {COMBINE_KEY.get(r.get("operator"), "any"): [names.get(_tail(o.get("userList")), _tail(o.get("userList")))
                                                                             for o in r.get("ruleOperands") or []]
@@ -189,6 +217,15 @@ def rows(acct):
 
 
 COMBINE_KEY = {v: k for k, v in COMBINE.items()}
+
+
+def _rules_view(raw):
+    f = (raw.get("ruleBasedUserList") or {}).get("flexibleRuleUserList")
+    ok, why = rules_rebuildable(f)
+    if not ok:
+        return {"rules": [], "exclude": [], "rules_editable": False, "rules_why": why if f else ""}
+    return {"rules": [x for x in _rule_items(f.get("inclusiveOperands")) if x["op"] != "all visitors"],
+            "exclude": _rule_items(f.get("exclusiveOperands")), "rules_editable": True, "rules_why": ""}
 
 
 # ---------- draft checks ----------
@@ -307,7 +344,7 @@ def summary(c):
 
 def refusals(acct, changes):
     """Draft-time refusal: removing a list that something uses (from the cached account data). The push checks again live."""
-    out = []
+    out = crm_member_refusals(acct, changes)
     rm = [c for c in changes if c.get("type") == TYPE and c.get("action") == "remove"]
     if not rm:
         return out
@@ -329,6 +366,21 @@ def refusals(acct, changes):
             if u["list"] == c.get("list") and (u.get("_raw") or {}).get("type") == "CRM_BASED":
                 out.append(f'audience list "{c["list"]}": {NO_CUSTOMER_DATA}')
     return out
+
+
+def crm_member_refusals(acct, changes):
+    """Combined lists (create or edit) that name a customer list: refused before they reach the draft."""
+    combos = [c for c in changes if c.get("type") == TYPE and any(c.get(k) for k in COMBINE)]
+    if not combos:
+        return []
+    import gapi  # noqa: PLC0415
+    try:
+        d = gapi.base(acct)
+    except Exception:  # noqa: BLE001 - the push checks it live
+        return []
+    crm = {u["list"] for u in d["rows"].get("user_lists", []) if (u.get("_raw") or {}).get("type") == "CRM_BASED"}
+    return [f'"{n}" is a customer list and can\'t go into a combined list. {NO_CUSTOMER_DATA}'
+            for c in combos for n in _names(c) if n in crm]
 
 
 # ---------- live: operations ----------
@@ -371,6 +423,15 @@ def _live_list(ids, name):
     if len(rows) > 1:
         raise ValueError(f'audience list "{name}": ambiguous in Google Ads')
     return rows[0]["userList"]
+
+
+def _no_customer_members(ids, c):
+    """A combined list never takes a customer list in (read live at push)."""
+    import live  # noqa: PLC0415
+    crm = {r["userList"]["name"] for r in live.query(ids.acct, "SELECT user_list.name FROM user_list WHERE user_list.type = CRM_BASED")}
+    bad = [n for n in _names(c) if n in crm]
+    if bad:
+        raise ValueError(", ".join(f'"{n}"' for n in bad) + f" is a customer list and can't go into a combined list. {NO_CUSTOMER_DATA}")
 
 
 def live_users(ids, res):
@@ -416,6 +477,7 @@ def ops(ids, c):
         else:
             if c.get("lifespan"):
                 body["membershipLifeSpan"] = str(int(c["lifespan"]))
+            _no_customer_members(ids, c)
             body["logicalUserList"] = _logical(ids, c, lambda n: f"customers/{a}/userLists/{ids.user_list(n)}")
             line = f'new combined list "{name}"'
         ids.new[("user_list", name)] = _tail(res)
@@ -453,6 +515,9 @@ def ops(ids, c):
     if any(c.get(k) is not None for k in ("rules", "exclude", "match")):
         if not website:
             raise ValueError(f'"{c["list"]}" is not a website list: change its combination (all / any / none) instead')
+        ok_rules, why_rules = rules_rebuildable(website)
+        if not ok_rules:
+            raise ValueError(f'"{c["list"]}" has {why_rules}; name, description and days can still change here')
         cur = rows_from_flexible(website)
         merged = {"rules": c["rules"] if c.get("rules") is not None else cur["rules"],
                   "exclude": c["exclude"] if c.get("exclude") is not None else cur["exclude"],
@@ -467,6 +532,7 @@ def ops(ids, c):
     if any(c.get(k) for k in COMBINE):
         if u.get("type") != "LOGICAL":
             raise ValueError(f'"{c["list"]}" is not a combined list: change its URL rules instead')
+        _no_customer_members(ids, c)
         new["logicalUserList"] = _logical(ids, c, lambda n: f"customers/{a}/userLists/{ids.user_list(n)}")
         old["logicalUserList"] = u.get("logicalUserList") or {}
         mask.append("logicalUserList.rules")

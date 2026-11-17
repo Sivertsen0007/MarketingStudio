@@ -8,8 +8,13 @@ What Meta offers (Marketing API v27, checked 17 November 2026 with reads only):
 - website audiences: rule {"inclusions": {"operator": "or", "rules": [{"event_sources": [{"type": "pixel", "id": <pixel>}],
   "retention_seconds": <= 180 days, "filter": {"operator": "and", "filters": [{"field": "url", "operator": "i_contains",
   "value": "/egypt"}]}}]}}; pixel events use {"field": "event", "operator": "eq", "value": "SelectCabin"}
-- engagement audiences: the same rule shape with event_sources of type page, ig_business, lead or video and an
-  event filter (for example page_visited, seen on the account's own engagement audiences), up to 365 days
+- engagement audiences (Meta's Engagement Custom Audiences guide, checked 17 November 2026): the same rule shape with
+  event_sources {type: page, id: Page id} (page_engaged, page_visited, page_messaged, page_cta_clicked, page_or_post_save,
+  page_post_interaction; up to 730 days), {type: ig_business, id: Instagram business profile id} (ig_business_profile_all,
+  ig_business_profile_engaged, ig_business_profile_visit, ig_user_messaged_business; up to 730 days) or
+  {type: lead, id: lead form id} (lead_generation_opened, lead_generation_dropoff, lead_generation_submitted; up to 90 days).
+  page_visited was also seen on the account's own audiences. Video viewer audiences are not available yet: the guide
+  does not document their rule, and Studio does not guess one.
 - lookalikes: POST act_<id>/customaudiences {name, subtype LOOKALIKE, origin_audience_id, lookalike_spec {ratio} or
   {starting_ratio, ratio}}. Studio never sends a country or location_spec: in v27 the ad set's location decides
   where a lookalike is used. A seed needs at least 100 people.
@@ -28,8 +33,9 @@ Draft change (one JSON object):
   {"type":"meta_audience","action":"create","kind":"website","name":"...","retention_days":30,
    "rules":[{"field":"url","op":"contains","value":"/egypt"},{"field":"event","value":"SelectCabin"}],"match":"any"|"all",
    "exclude":[...],"prefill":true,"description":"..."}
-  {"type":"meta_audience","action":"create","kind":"engagement","source":"page"|"instagram"|"video"|"lead_form",
-   "event":"engaged"|..., "retention_days":365, "video_ids":[...] (video), "source_id"?: page / Instagram account id}
+  {"type":"meta_audience","action":"create","kind":"engagement","source":"page"|"instagram"|"lead_form",
+   "event":"engaged"|..., "retention_days":365 (page / instagram up to 730, lead_form up to 90),
+   "form_ids":[...] (lead_form: the lead form ids), "source_id"?: Page / Instagram business profile id}
   {"type":"meta_audience","action":"create","kind":"lookalike","name":"...","seed_id":"<audience id>","ratio":1..10
    (percent) or "from":0..9,"to":1..10}
   {"type":"meta_audience","action":"edit","id":"<audience id>","name"?,"description"?,"retention_days"?,
@@ -45,7 +51,9 @@ ACTIONS = ("create", "edit", "remove")
 KINDS = ("website", "engagement", "lookalike")
 URL_OPS = {"contains": "i_contains", "equals": "eq", "not_contains": "i_not_contains"}
 URL_LABEL = {v: k.replace("_", " ") for k, v in URL_OPS.items()}
-WEBSITE_DAYS, ENGAGEMENT_DAYS = 180, 365
+WEBSITE_DAYS, ENGAGEMENT_DAYS = 180, 730
+SOURCE_DAYS = {"page": 730, "instagram": 730, "lead_form": 90}  # Meta's limits per source
+NOT_YET = {"video": "video viewer audiences are not available yet (Meta's guide doesn't document their rule; Studio won't guess one)"}
 DAY = 86400
 # source -> (event_sources type, {Studio key: Meta event}, label)
 ENGAGEMENT = {
@@ -53,15 +61,12 @@ ENGAGEMENT = {
                       "cta": "page_cta_clicked", "saved": "page_or_post_save", "post": "page_post_interaction"}, "Facebook Page"),
     "instagram": ("ig_business", {"engaged": "ig_business_profile_engaged", "all": "ig_business_profile_all",
                                   "visited": "ig_business_profile_visit", "messaged": "ig_user_messaged_business"}, "Instagram account"),
-    "video": ("video", {"3s": "video_watched", "thruplay": "thruplay_watched", "25": "video_view_25_percent",
-                        "50": "video_view_50_percent", "75": "video_view_75_percent", "95": "video_completed"}, "video viewers"),
     "lead_form": ("lead", {"opened": "lead_generation_opened", "not_submitted": "lead_generation_dropoff",
                            "submitted": "lead_generation_submitted"}, "lead form"),
 }
 EVENT_WORDS = {"engaged": "engaged with", "visited": "visited", "messaged": "messaged", "cta": "clicked a call-to-action on",
                "saved": "saved the Page or a post of", "post": "engaged with a post or ad of", "all": "engaged in any way with",
-               "3s": "watched at least 3 seconds of", "thruplay": "watched (ThruPlay) ", "25": "watched 25% of", "50": "watched 50% of",
-               "75": "watched 75% of", "95": "watched 95% of", "opened": "opened", "not_submitted": "opened but did not submit",
+               "opened": "opened", "not_submitted": "opened but did not submit",
                "submitted": "submitted"}
 SUBTYPE = {"WEBSITE": "Website", "ENGAGEMENT": "Engagement", "IG_BUSINESS": "Instagram engagement", "LOOKALIKE": "Lookalike",
            "CUSTOM": "Customer list", "VIDEO": "Video viewers", "OFFLINE_CONVERSION": "Offline", "APP": "App activity"}
@@ -237,18 +242,20 @@ def check(c, d):
             problems.append("match must be any or all")
     elif kind == "engagement":
         src = ENGAGEMENT.get(c.get("source"))
+        if c.get("source") in NOT_YET:
+            return [NOT_YET[c["source"]]], []
         if not src:
             problems.append(f"source must be one of {', '.join(ENGAGEMENT)}")
         else:
             if c.get("event") not in src[1]:
                 problems.append(f"event for {c['source']} must be one of {', '.join(src[1])}")
-            if c["source"] == "video":
-                vids = c.get("video_ids") or []
-                if not vids or not all(re.fullmatch(r"\d+", str(v)) for v in vids):
-                    problems.append("video_ids: give the ids of the videos (numbers)")
+            if c["source"] == "lead_form":
+                forms = c.get("form_ids") or []
+                if not forms or not all(re.fullmatch(r"\d+", str(v)) for v in forms):
+                    problems.append("form_ids: give the lead form ids (numbers, from the Lead forms tab)")
             elif c.get("source_id") is not None and not re.fullmatch(r"\d+", str(c["source_id"])):
-                problems.append("source_id must be a Page or Instagram account id (numbers)")
-        _days(c, ENGAGEMENT_DAYS, problems, True)
+                problems.append("source_id must be a Page or Instagram business profile id (numbers)")
+        _days(c, SOURCE_DAYS.get(c.get("source"), ENGAGEMENT_DAYS), problems, True)
     else:  # lookalike
         if any(c.get(k) for k in ("country", "countries", "location_spec", "location")):
             problems.append(NO_COUNTRY)
@@ -302,8 +309,9 @@ def normalise(c):
     for k in ("id", "seed_id", "source_id"):
         if c.get(k) is not None and not isinstance(c[k], str):
             c[k] = str(c[k])
-    if c.get("video_ids"):
-        c["video_ids"] = [str(v) for v in c["video_ids"]]
+    for k in ("form_ids",):
+        if c.get(k):
+            c[k] = [str(v) for v in c[k]]
     c.setdefault("action", "create")
     for k in ("rules", "exclude"):
         for r in c.get(k) or []:
@@ -370,7 +378,7 @@ def website_rule(c, pixel, days):
 
 def engagement_rule(c, source_id):
     typ, events, _ = ENGAGEMENT[c["source"]]
-    ids = c.get("video_ids") if c["source"] == "video" else [source_id]
+    ids = c.get("form_ids") if c["source"] == "lead_form" else [source_id]
     return {"inclusions": {"operator": "or", "rules": [{
         "event_sources": [{"type": typ, "id": str(i)} for i in ids], "retention_seconds": int(c["retention_days"]) * DAY,
         "filter": {"operator": "and", "filters": [{"field": "event", "operator": "eq", "value": events[c["event"]]}]}}]}}
@@ -447,11 +455,11 @@ def ops_for(c, meta):
             src = c.get("source_id")
             if c["source"] == "page":
                 src = src or meta._page_for_account(d)
-            elif c["source"] in ("instagram",):
+            elif c["source"] == "instagram":
                 src = src or meta._identity(need_ig=True).get("instagram_user_id")
-            elif c["source"] == "lead_form":
-                src = src or meta._page_for_account(d)
-            if c["source"] != "video" and not src:
+            if c["source"] in NOT_YET:
+                raise ValueError(NOT_YET[c["source"]])
+            if c["source"] != "lead_form" and not src:
                 raise ValueError(f"no {ENGAGEMENT[c['source']][2]} found for this ad account: give source_id")
             p = {"name": c["name"], "rule": json.dumps(engagement_rule(c, src)), "prefill": True}
             line = f'new engagement audience "{c["name"]}" ({ENGAGEMENT[c["source"]][2]}, {c["event"]}, {int(c["retention_days"])} days)'
@@ -497,6 +505,9 @@ def ops_for(c, meta):
             bits.append("rules")
         else:
             nr = _with_days(rule, days)
+        if c.get("retention_days") and days > 90 and any(e.get("type") in ("lead", "ig_lead_generation") for x in (rule.get("inclusions") or {}).get("rules") or []
+                                                         for e in x.get("event_sources") or []):
+            raise ValueError("lead form audiences keep people for at most 90 days")
         if c.get("retention_days"):
             bits.append(f'{cur.get("retention_days")} -> {days} days')
         new["rule"], old["rule"] = json.dumps(nr), json.dumps(rule)
@@ -551,9 +562,12 @@ def targeting_problems(c, d):
 
 
 def apply_targeting(tg, c, d):
-    """Ad set targeting with the audience changes applied -> (new targeting, wider?)."""
+    """Ad set targeting with the audience changes applied -> (new targeting, wider?, narrower?).
+    Wider (needs the spend tick): an include removed, an exclusion removed, or an include added next to others (included
+    audiences are OR'd, so another one adds people). Narrower (its undo needs the tick): an exclusion added, or the first
+    include added (the ad set went from everyone in its location to only that audience)."""
     names = {str(a["id"]): a.get("name", "") for a in d.get("audiences") or []}
-    wider = False
+    wider = narrower = False
     for key, add, rem in (("custom_audiences", "audiences_add", "audiences_remove"),
                           ("excluded_custom_audiences", "excluded_add", "excluded_remove")):
         cur = [x for x in tg.get(key) or []]
@@ -566,12 +580,16 @@ def apply_targeting(tg, c, d):
         for aid in map(str, c.get(add) or []):
             if aid in ids:
                 raise ValueError(f'audience "{names.get(aid, aid)}" is already {"included in" if key == "custom_audiences" else "excluded from"} this ad set')
+            if key == "custom_audiences" and cur:
+                wider = True
+            else:
+                narrower = True
             cur.append({"id": aid, "name": names.get(aid, "")})
         if cur:
             tg[key] = cur
         else:
             tg.pop(key, None)
-    return tg, wider
+    return tg, wider, narrower
 
 
 def targeting_words(c, d):

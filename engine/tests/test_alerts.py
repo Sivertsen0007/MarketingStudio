@@ -154,7 +154,7 @@ class Rules(unittest.TestCase):
         self.assertIn("Spend", alerts.normalise({"metric": "spend", "value": 5}, accts=[])["name"])
 
     def test_add_update_delete(self):
-        with mock.patch("pacing.accounts", return_value=[G, M]):
+        with mock.patch("alerts._accounts", return_value=[G, M]):
             r = alerts.add_rule({"metric": "ctr", "op": "below", "value": 1.5, "account": G["key"], "level": "campaign"}, by="claude")
             self.assertEqual((r["account"], r["platform"], r["created_by"], r["enabled"]), (G["id"], "google", "claude", True))
             r2 = alerts.update_rule(r["id"], {"enabled": False})
@@ -304,7 +304,7 @@ class Check(unittest.TestCase):
         self.fetches = []
         self.sent = []
         self.mac = []
-        p = [mock.patch("pacing.accounts", return_value=[G, M]), mock.patch("alerts._meta_usage", return_value={}),
+        p = [mock.patch("alerts._accounts", return_value=[G, M]), mock.patch("alerts._meta_usage", return_value={}),
              mock.patch("alerts._osascript", side_effect=lambda t, x: self.mac.append((t, x)) or "shown"),
              mock.patch("alerts._team_send", side_effect=lambda t, d: self.sent.append((t, d)) or "sent")]
         for x in p:
@@ -425,7 +425,7 @@ class ReviewFixes(unittest.TestCase):
         alerts.rules()
         for x in alerts.rules():
             alerts.update_rule(x["id"], {"enabled": False})
-        p = [mock.patch("pacing.accounts", return_value=[G]), mock.patch("alerts._meta_usage", return_value={}),
+        p = [mock.patch("alerts._accounts", return_value=[G]), mock.patch("alerts._meta_usage", return_value={}),
              mock.patch("alerts._osascript", return_value="off"), mock.patch("alerts._team_send", return_value="solo")]
         for x in p:
             x.start()
@@ -490,7 +490,7 @@ class ReviewFixes(unittest.TestCase):
             with self.assertRaises(alerts.MetaBusy):
                 alerts.fetch_meta(M, {"metrics": True}, get=get, now=NOW, tz_hint="Europe/Copenhagen")
         self.assertEqual(len(calls), 1)  # the next page was never asked for
-        with mock.patch("pacing.accounts", return_value=[M]):
+        with mock.patch("alerts._accounts", return_value=[M]):
             alerts.update_rule("r_learning_limited", {"enabled": True})
             usage = iter([{}, {"x-fb-ads-insights-throttle": {"acc_id_util_pct": 95}}] + [{"x-fb-ads-insights-throttle": {"acc_id_util_pct": 95}}] * 5)
             with mock.patch("alerts._meta_usage", side_effect=lambda: next(usage)):
@@ -554,7 +554,7 @@ class Wiring(unittest.TestCase):
             scheduler._reset_for_tests()
 
     def test_after_refresh(self):
-        with mock.patch("pacing.accounts", return_value=[G, M]), mock.patch("alerts.check") as chk:
+        with mock.patch("alerts._accounts", return_value=[G, M]), mock.patch("alerts.check") as chk:
             self.assertIsNone(alerts.after_refresh("google"))  # no rule on
             alerts.update_rule("r_learning_limited", {"enabled": True})
             self.assertIsNone(alerts.after_refresh("google"))  # a Meta-only rule
@@ -567,7 +567,7 @@ class Wiring(unittest.TestCase):
     def test_routes_and_mcp(self):
         import mcp_server  # noqa: PLC0415
         from areas import alerts as area  # noqa: PLC0415
-        with mock.patch("pacing.accounts", return_value=[G, M]):
+        with mock.patch("alerts._accounts", return_value=[G, M]):
             v = area.g_view({})
             self.assertEqual(len(v["rules"]), len(alerts.STARTERS))
             self.assertEqual(v["policy"], "manual")

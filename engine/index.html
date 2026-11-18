@@ -309,8 +309,6 @@ tr.focus td{background:var(--accent-bg)!important}
     <div id="tree" class="tree-list"></div>
     <div class="manage-h">MANAGE</div>
     <div id="tabs" class="tabs"></div>
-    <div class="tabs"><button class="tab" id="pacingLink" title="Budget pacing: month-to-date spend and forecast against monthly targets, every Google and Meta account">Pacing (all accounts)</button>
-      <button class="tab" id="creativesLink" title="Creative and asset performance for this account: headlines, descriptions, images and videos across ads">Creatives (this account)</button></div>
   </aside>
   <section>
     <div class="toolbar">
@@ -1340,8 +1338,6 @@ function drawData(){
   h += item("seo", "", "SEO (all three)", latest(seo), "top") + seo.map(r => item("seo", r.account, esc(r.label), r.fetched_at, "sub")).join("");
   h += item("social", "", "SoMe", so.fetched_at, "top", !so.available);
   h += item("activity", "", "Activity (sync the archive)", ac.fetched_at, "top") + (ac.warning ? `<div class="dwarn">${esc(ac.warning)}</div>` : "");
-  const pc = by("pacing")[0]; if (pc) h += item("pacing", "", "Pacing (month-to-date spend, every ad account)", pc.fetched_at, "top");
-  const cr = by("creatives")[0]; if (cr) h += item("creatives", "", "Creatives (last 30 days, every ad account)", cr.fetched_at, "top");
   h += `<div class="sep"></div>` + item("fx", "", "Exchange rates", fxr.fetched_at, "sub");
   $("#dataMenu").innerHTML = h;
 }
@@ -1356,7 +1352,7 @@ $("#dataBtn").onclick = async e => {
 };
 document.addEventListener("click", e => { const m = $("#dataMenu"); if (m.style.display !== "none" && !m.contains(e.target) && !e.target.closest("#dataBtn")) m.style.display = "none" });
 $("#dataMenu").onclick = e => { const b = e.target.closest("[data-ds]"); if (b && !b.disabled) dataRefresh(b.dataset.ds, b.dataset.da || null) };
-const DLABEL = {all:"everything", google:"Google Ads", meta:"Meta", email:"Email", seo:"SEO", social:"SoMe", activity:"Activity", fx:"exchange rates", overview:"Overview", pacing:"Pacing", creatives:"Creatives"};
+const DLABEL = {all:"everything", google:"Google Ads", meta:"Meta", email:"Email", seo:"SEO", social:"SoMe", activity:"Activity", fx:"exchange rates", overview:"Overview"};
 // Refresh one source (or one account of it). Area pages call this from their own Refresh buttons with {reload:false}.
 async function dataRefresh(source, account, opt){
   opt = opt || {};
@@ -1435,8 +1431,6 @@ function setArea(name){
   if (document.body.classList.contains("ov")) setMode(false);
   if (name !== "ads"){ const el = $("#areaPage"); el.innerHTML = ""; try { AREAS[name].render(el) } catch(e) { el.innerHTML = `<div class="prob">${esc(e.message)}</div>` } }
 }
-$("#pacingLink").onclick = () => AREAS.pacing ? setArea("pacing") : toast("Pacing didn't load: see the Studio log");
-$("#creativesLink").onclick = () => { if (!AREAS.creatives) return toast("Creatives didn't load: see the Studio log"); window.CR_ACCT = S.acct; setArea("creatives") };
 $("#areaTabs").onclick = e => { const b = e.target.closest("[data-area]"); if (b) setArea(b.dataset.area) };
 (async () => {
   let list = []; try { list = await api("/api/areas") } catch(e) {}

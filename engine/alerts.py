@@ -22,7 +22,7 @@ When (scheduler.py, both refresh=True so they are held while Refresh data is man
                   ads, learning (Google: clicks / impressions / cost have a 1 hour freshness target).
   alerts_daily    daily at 09:00 (account time zone): conversions, CPA, ROAS (Google conversions can take up to
                   15 hours for attribution models other than last click).
-  With manual Refresh data: "Check now" in the Alerts tab, and a check after each Refresh of Google / Meta / Pacing /
+  With manual Refresh data: "Check now" in the Alerts tab, and a check after each Refresh of Google / Meta /
   All for the accounts refreshed (at most once per account per MIN_GAP).
   A check with no rule switched on for an account reads nothing for it.
 
@@ -161,8 +161,29 @@ def _iso(ts=None):
 
 
 def _accounts():
-    import pacing  # noqa: PLC0415
-    return pacing.accounts()
+    """Every ad account Studio knows: [{id, key, name, platform, act?}]. No API calls beyond what the account lists do."""
+    out = []
+    try:
+        import gapi  # noqa: PLC0415
+        out += [{"id": str(a["id"]), "key": a.get("key") or str(a["id"]), "name": a.get("name") or str(a["id"]), "platform": "google"}
+                for a in gapi.accounts_any()]
+    except Exception:  # noqa: BLE001 - no Google set up
+        pass
+    try:
+        import meta_ads  # noqa: PLC0415
+        out += [{"id": a["id"], "key": a["key"], "name": a["name"], "platform": "meta", "act": a["act"]} for a in meta_ads.accounts()]
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _find_account(ref, accts=None):
+    """An account by id ("8931136258", "meta_644...") or key ("ml", "meta")."""
+    ref = str(ref or "").strip()
+    for a in accts if accts is not None else _accounts():
+        if ref in (a["id"], a["key"]):
+            return a
+    raise ValueError(f"unknown ad account {ref!r}")
 
 
 def _account_ref(ref, accts=None):
@@ -170,8 +191,7 @@ def _account_ref(ref, accts=None):
     ref = str(ref or "*").strip()
     if ref in ("*", "", "all"):
         return "*"
-    import pacing  # noqa: PLC0415
-    return pacing.find_account(ref, accts if accts is not None else _accounts())["id"]
+    return _find_account(ref, accts if accts is not None else _accounts())["id"]
 
 
 def _num(v, what):
@@ -1132,15 +1152,14 @@ def after_refresh(source, account=None, wait=False):
     """After the user's own Refresh (Refresh data menu, an account's Refresh button): check the alert rules for the
     accounts just refreshed, in the background. Nothing happens when no rule applies to them."""
     source = (source or "").lower()
-    if source not in ("all", "google", "meta", "pacing"):
+    if source not in ("all", "google", "meta"):
         return None
     try:
         accts = _accounts()
         if source in ("google", "meta"):
             accts = [a for a in accts if a["platform"] == source]
         if account:
-            import pacing  # noqa: PLC0415
-            accts = [pacing.find_account(account, accts)]
+            accts = [_find_account(account, accts)]
         live = [r for r in rules() if r.get("enabled")]
         ids = [a["id"] for a in accts if any(applies(r, a) for r in live)]
     except Exception:  # noqa: BLE001 - never break a refresh

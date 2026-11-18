@@ -31,7 +31,6 @@ import meta_tests
 import audiences  # [audiences] Google Audience lists view (audiences.py)
 import meta_audiences  # [audiences] Meta Audiences view
 import overview
-import pacing  # budget pacing (Ads > Pacing, areas/pacing.py) and its daily check
 import alerts  # Ads alerts (areas/alerts.py): rules, hourly / daily checks, history
 import health
 import gapi
@@ -79,7 +78,6 @@ def _after_live(acct, res):
     fetched). Meta does the same inside meta.push / meta.undo (meta.refresh_account)."""
     if isinstance(res, dict) and res.get("ok"):
         threading.Thread(target=lambda: gapi.refresh(acct), daemon=True).start()
-        pacing.invalidate(acct)  # budgets may have changed: Pacing reads this account again when next shown
     return res
 
 
@@ -209,9 +207,7 @@ def _alerts_after(source, account=None):
 
 
 def _meta_after(res):
-    """After a Meta push or undo: Pacing reads this ad account again when next shown (budgets may have changed)."""
-    if isinstance(res, dict) and res.get("ok"):
-        pacing.invalidate(meta.acct())
+    """After a Meta push or undo (meta.push / meta.undo already read the account again)."""
     return res
 
 
@@ -638,10 +634,6 @@ def main():
             so.start_scheduler()
         except Exception:  # noqa: BLE001 - the studio must start even if SoMe can't
             traceback.print_exc()
-    try:  # the daily budget pacing check: off until switched on in Settings, held while Refresh data is manual
-        pacing.register_job()
-    except Exception:  # noqa: BLE001
-        traceback.print_exc()
     try:  # alerts: hourly and daily checks, held while Refresh data is manual (then: Check now, or after a Refresh)
         alerts.register_jobs()
     except Exception:  # noqa: BLE001

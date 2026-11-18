@@ -4,7 +4,7 @@ Never started on import (the MCP server imports Studio's modules too): only star
 
     import scheduler
     scheduler.register("alerts", check_alerts, every=900, enabled_default=False)      # every 15 minutes
-    scheduler.register("pacing", pacing_mail, at="07:30", tz="Europe/London")         # daily at 07:30 in that zone
+    scheduler.register("digest", send_digest, at="07:30", tz="Europe/London")         # daily at 07:30 in that zone
     scheduler.start()          # server.py main(), once
     scheduler.status()         # for the Settings row (GET /api/scheduler)
     scheduler.set_enabled("alerts", True)

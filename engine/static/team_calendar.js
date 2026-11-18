@@ -177,7 +177,7 @@ function head(k){
 }
 function acts(k){
   const x = T.set.keys[k], S = T.set;
-  if (!x.editable || k === "pacing_targets") return "";  // set and shared from the Pacing tab
+  if (!x.editable) return "";
   return `<div class="tc-acts"><button class="primary" data-save="${k}">${x.team ? "Save for the team" : "Save"}</button>
     ${S.can_admin && !x.team ? `<button data-share="${k}">Share with the team</button>` : ""}
     ${S.can_admin && x.team ? `<button class="danger" data-unshare="${k}">Stop sharing (everyone uses their own)</button>` : ""}</div>`;
@@ -204,9 +204,6 @@ function card(x){
       <div class="tc-row"><label>Live site</label><input type="text" id="tcProd" placeholder="https://www.example.com" value="${esc(v.prod)}" ${d}></div>
       <div class="tc-row"><label>Staging site</label><input type="text" id="tcStg" placeholder="https://staging.example.com" value="${esc(v.staging)}" ${d}></div>
       <div class="tc-row"><label>Sites (one per line: name | note)</label><textarea id="tcSites" rows="2" ${d}>${esc((v.sites || []).map(s => s.name + (s.note ? " | " + s.note : "")).join("\n"))}</textarea></div>`;
-  } else if (k === "pacing_targets"){
-    const n = Object.keys(v.accounts || {}).length;
-    inner = `<p class="tc-help">Monthly ad spend targets for ${n} account${n === 1 ? "" : "s"}, tolerance ${esc(v.tolerance_pct)}%, Meta budget step ${esc(v.meta_step_pct)}%. Set and share them in the Pacing tab.</p>`;
   } else if (k === "social"){
     inner = `<div class="tc-row"><label>Late posting (minutes, 0 = never)</label><input type="number" min="0" max="240" id="tcLate" value="${esc(v.late_minutes || 0)}" ${d}></div>`
       + ["facebook", "instagram", "linkedin"].map(c => `<div class="tc-row"><label>${CH[c]} slots</label><input type="text" data-slot="${c}" value="${esc(((v.slots || {})[c] || []).join(", "))}" placeholder="Tue 09:00, Thu 18:00" ${d}></div>`).join("")

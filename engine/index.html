@@ -5,33 +5,64 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Marketing Studio</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-/* Look modelled on Google Ads Editor 2.13 (Qt, Material palette read from the app and a window capture). No Google logos or icons. */
+/* Daymark design system (docs/design-system.md): light, Manrope, blue #0a46e0, white cards with soft shadows.
+   Every colour, radius and shadow in Studio comes from these tokens; the area files (static/*.js) use the same names. */
 :root{
-  --bg:#fff;--panel:#fff;--side:#fff;--head:#f8f9fa;--line:#dadce0;--line2:#e8eaed;--text:#202124;--text2:#3c4043;--muted:#5f6368;
-  --accent:#1a73e8;--accent-bg:#e8f0fe;--ok:#188038;--ok-bg:#ceead6;--warn:#b06000;--warn-bg:#feefc3;--bad:#d93025;--bad-bg:#fad2cf;
-  --draft:#8430ce;--draft-bg:#e9d2fd;--info-bg:#d2e3fc;--hover:#f1f3f4;--sel:#ceead6;--sel-text:#202124;--title:#2d2e30;--title-text:#e8eaed;
+  color-scheme:light;
+  /* surfaces */
+  --bg:#f4f5f8;--panel:#fff;--side:#fff;--head:#f8f9fb;--hover:#f4f5f8;--sunken:#f1f2f5;
+  /* lines */
+  --line:#e6e8ee;--line2:#eff0f4;
+  /* text */
+  --text:#111318;--text2:#3d4049;--muted:#8a8e98;--faint:#a9acb4;
+  /* brand */
+  --accent:#0a46e0;--accent-2:#2f6bf0;--accent-bg:#eef2ff;--accent-soft:#d3e1fb;--violet:#a56bf0;--violet-bg:#f4ecfe;
+  --ink:#17181c;--ink-text:#fff;
+  /* status */
+  --ok:#1c9a4c;--ok-bg:#e3f7e9;--warn:#b45309;--warn-bg:#fff4e0;--bad:#e5484d;--bad-bg:#fdecec;
+  --draft:#8b4fe0;--draft-bg:#f4ecfe;--info-bg:#eef2ff;--sel:#eef2ff;--sel-text:#111318;--title:#17181c;--title-text:#fff;
+  /* chart series */
+  --c1:#0a46e0;--c2:#a56bf0;--c3:#22b35a;--c4:#ff8a3d;--c5:#6aa0ff;--c6:#e5484d;
+  /* shape */
+  --r-xs:4px;--r-sm:6px;--r:8px;--r-md:10px;--r-lg:12px;--r-xl:16px;--r-pill:999px;
+  --sh-1:0 1px 3px rgba(17,19,24,.10);                                   /* buttons, inputs, tabs */
+  --sh-card:0 1px 6px rgba(17,19,24,.05),0 0 0 1px #eff0f4;              /* cards, panels */
+  --sh-pop:0 4px 20px rgba(17,19,24,.14),0 0 0 1px rgba(17,19,24,.04);  /* menus, tooltips */
+  --sh-dlg:0 20px 60px rgba(10,30,100,.22);                              /* dialogs */
+  --ring:0 0 0 3px rgba(10,70,224,.18);
+  --font:"Manrope",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --ease:cubic-bezier(.2,.7,.2,1);--t:.16s;
 }
-@media (prefers-color-scheme: dark){:root{
-  --bg:#202124;--panel:#292a2d;--side:#202124;--head:#2d2e31;--line:#3c4043;--line2:#35363a;--text:#e8eaed;--text2:#bdc1c6;--muted:#9aa0a6;
-  --accent:#8ab4f8;--accent-bg:#283a57;--ok:#81c995;--ok-bg:#1e3a2a;--warn:#fdd663;--warn-bg:#3d3420;--bad:#f28b82;--bad-bg:#4a2523;
-  --draft:#d7aefb;--draft-bg:#3d2a52;--info-bg:#25344d;--hover:#35363a;--sel:#1e3a2a;--sel-text:#e8eaed;--title:#17181a;--title-text:#bdc1c6;
-}}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 Roboto,"Helvetica Neue",Arial,sans-serif}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:500 13.5px/1.5 var(--font);-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
-button{cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:4px;padding:6px 14px;font-weight:500;color:var(--text2)}
+button{cursor:pointer;border:0;background:var(--panel);border-radius:var(--r);padding:7px 14px;font-weight:600;color:var(--text);box-shadow:var(--sh-1);
+  transition:background var(--t) var(--ease),box-shadow var(--t) var(--ease),transform var(--t) var(--ease),color var(--t) var(--ease)}
 button:hover{background:var(--hover)}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-@media (prefers-color-scheme: dark){button.primary{color:#202124}}
-button.primary:hover{filter:brightness(1.08)}
-button.primary:disabled{opacity:.45;cursor:default}
+button:active{transform:translateY(.5px)}
+button:focus-visible{outline:0;box-shadow:var(--sh-1),var(--ring)}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:var(--ink);color:var(--ink-text);box-shadow:0 1px 3px rgba(17,19,24,.25)}
+button.primary:hover{background:#2a2c33}
+button.blue{background:var(--accent);color:#fff} button.blue:hover{background:var(--accent-2)}
+button.ghost{background:transparent;box-shadow:none;color:var(--text2)} button.ghost:hover{background:var(--hover)}
 button.danger{color:var(--bad)}
-button.link{border:0;background:none;padding:0;color:var(--accent);font-weight:500}
-input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:6px 10px}
-input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+button.link{border:0;background:none;box-shadow:none;padding:0;color:var(--accent);font-weight:600}
+button.link:hover{background:none;text-decoration:underline}
+input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:7px 11px;box-shadow:0 1px 2px rgba(17,19,24,.04);
+  transition:border-color var(--t) var(--ease),box-shadow var(--t) var(--ease)}
+input::placeholder,textarea::placeholder{color:var(--faint)}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--accent);box-shadow:var(--ring)}
+select{-webkit-appearance:none;appearance:none;padding-right:30px;cursor:pointer;
+  background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23111318' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 11px center}
+input[type=checkbox],input[type=radio]{accent-color:var(--accent);box-shadow:none;width:15px;height:15px;padding:0}
 textarea{width:100%;resize:vertical}
+::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#d6d9e1;border-radius:10px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#b9bdc8;border:2px solid transparent;background-clip:padding-box}
 .app{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr);height:100vh;height:100dvh;width:100vw;overflow:hidden}
 html,body{overflow:hidden}
 body.ov .app{grid-template-rows:auto 1fr auto}

@@ -2,24 +2,47 @@
 // fired alerts with acknowledge and snooze, and the header badge. Nothing here changes anything on Google or Meta.
 (() => {
 const STYLE = `
-.al-scroll{overflow:auto;flex:1;padding:14px 18px;min-height:0}
-.al-card{border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:16px}
-.al-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line2)}
-.al-head h3{margin:0;font-size:15px;font-weight:500}
-.al-note{font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 10px}
-.al-table{width:100%;border-collapse:collapse;font-size:13px}
-.al-table th,.al-table td{padding:5px 8px;border-top:1px solid var(--line2);text-align:left;vertical-align:top;white-space:normal}
-.al-table th{font-weight:500;color:var(--text2);background:var(--head)}
+.al-root{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--bg)}
+.al-head{display:flex;align-items:flex-end;gap:12px;padding:22px 28px 16px;flex-wrap:wrap}
+.al-head .ttl{flex:1;min-width:240px}
+.al-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
+.al-head p{margin:4px 0 0;font-size:13.5px;font-weight:500;color:var(--muted)}
+.al-head .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.al-tog{display:inline-flex;gap:7px;align-items:center;height:34px;padding:0 12px;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1);font-size:13px;font-weight:500;color:var(--text2);cursor:pointer;margin:0}
+.al-scroll{overflow:auto;flex:1;padding:0 28px 28px;min-height:0}
+.al-card{border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);margin-bottom:12px;overflow:hidden}
+.al-hd{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:16px 20px 12px}
+.al-hd h3{margin:0;font-size:16px;font-weight:600;color:var(--text)}
+.al-count{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:var(--r-sm);background:var(--sunken);color:var(--text2);font-size:11.5px;font-weight:600}
+.al-count.hot{background:var(--bad-bg);color:var(--bad)}
+.al-note{font-size:12px;font-weight:500;color:var(--muted);line-height:1.55;margin:0 0 10px}
+.al-foot{padding:4px 4px 0}
+.al-root .warnl{padding:10px 14px;border-radius:var(--r);background:var(--warn-bg);color:var(--warn);font-size:13px;font-weight:500}
+.al-root .prob{margin:0 28px;padding:10px 14px;border-radius:var(--r);background:var(--bad-bg);color:var(--text);font-size:13px}
+.al-table{width:100%;min-width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+.al-table th,.al-table td{padding:10px 12px;height:auto;border:0;border-top:1px solid var(--line2);text-align:left;vertical-align:middle;white-space:normal;max-width:none;overflow:visible;color:var(--text2)}
+.al-table th{position:static;font-size:11.5px;font-weight:600;color:var(--muted);background:var(--head);height:38px;padding-top:0;padding-bottom:0;cursor:default;border-top:1px solid var(--line2)}
+.al-table th:first-child,.al-table td:first-child{padding-left:20px} .al-table th:last-child,.al-table td:last-child{padding-right:20px}
+.al-table td b,.al-table td .t{color:var(--text);font-weight:600}
+.al-table tbody tr{transition:background var(--t) var(--ease)} .al-table tbody tr:hover td{background:var(--hover)}
 .al-table tr.acked td{color:var(--muted)}
 .al-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.al-acts{display:flex;gap:6px;flex-wrap:wrap}
-.al-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding:10px 14px}
-.al-form label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:3px}
-.al-form input[type=number]{width:90px}
-.al-chip{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;background:var(--head);color:var(--text2);white-space:nowrap}
-.al-chip.on{background:var(--ok-bg,#e6f4ea);color:var(--ok)}
-.al-chip.warn{background:var(--warn-bg);color:var(--text)}
-#alBadge .n{display:inline-block;min-width:16px;padding:0 5px;margin-left:4px;border-radius:9px;background:var(--bad);color:#fff;font-size:11px;line-height:16px;text-align:center}
+.al-table td.when{white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums;width:1%}
+.al-table .hint{margin:2px 0 0;font-size:12px;font-weight:500;color:var(--muted);line-height:1.45}
+.al-acts{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;justify-content:flex-end}
+.al-acts select{width:auto;min-width:118px;height:32px;padding:0 30px 0 11px;font-size:12.5px;font-weight:600}
+.al-table td.on{width:1%}
+.al-acts button{height:32px;padding:0 12px;font-size:12.5px;white-space:nowrap}
+.al-form{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:16px 20px 18px;background:var(--head);border-top:1px solid var(--line2)}
+.al-form label{display:flex;flex-direction:column;font-size:11.5px;font-weight:600;color:var(--muted);gap:5px}
+.al-form input[type=number]{width:96px}
+.al-form button{height:36px}
+.al-chip{display:inline-flex;align-items:center;height:22px;font-size:11px;font-weight:600;padding:0 8px;border-radius:var(--r-sm);background:var(--sunken);color:var(--text2);white-space:nowrap;vertical-align:middle}
+.al-chip.on{background:var(--ok-bg);color:var(--ok)}
+.al-chip.warn{background:var(--warn-bg);color:var(--warn)}
+.al-chip.info{background:var(--accent-bg);color:var(--accent)}
+.al-empty{padding:28px 20px;text-align:center;color:var(--muted);font-size:13px;font-weight:500;border-top:1px solid var(--line2)}
+#alBadge .n{display:inline-block;min-width:18px;padding:0 6px;margin-left:6px;border-radius:var(--r-pill);background:var(--bad);color:var(--ink-text);font-size:11px;font-weight:700;line-height:18px;text-align:center}
 `;
 if (!document.getElementById("al-css")){ const st = document.createElement("style"); st.id = "al-css"; st.textContent = STYLE; document.head.appendChild(st) }
 
@@ -51,14 +74,14 @@ pollBadge(); setInterval(pollBadge, 60000);
 // ---- the Alerts page ----
 function render(el){
   A.el = el;
-  el.innerHTML = `<div class="toolbar">
-    <b style="font-weight:500">Alerts</b><span class="hint" id="alPolicy"></span>
-    <span class="spacer" style="flex:1"></span>
-    <label class="hint" title="A macOS notification when an alert fires"><input type="checkbox" id="alMac"> Mac notification</label>
-    <label class="hint" id="alTeamL" style="display:none" title="Also to your own team notifications (bell, and email / webhook as you set them in Team > Notifications)"><input type="checkbox" id="alTeam"> Team notifications</label>
-    <button id="alCheck" class="primary" title="Read Google and Meta now (read-only) and check every rule that is switched on">Check now</button>
+  el.innerHTML = `<div class="al-root"><div class="al-head">
+    <div class="ttl"><h1>Alerts</h1><p id="alPolicy"></p></div>
+    <div class="acts">
+    <label class="al-tog" title="A macOS notification when an alert fires"><input type="checkbox" id="alMac"> Mac notification</label>
+    <label class="al-tog" id="alTeamL" style="display:none" title="Also to your own team notifications (bell, and email / webhook as you set them in Team > Notifications)"><input type="checkbox" id="alTeam"> Team notifications</label>
+    <button id="alCheck" class="primary" title="Read Google and Meta now (read-only) and check every rule that is switched on">Check now</button></div>
   </div>
-  <div class="al-scroll" id="alBody"><p class="al-note">Loading ...</p></div>`;
+  <div class="al-scroll" id="alBody"><p class="al-note">Loading ...</p></div></div>`;
   $("#alCheck").onclick = checkNow;
   $("#alMac").onchange = e => saveSettings({mac_notify: e.target.checked});
   $("#alTeam").onchange = e => saveSettings({team_notify: e.target.checked});
@@ -100,16 +123,16 @@ function draw(){
   const checks = Object.entries(v.last_check || {}).map(([id, c]) => `${h(acctName(id))}: ${h(fmtWhen(c.at))}${c.error ? ` <span class="al-chip warn" title="${h(c.error)}">error</span>` : c.skipped ? ` <span class="al-chip warn" title="${h(c.skipped)}">skipped</span>` : ""}${c.capped ? ` <span class="al-chip warn" title="At most 20 alerts per rule per check: the rest fire at the next check">+${h(c.capped)} more</span>` : ""}`).join(" · ");
   let out = "";
   if (v.meta_backoff) out += `<div class="warnl" style="margin-bottom:12px">Meta checks are paused until ${h(fmtWhen(v.meta_backoff.until))} (${h(v.meta_backoff.why)}): Meta asked Studio to slow down.</div>`;
-  out += `<div class="al-card"><div class="al-head"><h3>Fired alerts</h3><span class="hint">${open} to look at</span><span class="spacer" style="flex:1"></span>
+  out += `<div class="al-card"><div class="al-hd"><h3>Fired alerts</h3><span class="al-count ${open ? "hot" : ""}">${open} to look at</span><span class="spacer" style="flex:1"></span>
     ${open ? `<button id="alAckAll">Acknowledge all</button>` : ""}</div>`;
   out += v.alerts.length ? `<div style="overflow:auto"><table class="al-table"><thead><tr><th>When</th><th>Alert</th><th>Rule</th><th>Sent to</th><th></th></tr></thead><tbody>${v.alerts.map(alertRow).join("")}</tbody></table></div>`
-    : `<p class="al-note" style="padding:10px 14px;margin:0">No alerts have fired yet.</p>`;
+    : `<div class="al-empty">No alerts have fired yet.</div>`;
   out += `</div>`;
-  out += `<div class="al-card"><div class="al-head"><h3>Rules</h3><span class="hint">${v.rules.filter(r => r.enabled).length} of ${v.rules.length} switched on</span></div>
+  out += `<div class="al-card"><div class="al-hd"><h3>Rules</h3><span class="al-count">${v.rules.filter(r => r.enabled).length} of ${v.rules.length} switched on</span></div>
     <div style="overflow:auto"><table class="al-table"><thead><tr><th>On</th><th>Rule</th><th>Account</th><th>Check</th><th>Quiet for</th><th>Last fired</th><th></th></tr></thead>
-    <tbody>${v.rules.map(ruleRow).join("") || `<tr><td colspan="7" class="al-note">No rules yet.</td></tr>`}</tbody></table></div>
+    <tbody>${v.rules.map(ruleRow).join("") || `<tr><td colspan="7" class="al-empty">No rules yet.</td></tr>`}</tbody></table></div>
     ${form(cat, v.accounts)}</div>`;
-  out += `<p class="al-note">${checks ? "Last checked: " + checks + ". " : ""}${jobs ? jobs + ". " : ""}${h(v.method)}</p>`;
+  out += `<p class="al-note al-foot">${checks ? "Last checked: " + checks + ". " : ""}${jobs ? jobs + ". " : ""}${h(v.method)}</p>`;
   $("#alBody").innerHTML = out;
   wire();
 }
@@ -117,16 +140,16 @@ function draw(){
 function alertRow(x){
   const d = x.delivered || {}, sent = ["Studio"].concat(d.mac === "shown" ? ["Mac"] : []).concat(d.team === "sent" ? ["Team"] : []).join(", ");
   const why = d.team && !["sent", "off", "solo"].includes(d.team) ? ` <span class="al-chip warn" title="${h(d.team)}">team: ${h(String(d.team).split(":")[0])}</span>` : "";
-  const st = x.snoozed_until ? `<span class="al-chip">snoozed until ${h(fmtWhen(x.snoozed_until))}</span>` : x.acked_at ? `<span class="al-chip">acknowledged</span>` : "";
-  return `<tr class="${x.acked_at ? "acked" : ""}"><td class="num">${h(fmtWhen(x.at))}</td><td>${h(x.text)}${(x.details || []).length > 1 ? `<div class="hint">${x.details.map(h).join("<br>")}</div>` : ""}</td>
+  const st = x.snoozed_until ? `<span class="al-chip info">snoozed until ${h(fmtWhen(x.snoozed_until))}</span>` : x.acked_at ? `<span class="al-chip on">acknowledged</span>` : "";
+  return `<tr class="${x.acked_at ? "acked" : ""}"><td class="when">${h(fmtWhen(x.at))}</td><td><span class="t">${h(x.text)}</span>${(x.details || []).length > 1 ? `<div class="hint">${x.details.map(h).join("<br>")}</div>` : ""}</td>
     <td>${h(x.rule_name)}</td><td>${h(sent)}${why}</td>
     <td><div class="al-acts">${st}${x.acked_at ? "" : `<button data-ack="${h(x.id)}">Acknowledge</button>`}
       <select data-snooze="${h(x.id)}" title="Keep this rule quiet for this ${h(x.object && x.object.level === "account" ? "account" : "object")}"><option value="">Snooze ...</option><option value="4">4 hours</option><option value="24">1 day</option><option value="72">3 days</option><option value="168">1 week</option>${x.snoozed_until ? `<option value="0">Wake up now</option>` : ""}</select></div></td></tr>`;
 }
 
 function ruleRow(r){
-  return `<tr><td><input type="checkbox" data-on="${h(r.id)}" ${r.enabled ? "checked" : ""}></td>
-    <td>${h(r.name)}${r.name !== r.description ? `<div class="hint">${h(r.description)}</div>` : ""}${r.starter ? ` <span class="al-chip">starter</span>` : ""}</td>
+  return `<tr><td class="on"><input type="checkbox" data-on="${h(r.id)}" ${r.enabled ? "checked" : ""}></td>
+    <td><span class="t">${h(r.name)}</span>${r.name !== r.description ? `<div class="hint">${h(r.description)}</div>` : ""}${r.starter ? ` <span class="al-chip">starter</span>` : ""}</td>
     <td>${h(acctName(r.account))}${r.account === "*" ? ` <span class="hint">(${h(PLAT[r.platform] || r.platform)})</span>` : ""}</td>
     <td><span class="al-chip ${r.enabled ? "on" : ""}">${h(r.cadence)}</span></td><td class="num">${h(r.quiet_hours)} h</td>
     <td>${r.last_fired ? h(fmtWhen(r.last_fired)) : ""}</td><td><button data-del="${h(r.id)}" class="danger" title="Delete this rule">Delete</button></td></tr>`;

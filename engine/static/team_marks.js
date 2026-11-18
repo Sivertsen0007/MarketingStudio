@@ -55,37 +55,40 @@
   .tmk-d{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none;vertical-align:1px}
   .tmk-d.ring{background:transparent!important;border:2px solid currentColor;width:9px;height:9px}
   .tmk-x{margin-left:6px}
-  .tmk-cm{display:inline-flex;align-items:center;gap:2px;border:0;background:none;padding:0 3px;color:var(--muted);font-size:11px;cursor:pointer;vertical-align:middle;line-height:16px;border-radius:3px}
-  .tmk-cm svg{width:13px;height:13px;fill:currentColor} .tmk-cm.open{color:var(--accent)} .tmk-cm:hover{background:var(--hover)}
+  .tmk-cm{display:inline-flex;align-items:center;gap:3px;border:0;background:none;box-shadow:none;padding:0 4px;color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;vertical-align:middle;line-height:18px;border-radius:var(--r-xs)}
+  .tmk-cm svg{width:13px;height:13px;fill:currentColor} .tmk-cm.open{color:var(--accent);background:var(--accent-bg)} .tmk-cm:hover{background:var(--hover);color:var(--text)}
   tr:not(:hover) .tmk-cm.zero,.node:not(:hover) .tmk-cm.zero{visibility:hidden}
-  .tmk-claim{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);white-space:nowrap;vertical-align:middle}
-  #tmkTip{position:fixed;z-index:200;max-width:380px;padding:7px 10px;border-radius:6px;background:var(--title,#2d2e30);color:var(--title-text,#e8eaed);font-size:12px;line-height:1.45;white-space:pre-line;pointer-events:none;display:none;box-shadow:0 2px 10px rgba(0,0,0,.2)}
-  .tmk-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:6px 10px;margin:0 0 8px;border:1px solid var(--line2);border-radius:6px;background:var(--head);font-size:12px;color:var(--text2)}
-  .tmk-bar.before{margin:0;border-radius:0;border-width:0 0 1px 0}
-  .tmk-bar .sp{flex:1} .tmk-bar button{font-size:12px;padding:2px 8px}
-  .tmk-lock{display:flex;align-items:center;gap:8px;width:100%;padding:4px 8px;border-radius:4px;background:var(--warn-bg);color:var(--text)}
+  .tmk-claim{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--text2);white-space:nowrap;vertical-align:middle}
+  #tmkTip{position:fixed;z-index:200;max-width:380px;padding:7px 10px;border-radius:var(--r-sm);background:var(--ink);color:var(--ink-text);font-size:12px;font-weight:500;line-height:1.45;white-space:pre-line;pointer-events:none;display:none;box-shadow:var(--sh-pop)}
+  .tmk-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 12px;margin:0 0 10px;border-radius:var(--r-md);background:var(--panel);box-shadow:var(--sh-1);font-size:12px;font-weight:500;color:var(--text2)}
+  .tmk-bar.before{margin:0 28px 12px}
+  .tmk-bar .sp{flex:1} .tmk-bar button{height:28px;font-size:12px;padding:0 10px}
+  .tmk-lock{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border-radius:var(--r-sm);background:var(--warn-bg);color:var(--text2)}
   .tmk-lock .sp{flex:1}
   .tmk-chg{width:100%;display:flex;gap:6px;align-items:baseline}
-  .tmk-fh{grid-column:1/-1;font-size:12px;color:var(--text2);margin:3px 0 0;padding:2px 6px;border-left:3px solid var(--tmk,#888);background:var(--tmk-bg,transparent);border-radius:0 3px 3px 0}
-  #tmkPanel{position:fixed;top:56px;right:12px;bottom:40px;width:390px;max-width:calc(100% - 24px);z-index:70;display:none;flex-direction:column;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18)}
-  #tmkPanel.on{display:flex}
-  .tmk-ph{display:flex;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)} .tmk-ph .t{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .tmk-ph .sp{flex:1} .tmk-sub{font-size:11px;color:var(--muted)}
-  .tmk-pb{flex:1;overflow:auto;padding:8px 12px}
-  .tmk-pf{border-top:1px solid var(--line);padding:8px 12px;position:relative}
-  .tmk-pf textarea{min-height:60px;font-size:13px}
-  .tmk-pf .acts{display:flex;gap:8px;align-items:center;margin-top:6px}
-  .tmk-th{border:1px solid var(--line2);border-radius:6px;padding:8px 10px;margin-bottom:8px}
-  .tmk-th.resolved{opacity:.7}
-  .tmk-c{margin:0 0 6px} .tmk-c.reply{margin-left:16px;padding-left:8px;border-left:2px solid var(--line2)}
-  .tmk-c .h{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted)} .tmk-c .h b{color:var(--text);font-weight:500}
-  .tmk-c .b{white-space:pre-wrap;word-break:break-word;font-size:13px;margin:2px 0 0}
-  .tmk-c .a{display:flex;gap:10px;font-size:12px;margin-top:2px} .tmk-c .a button{border:0;background:none;padding:0;color:var(--accent);cursor:pointer;font-size:12px}
-  .tmk-at{color:var(--accent);background:var(--accent-bg);border-radius:3px;padding:0 2px}
-  .tmk-ac{position:absolute;left:12px;bottom:100%;min-width:200px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.15);display:none;padding:4px 0;z-index:2}
-  .tmk-ac.on{display:block} .tmk-ac div{padding:5px 10px;cursor:pointer;display:flex;gap:6px;align-items:center;font-size:13px} .tmk-ac div.on,.tmk-ac div:hover{background:var(--hover)}
+  .tmk-fh{grid-column:1/-1;font-size:12px;font-weight:500;color:var(--text2);margin:4px 0 0;padding:3px 8px;border-left:3px solid var(--tmk,var(--faint));background:var(--tmk-bg,transparent);border-radius:0 var(--r-xs) var(--r-xs) 0}
+  #tmkPanel{position:fixed;top:64px;right:16px;bottom:44px;width:390px;max-width:calc(100% - 32px);z-index:70;display:none;flex-direction:column;background:var(--panel);color:var(--text);border-radius:var(--r-xl);box-shadow:var(--sh-dlg)}
+  #tmkPanel.on{display:flex;animation:tmk-in var(--t) var(--ease)}
+  @keyframes tmk-in{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+  .tmk-ph{display:flex;gap:8px;align-items:center;padding:16px 18px 12px;border-bottom:1px solid var(--line2)} .tmk-ph .t{font-size:16px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tmk-ph .sp{flex:1} .tmk-sub{font-size:11.5px;font-weight:500;color:var(--muted)}
+  .tmk-pb{flex:1;overflow:auto;padding:12px 18px}
+  .tmk-pf{border-top:1px solid var(--line2);padding:12px 18px 16px;position:relative}
+  .tmk-pf textarea{min-height:64px;font-size:13px}
+  .tmk-pf .acts{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .tmk-th{border-radius:var(--r-md);padding:10px 12px;margin-bottom:10px;background:var(--head)}
+  .tmk-th.resolved{opacity:.65}
+  .tmk-c{margin:0 0 8px} .tmk-c.reply{margin-left:14px;padding-left:10px;border-left:2px solid var(--line)}
+  .tmk-c .h{display:flex;gap:6px;align-items:center;font-size:11.5px;font-weight:500;color:var(--muted)} .tmk-c .h b{color:var(--text);font-weight:600}
+  .tmk-c .b{white-space:pre-wrap;word-break:break-word;font-size:13px;color:var(--text2);margin:3px 0 0}
+  .tmk-c .a{display:flex;gap:10px;font-size:12px;margin-top:4px} .tmk-c .a button{border:0;background:none;box-shadow:none;padding:0;color:var(--accent);cursor:pointer;font-size:12px;font-weight:600}
+  .tmk-c .a button:hover{text-decoration:underline}
+  .tmk-at{color:var(--accent);background:var(--accent-bg);border-radius:var(--r-xs);padding:0 3px;font-weight:600}
+  .tmk-ac{position:absolute;left:18px;bottom:100%;min-width:220px;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-pop);display:none;padding:6px;z-index:2}
+  .tmk-ac.on{display:block} .tmk-ac div{height:32px;padding:0 10px;border-radius:var(--r-sm);cursor:pointer;display:flex;gap:8px;align-items:center;font-size:13px;font-weight:500} .tmk-ac div.on,.tmk-ac div:hover{background:var(--hover)}
+  .tmk-ac div.on{background:var(--accent-bg);color:var(--accent)}
   #tmkBell{position:relative;display:none} #tmkBell svg{width:17px;height:17px} #tmkBell.on{display:inline-flex}
-  #tmkBell .n{display:none;min-width:16px;padding:0 5px;border-radius:9px;font-size:11px;line-height:16px;text-align:center;background:var(--accent);color:#fff}
+  #tmkBell .n{display:none;min-width:18px;padding:0 6px;border-radius:var(--r-pill);font-size:11px;font-weight:700;line-height:18px;text-align:center;background:var(--bad);color:var(--ink-text)}
   #tmkBell .n.on{display:inline-block}
   </style>`);
   document.body.insertAdjacentHTML("beforeend", `<div id="tmkTip" role="tooltip"></div>

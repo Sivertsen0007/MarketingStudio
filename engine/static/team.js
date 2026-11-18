@@ -9,23 +9,25 @@
   }
   const say = m => (typeof toast === "function" ? toast(m) : alert(m));
   const css = `
-  #teamSync{position:relative} #teamSync.waiting{border-color:var(--accent,#1a73e8);color:var(--accent,#1a73e8)}
-  #teamSync .tm-n{display:none;min-width:16px;padding:0 5px;border-radius:9px;font-size:11px;line-height:16px;text-align:center}
-  #teamSync .tm-in{background:var(--accent,#1a73e8);color:#fff} #teamSync .tm-out{background:var(--line2,#e8eaed);color:var(--text2,#3c4043)}
-  #teamSync .tm-cf{background:#d93025;color:#fff} #teamSync .tm-n.on{display:inline-block}
+  #teamSync{position:relative;gap:6px} #teamSync.waiting{color:var(--accent);box-shadow:0 0 0 1.5px var(--accent-soft),var(--sh-1)}
+  #teamSync .tm-n{display:none;min-width:18px;padding:0 6px;border-radius:var(--r-pill);font-size:11px;font-weight:700;line-height:18px;text-align:center}
+  #teamSync .tm-in{background:var(--accent);color:var(--ink-text)} #teamSync .tm-out{background:var(--sunken);color:var(--text2)}
+  #teamSync .tm-cf{background:var(--bad);color:var(--ink-text)} #teamSync .tm-n.on{display:inline-block}
   #teamSync.busy{opacity:.6;pointer-events:none}
-  #teamDlg{border:1px solid var(--line,#dadce0);border-radius:8px;padding:0;max-width:860px;width:calc(100% - 32px);background:var(--panel,#fff);color:var(--text,#202124)}
-  #teamDlg::backdrop{background:#0004}
-  .tm-h{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line,#dadce0);font-weight:500}
-  .tm-h .sp{flex:1} .tm-b{padding:12px 18px;max-height:70vh;overflow:auto}
-  .tm-c{border:1px solid var(--line,#dadce0);border-radius:6px;padding:10px 12px;margin-bottom:10px}
-  .tm-c h4{margin:0 0 6px;font-size:14px;font-weight:500} .tm-meta{font-size:12px;color:var(--muted,#5f6368);margin-bottom:8px}
+  #teamDlg{border:0;border-radius:var(--r-xl);padding:0;max-width:860px;width:calc(100% - 32px);background:var(--panel);color:var(--text);box-shadow:var(--sh-dlg)}
+  #teamDlg::backdrop{background:rgba(17,19,24,.35);backdrop-filter:blur(2px)}
+  .tm-h{display:flex;align-items:center;gap:10px;padding:20px 24px 12px;font-size:18px;font-weight:600}
+  .tm-h button{font-size:13px}
+  .tm-h .sp{flex:1} .tm-b{padding:4px 24px 24px;max-height:70vh;overflow:auto}
+  .tm-c{border-radius:var(--r-lg);padding:14px 16px;margin-bottom:12px;background:var(--panel);box-shadow:var(--sh-card)}
+  .tm-c h4{margin:0 0 4px;font-size:14px;font-weight:600} .tm-meta{font-size:12px;font-weight:500;color:var(--muted);margin-bottom:10px}
   .tm-g{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;font-size:13px}
-  .tm-g div{background:var(--hover,#f1f3f4);border-radius:4px;padding:6px 8px;min-width:0}
-  .tm-g b{display:block;font-size:11px;font-weight:500;color:var(--muted,#5f6368);margin-bottom:2px}
-  .tm-g pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,monospace;max-height:160px;overflow:auto}
-  .tm-acts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap} .tm-acts textarea{width:100%;min-height:70px;font:12px ui-monospace,Menlo,monospace}
-  .tm-who{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;margin-right:5px}
+  .tm-g div{background:var(--head);border-radius:var(--r);padding:8px 10px;min-width:0}
+  .tm-g b{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px}
+  .tm-g pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.5 var(--mono);color:var(--text2);max-height:160px;overflow:auto}
+  .tm-acts{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center} .tm-acts textarea{width:100%;min-height:70px;font:12px/1.5 var(--mono)}
+  .tm-who{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;margin-right:6px;box-shadow:0 0 0 2px var(--panel),0 0 0 3px var(--line)}
+  .tm-bad{color:var(--bad)}
   @media (max-width:640px){.tm-g{grid-template-columns:1fr}}`;
   document.head.insertAdjacentHTML("beforeend", `<style>${css}</style>`);
   document.body.insertAdjacentHTML("beforeend", `<dialog id="teamDlg" aria-label="Conflicts"></dialog>`);
@@ -140,11 +142,11 @@
     }
     const me = T.me || {};
     el.innerHTML = `<h3><span class="su-dot ${T.removed ? "" : "ok"}"></span>Team: ${esc(T.team)}</h3>
-      ${T.removed ? `<p class="su-help" style="margin:0 0 8px;color:#d93025">This Mac was removed from the team. Your drafts are still here. Leave the team to clear it, then join again with a new invite if you need to.</p>` : ""}
+      ${T.removed ? `<p class="su-help" style="margin:0 0 8px;color:var(--bad)">This Mac was removed from the team. Your drafts are still here. Leave the team to clear it, then join again with a new invite if you need to.</p>` : ""}
       <p class="su-help" style="margin:0 0 8px"><span class="tm-who" style="background:${/^#[0-9a-fA-F]{6}$/.test(me.colour || "") ? me.colour : "#888888"}"></span><b>${esc(me.name)}</b> (${esc(me.role)}${me.approver ? ", approver" : ""}) on ${esc(T.server)}.
-        Last sync: ${T.last_sync ? esc(new Date(T.last_sync).toLocaleString()) : "never"}${T.last_error ? `. <span style="color:#d93025">${esc(T.last_error)}</span>` : ""}</p>
+        Last sync: ${T.last_sync ? esc(new Date(T.last_sync).toLocaleString()) : "never"}${T.last_error ? `. <span style="color:var(--bad)">${esc(T.last_error)}</span>` : ""}</p>
       ${T.can_send === false ? `<p class="su-help" style="margin:0 0 8px">You are a viewer: you receive the team's drafts, but viewers can't send changes.</p>` : ""}
-      ${(T.failed || []).length ? `<div class="su-help" style="margin:0 0 8px;color:#d93025">Not accepted by the team server (sent again once you edit them):<ul style="margin:4px 0 0 18px;padding:0">
+      ${(T.failed || []).length ? `<div class="su-help" style="margin:0 0 8px;color:var(--bad)">Not accepted by the team server (sent again once you edit them):<ul style="margin:4px 0 0 18px;padding:0">
         ${T.failed.map(f => `<li>${esc(f.coll)} ${esc(f.id)}: ${esc(f.reason)}</li>`).join("")}</ul></div>` : ""}
       ${(T.skipped || []).length ? `<details class="su-help" style="margin:0 0 8px"><summary style="cursor:pointer">${T.skipped.length} item(s) from the team could not be used here</summary><ul style="margin:4px 0 0 18px;padding:0">
         ${T.skipped.map(f => `<li>${esc(f.coll)} ${esc(f.id)}: ${esc(f.reason)}</li>`).join("")}</ul></details>` : ""}

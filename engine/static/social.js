@@ -10,85 +10,152 @@ const SO = {view: localGet("so.view") || "calendar", mode: localGet("so.mode") |
             anaDays: "30", heatCh: "instagram", lib: null, tags: null, csv: null};
 
 const CSS = `
-.so-root{display:flex;flex-direction:column;height:100%;min-height:0}
-.so-root{--so-fb:#3b5bdb;--so-ig:#c2255c;--so-li:#0b7285}
-@media (prefers-color-scheme: dark){.so-root{--so-fb:#91a7ff;--so-ig:#f783ac;--so-li:#66d9e8}}
-.so-body{display:flex;flex:1;min-height:0}
-.so-main{flex:1;min-width:0;overflow:auto;display:flex;flex-direction:column}
-.so-side{width:440px;max-width:48vw;border-left:1px solid var(--line);overflow:auto;background:var(--panel);display:none}
+.so-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg)}
+.so-root{--so-fb:#4263eb;--so-ig:#e64980;--so-li:#0c8599}
+.so-head{display:flex;align-items:flex-end;gap:12px;padding:22px 28px 14px;flex-wrap:wrap}
+.so-head .ttl{flex:1;min-width:240px}
+.so-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
+.so-head p{margin:4px 0 0;font-size:13.5px;font-weight:500;color:var(--muted)}
+.so-head .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.so-head .chip.ok{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-pill);background:var(--ok-bg);color:var(--ok);font-size:12px;font-weight:600}
+.so-head .chip.ok::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.so-root .toolbar.so-bar{background:transparent;border:0;box-shadow:none;padding:0 28px 14px;gap:10px}
+.so-body{display:flex;flex:1;min-height:0;gap:12px;padding:0 28px 20px}
+.so-main{flex:1;min-width:0;overflow:auto;display:flex;flex-direction:column;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-card)}
+.so-side{width:440px;max-width:48vw;overflow:auto;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-card);display:none}
 .so-side.on{display:block}
-.so-seg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
-.so-seg button{border:0;border-radius:0;padding:5px 12px}
-.so-seg button.on{background:var(--accent-bg);color:var(--accent)}
-.so-title{font-weight:500;min-width:150px;text-align:center}
-.so-test{background:var(--warn-bg);color:var(--text);border-radius:2px;padding:2px 8px;font-size:12px}
-.so-month{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));flex:1;min-height:560px}
-.so-dow{padding:6px 8px;font-size:12px;color:var(--muted);background:var(--head);border-bottom:1px solid var(--line);border-right:1px solid var(--line2)}
-.so-day{border-right:1px solid var(--line2);border-bottom:1px solid var(--line2);padding:4px;min-height:96px;overflow:hidden}
+.so-seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
+.so-seg button{height:30px;padding:0 13px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
+.so-seg button:hover{background:transparent;color:var(--text)}
+.so-seg button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
+.so-nav{width:34px;height:34px;padding:0;font-size:16px;line-height:1}
+.so-title{font-weight:600;font-size:15px;color:var(--text);min-width:150px;text-align:center}
+.so-test{display:inline-flex;align-items:center;height:28px;background:var(--warn-bg);color:var(--warn);border-radius:var(--r-pill);padding:0 10px;font-size:12px;font-weight:600}
+.so-month{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:38px;grid-auto-rows:minmax(104px,1fr);flex:1 0 auto;min-height:600px}
+.so-dow{display:flex;align-items:center;padding:0 12px;font-size:11.5px;font-weight:600;color:var(--muted);background:var(--head);border-bottom:1px solid var(--line2)}
+.so-dow.today{color:var(--accent)}
+.so-day{border-right:1px solid var(--line2);border-bottom:1px solid var(--line2);padding:6px 6px 4px;min-height:104px;overflow:hidden;transition:background var(--t) var(--ease)}
+.so-day:nth-child(7n){border-right:0}
+.so-day:hover,.so-slot:hover{background:var(--hover)}
 .so-day.out{background:var(--head)}
-.so-day.today .so-dn{background:var(--accent);color:#fff;border-radius:10px;padding:0 6px}
-.so-day.over,.so-slot.over{outline:2px dashed var(--accent);outline-offset:-3px}
-.so-dn{font-size:12px;color:var(--muted);display:inline-block;margin-bottom:2px}
-.so-ev{display:block;width:100%;text-align:left;font-size:12px;line-height:16px;padding:2px 5px;margin:0 0 3px;border:1px solid var(--line);border-left:4px solid var(--so-fb);border-radius:3px;background:var(--panel);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400}
-.so-ev.facebook{border-left-color:var(--so-fb)}.so-ev.instagram{border-left-color:var(--so-ig)}.so-ev.linkedin{border-left-color:var(--so-li)}
-.so-ev.moved{border-style:dashed;border-left-style:solid;background:var(--draft-bg)}
+.so-day.out .so-dn{color:var(--faint)}
+.so-day.today .so-dn{background:var(--accent);color:var(--ink-text);border-radius:var(--r-pill);padding:0 7px;min-width:22px}
+.so-day.over,.so-slot.over{outline:2px dashed var(--accent);outline-offset:-3px;background:var(--accent-bg)}
+.so-dn{font-size:12px;font-weight:600;color:var(--text2);display:inline-flex;align-items:center;justify-content:center;height:22px;margin:0 0 4px 2px;font-variant-numeric:tabular-nums}
+.so-ev{--c:var(--so-fb);display:block;width:100%;height:24px;text-align:left;font-size:11.5px;font-weight:600;line-height:24px;padding:0 7px 0 18px;margin:0 0 3px;border:0;border-radius:var(--r-sm);position:relative;
+  background:color-mix(in srgb,var(--c) 9%,var(--panel));box-shadow:none;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background var(--t) var(--ease)}
+.so-ev::before{content:"";position:absolute;left:7px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--c)}
+.so-ev:hover{background:color-mix(in srgb,var(--c) 18%,var(--panel))}
+.so-ev.facebook{--c:var(--so-fb)}.so-ev.instagram{--c:var(--so-ig)}.so-ev.linkedin{--c:var(--so-li)}
+.so-ev.moved{background:var(--draft-bg);box-shadow:inset 0 0 0 1px var(--draft)}
 .so-ev[draggable=true]{cursor:grab}
-.so-ev .t{color:var(--muted);margin-right:4px;font-variant-numeric:tabular-nums}
-.so-st{font-size:11px;padding:0 5px;border-radius:2px;margin-left:4px;background:var(--line2)}
-.so-st.scheduled{background:var(--info-bg)}.so-st.published{background:var(--ok-bg)}.so-st.failed{background:var(--bad-bg)}.so-st.draft{background:var(--draft-bg)}.so-st.needs_checking,.so-st.missed,.so-st.not_scheduled{background:var(--warn-bg)}.so-st.publishing{background:var(--warn-bg)}
-.so-week{display:grid;grid-template-columns:52px repeat(7,minmax(0,1fr));flex:1}
-.so-hr{font-size:11px;color:var(--muted);text-align:right;padding:2px 6px;border-bottom:1px solid var(--line2);border-right:1px solid var(--line)}
-.so-slot{border-right:1px solid var(--line2);border-bottom:1px solid var(--line2);min-height:34px;padding:2px}
-.so-legend{display:flex;gap:12px;align-items:center;font-size:12px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--line2);flex-wrap:wrap}
-.so-dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-.so-pending{background:var(--draft-bg);color:var(--text);padding:8px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px}
-.so-unpl{padding:8px 14px;border-top:1px solid var(--line2);font-size:13px}
-.so-unpl .so-ev{display:inline-block;width:auto;max-width:260px;margin-right:6px}
-.so-ed{padding:12px 16px 80px}
-.so-ed h3{margin:4px 0 8px;font-weight:500;font-size:16px}
-.so-row{margin-bottom:10px}.so-row>label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+.so-ev .t{color:var(--muted);font-weight:500;margin-right:5px;font-variant-numeric:tabular-nums}
+.so-ev .so-st{height:16px;font-size:10px;vertical-align:1px}
+:is(.so-day,.so-slot) .so-ev .so-st{position:absolute;right:7px;top:9px;width:7px;height:7px;padding:0;margin:0;border-radius:50%;font-size:0;background:var(--faint)}
+:is(.so-day,.so-slot) .so-ev{padding-right:20px}
+:is(.so-day,.so-slot) .so-ev .so-st.scheduled{background:var(--accent)}:is(.so-day,.so-slot) .so-ev .so-st.published{background:var(--ok)}:is(.so-day,.so-slot) .so-ev .so-st.failed{background:var(--bad)}:is(.so-day,.so-slot) .so-ev .so-st.draft{background:var(--draft)}
+:is(.so-day,.so-slot) .so-ev .so-st.needs_checking,:is(.so-day,.so-slot) .so-ev .so-st.missed,:is(.so-day,.so-slot) .so-ev .so-st.not_scheduled,:is(.so-day,.so-slot) .so-ev .so-st.publishing{background:var(--c4)}
+.so-st{display:inline-flex;align-items:center;height:18px;font-size:10.5px;font-weight:600;padding:0 6px;border-radius:var(--r-xs);margin-left:4px;background:var(--sunken);color:var(--text2);white-space:nowrap}
+.so-st.scheduled{background:var(--accent-bg);color:var(--accent)}.so-st.published{background:var(--ok-bg);color:var(--ok)}.so-st.failed{background:var(--bad-bg);color:var(--bad)}.so-st.draft{background:var(--draft-bg);color:var(--draft)}
+.so-st.needs_checking,.so-st.missed,.so-st.not_scheduled,.so-st.publishing{background:var(--warn-bg);color:var(--warn)}
+.so-week{display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr));flex:1 0 auto}
+.so-week>.so-dow{position:sticky;top:0;z-index:1;height:38px}
+.so-hr{font-size:10.5px;font-weight:500;color:var(--faint);text-align:right;padding:4px 8px;border-right:1px solid var(--line2);font-variant-numeric:tabular-nums}
+.so-slot{border-right:1px solid var(--line2);border-bottom:1px dashed var(--line2);min-height:38px;padding:3px;transition:background var(--t) var(--ease)}
+.so-legend{display:flex;gap:14px;align-items:center;font-size:12px;font-weight:500;color:var(--muted);padding:12px 18px;border-bottom:1px solid var(--line2);flex-wrap:wrap}
+.so-legend>span{display:inline-flex;align-items:center;gap:4px}
+.so-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+.so-pending{background:var(--draft-bg);color:var(--text);padding:10px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px}
+.so-pending b{color:var(--draft);font-weight:600}
+.so-pending button{height:30px;padding:0 12px;font-size:12.5px}
+.so-unpl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:12px 18px;border-top:1px solid var(--line2);font-size:13px}
+.so-unpl b{font-weight:600;color:var(--text2)}
+.so-unpl .so-ev{display:inline-block;width:auto;max-width:260px;margin:0}
+.so-ed{padding:18px 20px 90px}
+.so-edh{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.so-ed h3{margin:0;font-weight:600;font-size:18px;color:var(--text);display:flex;align-items:center;gap:8px}
+.so-row{margin-bottom:14px}.so-row>label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px}
+.so-row>label.inl{display:flex;gap:8px;align-items:center;color:var(--text);font-size:13px;font-weight:500}
 .so-row input[type=text],.so-row input[type=datetime-local],.so-row select{width:100%}
-.so-ticks{display:flex;gap:14px;flex-wrap:wrap}.so-ticks label{display:flex;gap:5px;align-items:center}
-.so-cnt{font-size:12px;color:var(--muted);text-align:right}.so-cnt.over{color:var(--bad)}
-.so-tabs{display:flex;gap:2px;margin-bottom:4px}.so-tabs button{padding:3px 10px;font-size:12px}.so-tabs button.on{background:var(--accent-bg);color:var(--accent)}
-.so-media{display:flex;gap:6px;flex-wrap:wrap}.so-mi{position:relative;width:76px;height:76px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--head);font-size:11px;display:flex;align-items:center;justify-content:center;text-align:center}
-.so-mi img{width:100%;height:100%;object-fit:cover}.so-mi .x{position:absolute;top:2px;right:2px;padding:0 5px;font-size:11px;line-height:16px}
-.so-mi .l{position:absolute;bottom:2px;left:2px;padding:0 5px;font-size:11px;line-height:16px}
-.so-prob{font-size:12.5px;background:var(--bad-bg);color:var(--text);border-radius:2px;padding:3px 7px;margin:3px 0}
-.so-warn{font-size:12.5px;background:var(--warn-bg);color:var(--text);border-radius:2px;padding:3px 7px;margin:3px 0}
-.so-okk{font-size:12.5px;background:var(--ok-bg);color:var(--text);border-radius:2px;padding:3px 7px;margin:3px 0}
-.so-consent{background:var(--warn-bg);color:var(--text);border-radius:4px;padding:6px 8px;font-size:12.5px;margin-top:4px}
-.so-acts{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:6px;flex-wrap:wrap}
-.so-phones{display:flex;gap:12px;overflow-x:auto;padding:4px 0 8px}
-.so-phone{flex:none;width:236px;border:8px solid #202124;border-radius:22px;background:#fff;color:#202124;font-size:12px;overflow:hidden}
-.so-phone .bar{height:16px;background:#202124}
-.so-phone .hd{display:flex;align-items:center;gap:6px;padding:6px 8px;font-weight:500}.so-phone .av{width:22px;height:22px;border-radius:50%;background:#1f3a5f}
-.so-phone .md{background:#e8eaed;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;color:#5f6368;overflow:hidden;position:relative}
+.so-ticks{display:flex;gap:14px;flex-wrap:wrap}.so-ticks label{display:flex;gap:6px;align-items:center;font-weight:500}
+.so-cnt{font-size:11.5px;font-weight:500;color:var(--muted);text-align:right;margin-top:4px}.so-cnt.over{color:var(--bad)}
+.so-tabs{display:inline-flex;gap:2px;margin-bottom:6px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
+.so-tabs button{height:26px;padding:0 10px;font-size:12px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted)}
+.so-tabs button:hover{background:transparent;color:var(--text)}
+.so-tabs button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
+.so-media{display:flex;gap:8px;flex-wrap:wrap}.so-mi{position:relative;width:80px;height:80px;border-radius:var(--r-md);overflow:hidden;background:var(--sunken);font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:center;text-align:center;box-shadow:var(--sh-1)}
+.so-mi img{width:100%;height:100%;object-fit:cover}.so-mi .x{position:absolute;top:3px;right:3px;padding:0 6px;font-size:11px;line-height:18px;height:18px}
+.so-mi .l{position:absolute;bottom:3px;left:3px;padding:0 6px;font-size:11px;line-height:18px;height:18px}
+.so-prob,.so-warn,.so-okk{font-size:12.5px;font-weight:500;border-radius:var(--r-sm);padding:7px 10px;margin:4px 0;color:var(--text2)}
+.so-prob{background:var(--bad-bg)} .so-prob b{color:var(--bad)}
+.so-warn{background:var(--warn-bg)} .so-warn b{color:var(--warn)}
+.so-okk{background:var(--ok-bg)} .so-okk b{color:var(--ok)}
+.so-main>.so-prob,.so-main>.so-warn{margin:12px 18px}
+.so-consent{background:var(--warn-bg);color:var(--text2);border-radius:var(--r);padding:8px 10px;font-size:12.5px;margin-top:6px}
+.so-acts{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line2);padding:12px 20px;display:flex;gap:8px;flex-wrap:wrap;box-shadow:0 -6px 16px rgba(17,19,24,.04)}
+.so-acts .hint{margin:0;font-size:12px}
+.so-phones{display:flex;gap:14px;overflow-x:auto;padding:4px 2px 10px}
+.so-phone{flex:none;width:236px;border:7px solid var(--ink);border-radius:26px;background:var(--panel);color:var(--text);font-size:12px;overflow:hidden;box-shadow:var(--sh-pop)}
+.so-phone .bar{height:14px;background:var(--ink)}
+.so-phone .hd{display:flex;align-items:center;gap:7px;padding:8px 10px;font-weight:600}.so-phone .av{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--violet))}
+.so-phone .md{background:var(--sunken);aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;color:var(--muted);overflow:hidden;position:relative}
 .so-phone .md img{width:100%;height:100%;object-fit:cover}.so-phone.instagram .md{aspect-ratio:4/5}
-.so-phone .md .n{position:absolute;top:6px;right:6px;background:#202124cc;color:#fff;border-radius:8px;padding:0 6px;font-size:10px}
-.so-phone .cp{padding:6px 8px;white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:hidden}
-.so-phone .lk{margin:0 8px 8px;border:1px solid #dadce0;border-radius:4px;padding:5px 7px;color:#5f6368;font-size:11px;word-break:break-all}
-.so-phone .ch{padding:3px 8px;background:#f1f3f4;color:#5f6368;font-size:10.5px}
-.so-res a{color:var(--accent)}
-.so-grid td.txt{max-width:340px}
-.so-grid img{width:34px;height:34px;object-fit:cover;border-radius:3px;vertical-align:middle}
-.so-chan{font-weight:500}.so-chan.facebook{color:var(--so-fb)}.so-chan.instagram{color:var(--so-ig)}.so-chan.linkedin{color:var(--so-li)}
-.so-quick{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}.so-quick button{font-size:12px;padding:2px 8px}
+.so-phone .md .n{position:absolute;top:6px;right:6px;background:rgba(17,19,24,.7);color:var(--ink-text);border-radius:var(--r-pill);padding:0 7px;font-size:10px}
+.so-phone .cp{padding:8px 10px;white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:hidden;color:var(--text2)}
+.so-phone .cp.sub{color:var(--muted)}
+.so-phone .lk{margin:0 10px 10px;border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 8px;color:var(--muted);font-size:11px;word-break:break-all}
+.so-phone .ch{padding:4px 10px;background:var(--head);color:var(--muted);font-size:10.5px;font-weight:600}
+.so-res a{color:var(--accent);font-weight:600}
+.so-grid{width:100%}
+.so-grid th{height:40px;background:var(--head);color:var(--muted);font-size:11.5px;font-weight:600;border-right:0;border-bottom:1px solid var(--line2);cursor:default}
+.so-grid td{height:46px;border-right:0;color:var(--text2)}
+.so-grid th:first-child,.so-grid td:first-child{padding-left:18px}
+.so-grid tbody tr:first-child td{background:var(--head)}
+.so-grid td.txt{max-width:340px;color:var(--text)}
+.so-grid td button{height:28px;padding:0 10px;font-size:12px}
+.so-grid img{width:34px;height:34px;object-fit:cover;border-radius:var(--r-sm);vertical-align:middle}
+.so-chan{font-weight:600}.so-chan.facebook{color:var(--so-fb)}.so-chan.instagram{color:var(--so-ig)}.so-chan.linkedin{color:var(--so-li)}
+.so-quick{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}.so-quick button{height:26px;font-size:12px;padding:0 9px;border-radius:var(--r-pill)}
 .so-libbar{display:flex;gap:6px;flex-wrap:wrap}.so-libbar select{flex:1;min-width:120px}
-.so-tagsug{margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center}.so-tagsug .chip{border:0;cursor:pointer;font-weight:400}
+.so-tagsug{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.so-tagsug .chip{border:0;cursor:pointer;font-weight:600;font-size:11.5px;height:24px;padding:0 9px;border-radius:var(--r-pill);background:var(--accent-bg);color:var(--accent)}
 .so-day,.so-slot{cursor:cell}
-.so-dayv{grid-template-columns:52px minmax(0,1fr)}
-.so-list{padding:6px 14px}.so-lday{margin-bottom:10px}.so-ldh{font-weight:500;padding:6px 0;border-bottom:1px solid var(--line2);display:flex;gap:10px}
-.so-lrow{display:flex;gap:8px;align-items:center;padding:3px 0}.so-lrow .so-ev{width:auto;max-width:640px;margin:0}
-.so-feed{display:grid;grid-template-columns:repeat(3,minmax(0,160px));gap:3px;padding:12px 16px}
-.so-ft{aspect-ratio:4/5;background:var(--head);position:relative;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)}
+.so-dayv{grid-template-columns:56px minmax(0,1fr)}
+.so-list{padding:8px 18px 14px}.so-lday{margin-bottom:12px}
+.so-ldh{font-weight:600;font-size:13.5px;color:var(--text);padding:10px 0 8px;border-bottom:1px solid var(--line2);margin-bottom:6px;display:flex;gap:10px;align-items:center}
+.so-lrow{display:flex;gap:10px;align-items:center;padding:3px 0}.so-lrow .so-ev{width:auto;max-width:640px;margin:0}
+.so-feed{display:grid;grid-template-columns:repeat(3,minmax(0,170px));gap:4px;padding:16px 18px;justify-content:start}
+.so-ft{aspect-ratio:4/5;background:linear-gradient(160deg,var(--accent-bg),var(--violet-bg));position:relative;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--muted);border-radius:var(--r-xs);transition:filter var(--t) var(--ease)}
+.so-ft:hover{filter:brightness(.96)}
 .so-ft img{width:100%;height:100%;object-fit:cover}.so-ft.plan{outline:2px dashed var(--accent);outline-offset:-2px}
-.so-fl{position:absolute;left:3px;bottom:3px;right:3px;background:#202124cc;color:#fff;font-size:10.5px;padding:1px 4px;border-radius:3px}
-.so-h{font-weight:500;font-size:15px;margin:18px 0 6px;display:flex;gap:8px;align-items:center}
-.so-heat{display:grid;grid-template-columns:40px repeat(24,minmax(14px,1fr));gap:2px;max-width:900px}
-.so-heat .hh,.so-heat .hd{font-size:11px;color:var(--muted)}.so-heat .hc{height:20px;border-radius:2px;background:color-mix(in srgb,var(--accent) calc(var(--a) * 100%),var(--line2))}
-.so-heat .hc.top{outline:2px solid var(--text);outline-offset:-1px}
-.so-alposts{max-height:200px;overflow:auto;border:1px solid var(--line2);border-radius:4px;padding:4px 8px;margin:6px 0}
+.so-fl{position:absolute;left:4px;bottom:4px;right:4px;background:rgba(17,19,24,.72);color:var(--ink-text);font-size:10.5px;padding:3px 6px;border-radius:var(--r-sm);display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.so-ana{padding:18px 20px}
+.so-main:has(> .so-ana:not(.so-lib)){background:transparent;box-shadow:none;border-radius:0}
+.so-main>.so-ana:not(.so-lib){padding:0 0 8px}
+.so-ana .tile .hint{font-size:12px;color:var(--muted)}
+.so-anabar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.so-anabar .hint,.so-ana .hint{margin:0 0 8px;font-size:12px;font-weight:500}
+.so-anabar .hint{margin:0}
+.so-ana .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:8px}
+.so-ana .tile{border:0;border-radius:var(--r-lg);padding:16px 18px;background:var(--panel);box-shadow:var(--sh-card)}
+.so-ana .tile .k{font-size:13px;font-weight:500;color:var(--text2)} .so-ana .tile .v{font-size:28px;font-weight:600;letter-spacing:-.5px;margin:6px 0 4px;color:var(--text)}
+.so-h{font-weight:600;font-size:16px;color:var(--text);margin:22px 0 8px;display:flex;gap:10px;align-items:center}
+.so-h select{font-size:13px;font-weight:600}
+.so-tw{overflow:auto;border-radius:var(--r-lg);box-shadow:var(--sh-card);background:var(--panel)}
+.so-tw table{width:100%}
+.so-tw th{height:38px;background:var(--head);color:var(--muted);font-size:11.5px;font-weight:600;border-right:0;border-bottom:1px solid var(--line2);cursor:default}
+.so-tw td{height:40px;border-right:0;color:var(--text2)}
+.so-tw th:first-child,.so-tw td:first-child{padding-left:16px}
+.so-tw tbody tr:last-child td{border-bottom:0}
+.so-heat{display:grid;grid-template-columns:40px repeat(24,minmax(14px,1fr));gap:3px;max-width:920px;padding:14px 16px;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card)}
+.so-heat .hh,.so-heat .hd{font-size:10.5px;font-weight:500;color:var(--faint);align-self:center}
+.so-heat .hc{height:20px;border-radius:var(--r-xs);background:color-mix(in srgb,var(--accent) calc(var(--a) * 100%),var(--sunken));transition:transform var(--t) var(--ease)}
+.so-heat .hc:hover{transform:scale(1.15)}
+.so-heat .hc.top{box-shadow:0 0 0 2px var(--panel),0 0 0 3.5px var(--ink)}
+.so-lib .so-lrow{padding:8px 0;border-bottom:1px solid var(--line2)}
+.so-lib textarea{margin:8px 0 0}
+.so-lib details summary{cursor:pointer;color:var(--accent);font-weight:600}
+.so-alposts{max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);padding:6px 10px;margin:8px 0}
 `;
 
 const pad = n => String(n).padStart(2, "0");
@@ -106,11 +173,16 @@ const sapi = (k, body) => api(A + k, body);
 function render(el){
   if (!document.getElementById("so-css")){ const st = document.createElement("style"); st.id = "so-css"; st.textContent = CSS; document.head.appendChild(st) }
   el.innerHTML = `<div class="so-root">
-    <div class="toolbar">
+    <div class="so-head"><div class="ttl"><h1>SoMe</h1><p>Organic Facebook, Instagram and LinkedIn posts. Post now, Schedule and Cancel are your own buttons.</p></div>
+      <div class="acts"><span id="soTest"></span>
+      <button id="soRefresh" title="Read posts and insights from Meta again">Refresh</button>
+      <button id="soSet">SoMe settings</button>
+      <button class="primary" id="soNew">New post</button></div></div>
+    <div class="toolbar so-bar">
       <div class="so-seg" id="soView"><button data-v="calendar">Calendar</button><button data-v="list">List</button><button data-v="feed">Feed</button><button data-v="published">Published</button><button data-v="analytics">Analytics</button><button data-v="library">Library</button></div>
       <span id="soCalCtl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <div class="so-seg" id="soMode"><button data-m="month">Month</button><button data-m="week">Week</button><button data-m="day">Day</button></div>
-        <button id="soPrev" title="Previous">‹</button><button id="soToday">Today</button><button id="soNext" title="Next">›</button>
+        <button id="soPrev" class="so-nav" title="Previous">‹</button><button id="soToday">Today</button><button id="soNext" class="so-nav" title="Next">›</button>
         <span class="so-title" id="soTitle"></span>
         <select id="soFCh" title="Channel"><option value="">All channels</option>${CHS.map(c => `<option value="${c}">${CH[c]}</option>`).join("")}</select>
         <select id="soFSt" title="Status"><option value="">All statuses</option>${["draft","scheduled","published","failed","missed","needs_checking","not_scheduled"].map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1).replace("_", " ")}</option>`).join("")}</select></span>
@@ -118,10 +190,6 @@ function render(el){
         <select id="soPubDays"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
         <select id="soPubCh"><option value="">Facebook + Instagram</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option></select>
         <div class="so-seg" id="soCols"><button data-c="data">Data</button><button data-c="edit">Edit</button></div></span>
-      <span style="flex:1"></span><span id="soTest"></span>
-      <button id="soRefresh" title="Read posts and insights from Meta again">Refresh</button>
-      <button id="soSet">SoMe settings</button>
-      <button class="primary" id="soNew">New post</button>
     </div>
     <div class="so-body"><div class="so-main" id="soMain"><div class="empty">Loading ...</div></div><div class="so-side" id="soSide"></div></div></div>`;
   const $$ = s => el.querySelector(s);
@@ -347,14 +415,14 @@ function drawEditor(){
   const res = Object.entries(p.results || {});
   const whenVal = p.when ? localISO(new Date(p.when)) : "";
   side.innerHTML = `<div class="so-ed" ${p.id ? `data-team-coll="social" data-team-id="${esc(p.id)}" data-team-label="${esc(p.title || (p.caption || "").slice(0, 60))}"` : ""}>
-    <div style="display:flex;justify-content:space-between;align-items:center"><h3>${p.id ? "Post" : "New post"} ${stChip(p.status || "draft")}</h3><button id="soClose" title="Close">Close</button></div>
+    <div class="so-edh"><h3>${p.id ? "Post" : "New post"} ${stChip(p.status || "draft")}</h3><button id="soClose" title="Close">Close</button></div>
     ${ro ? `<div class="so-warn">Scheduled: cancel it to edit. You can still move it in the calendar.</div>` : ""}
     ${res.length ? `<div class="so-res">${res.map(([c, r]) => `<div class="${r.error ? "so-prob" : "so-okk"}"><b>${esc(CH[c])}</b>: ${esc(r.status)}${r.scheduled_for && r.status === "scheduled" ? " for " + esc(fmtDate(r.scheduled_for)) + (r.via === "vps" ? " (VPS job)" : r.via === "local" ? " (Studio on this Mac)" : " (Meta)") : ""}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">open</a>` : ""}${r.error ? " · " + esc(r.error) : ""}${r.warning ? " · " + esc(r.warning) : ""}${r.status === "missed" ? " · use Post now if you still want it" : ""}${r.status === "needs_checking" ? ` <button data-checkagain="${esc(c)}">Check again</button>` : ""}</div>`).join("")}</div>` : ""}
     <div class="so-row"><label>Name in Studio (not posted)</label><input type="text" id="so_title" value="${esc(p.title)}" ${dis}></div>
     <div class="so-row"><label>Channels</label><div class="so-ticks">${CHS.map(c => `<label><input type="checkbox" data-chan="${c}" ${p.channels.includes(c) ? "checked" : ""} ${dis}> ${CH[c]}${c === "linkedin" && !li ? ` <span class="chip">not connected</span>` : ""}</label>`).join("")}</div></div>
     <div class="so-row"><label>Date and time (this Mac's time zone)</label><input type="datetime-local" id="so_when" value="${esc(whenVal)}" ${dis}>
       ${ro ? "" : `<div class="so-quick" id="soQuick">${(SO.quick || []).map(x => `<button data-qt="${esc(x.when)}">${esc(x.label)}</button>`).join("")}${p.id ? `<button data-addq="1" title="Give it the next free posting slot of its channels">Add to queue</button>` : ""}</div>`}</div>
-    <div class="so-row"><label style="display:flex;gap:6px;color:var(--text)"><input type="checkbox" id="so_appr" ${p.approval ? "checked" : ""} ${dis}> Needs approval before it goes out</label>
+    <div class="so-row"><label class="inl"><input type="checkbox" id="so_appr" ${p.approval ? "checked" : ""} ${dis}> Needs approval before it goes out</label>
       ${p.approval ? `<div class="so-consent">${p.approval === "approved" ? "Approved." : "Waiting for approval."} <input type="text" id="so_note" value="${esc(p.note)}" placeholder="Note for the approver" style="width:100%;margin-top:4px" ${dis}>${p.approval === "needed" && p.id ? ` <button id="soApprove" style="margin-top:4px">Approve</button>` : ""}</div>` : ""}</div>
     ${ro ? "" : `<div class="so-row so-libbar"><select id="soTpl"><option value="">Insert a template ...</option>${((SO.lib || {}).templates || []).map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("")}</select>
       <select id="soHs"><option value="">Add a hashtag set ...</option>${((SO.lib || {}).hashtag_sets || []).map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("")}</select>
@@ -462,7 +530,7 @@ function phones(){
     const md = first ? `<div class="md">${first.kind === "image" ? `<img src="${esc(mediaUrl(first.media_id))}" alt="${esc(p.alt_text)}">` : `<span>${c === "instagram" ? "Reel" : "Video"}</span>`}${m.length > 1 ? `<span class="n">1/${m.length}</span>` : ""}</div>` : (c === "instagram" ? `<div class="md"><span>Needs an image or video</span></div>` : "");
     const link = c !== "instagram" && p.link ? `<div class="lk">${esc(p.link)}</div>` : "";
     return `<div class="so-phone ${c}"><div class="bar"></div><div class="ch">${CH[c]} preview</div><div class="hd"><span class="av"></span>${esc(c === "instagram" ? ig : name)}</div>
-      ${c === "instagram" ? md + `<div class="cp"><b>${esc(ig)}</b> ${esc(textFor(p, c))}</div>` + (p.first_comment ? `<div class="cp" style="color:#5f6368">${esc(ig)} ${esc(p.first_comment)}</div>` : "")
+      ${c === "instagram" ? md + `<div class="cp"><b>${esc(ig)}</b> ${esc(textFor(p, c))}</div>` + (p.first_comment ? `<div class="cp sub">${esc(ig)} ${esc(p.first_comment)}</div>` : "")
         : `<div class="cp">${esc(textFor(p, c))}</div>` + md + link}</div>`;
   }).join("") || `<div class="hint">Tick a channel.</div>`;
 }
@@ -652,14 +720,14 @@ async function loadAnalytics(){
   let a, hm, comp;
   try { [a, hm, comp] = await Promise.all([sapi("analytics?" + qs({days: SO.anaDays})), sapi("heatmap?" + qs({channel: SO.heatCh})), sapi("competitors")]) }
   catch(e) { main.innerHTML = `<div class="so-prob">${esc(e.message)}</div>`; return }
-  const tbl = (head, rows) => `<div style="overflow:auto"><table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const tbl = (head, rows) => `<div class="so-tw"><table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
   const tiles = Object.entries(a.channels).map(([c, v]) => `<div class="tile"><div class="k">${esc(CH[c])}</div><div class="v">${num(v.reach)}</div><div class="hint" style="margin:0">reach · ${num(v.posts)} posts · ${v.engagement_rate ?? "-"}% engagement rate${v.followers != null ? ` · ${num(v.followers)} followers` : ""}${v.growth != null ? ` (${v.growth >= 0 ? "+" : ""}${num(v.growth)})` : ""}${v.link_clicks != null ? ` · ${num(v.link_clicks)} link clicks` : ""}</div></div>`).join("");
   const top = new Set((hm.top || []).map(t => t.day + ":" + t.hour));
   const flat = hm.cells.flat(), lo = Math.min(...flat), hi = Math.max(...flat), sh = v => hi > lo ? ((v - lo) / (hi - lo)).toFixed(3) : 0;  // full colour range
   const heat = `<div class="so-heat"><div></div>${[...Array(24)].map((_, h) => `<div class="hh">${h % 3 === 0 ? pad(h) : ""}</div>`).join("")}
     ${hm.cells.map((row, d) => `<div class="hd">${hm.days[d]}</div>` + row.map((v, h) => `<div class="hc ${top.has(d + ":" + h) ? "top" : ""}" style="--a:${sh(v)}" title="${hm.days[d]} ${pad(h)}:00 · score ${Math.round(v * 100)}"></div>`).join("")).join("")}</div>`;
-  main.innerHTML = `<div style="padding:12px 16px">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><select id="soAnaDays">${["7","14","30","90"].map(d => `<option value="${d}" ${SO.anaDays === d ? "selected" : ""}>Last ${d} days</option>`).join("")}</select>
+  main.innerHTML = `<div class="so-ana">
+    <div class="so-anabar"><select id="soAnaDays">${["7","14","30","90"].map(d => `<option value="${d}" ${SO.anaDays === d ? "selected" : ""}>Last ${d} days</option>`).join("")}</select>
       <button id="soReport">Download report (HTML)</button><span class="hint" style="margin:0">Organic posts only. Engagement rate = engagement / reach of the same posts.</span></div>
     <div class="tiles">${tiles}</div>
     <h3 class="so-h">Best time to post <select id="soHeatCh">${["instagram","facebook"].map(c => `<option value="${c}" ${SO.heatCh === c ? "selected" : ""}>${CH[c]}</option>`).join("")}</select></h3>
@@ -685,8 +753,8 @@ async function loadLibrary(){
   const main = document.getElementById("soMain");
   try { SO.lib = await sapi("library") } catch(e) { main.innerHTML = `<div class="so-prob">${esc(e.message)}</div>`; return }
   const L = SO.lib, posts = (SO.state.posts || []);
-  main.innerHTML = `<div style="padding:12px 16px">
-    <h3 class="so-h">Bulk import (CSV)</h3><p class="hint">Columns: date, time, channels, caption, link, first_comment, hashtags, media (a file path on this Mac or an https address; several split by |). Dates 2026-11-25 or 25/11/2026, times 09:00, channels facebook, instagram, linkedin (or fb, ig, li). Import makes drafts only: nothing is scheduled.</p>
+  main.innerHTML = `<div class="so-ana so-lib">
+    <h3 class="so-h" style="margin-top:0">Bulk import (CSV)</h3><p class="hint">Columns: date, time, channels, caption, link, first_comment, hashtags, media (a file path on this Mac or an https address; several split by |). Dates 2026-11-25 or 25/11/2026, times 09:00, channels facebook, instagram, linkedin (or fb, ig, li). Import makes drafts only: nothing is scheduled.</p>
     <input type="file" id="soCsvFile" accept=".csv,text/csv"> <textarea id="soCsv" rows="4" placeholder="date,time,channels,caption,link&#10;2026-11-25,09:00,fb;ig,Seven nights in the northern Red Sea.,https://www.masterliveaboards.com/">${esc(SO.csv || "")}</textarea>
     <div style="margin:6px 0"><button id="soCsvPv">Preview</button> <button class="primary" id="soCsvGo" disabled>Make drafts</button></div><div id="soCsvOut"></div>
     <h3 class="so-h">Templates</h3>${(L.templates || []).map(t => `<div class="so-lrow"><b>${esc(t.name)}</b> <span class="hint" style="margin:0">${esc((t.caption || "").slice(0, 90))}</span> <button class="link" data-rmlib="templates:${esc(t.id)}">Remove</button></div>`).join("") || `<p class="hint">None yet: use Save as template in the post editor.</p>`}

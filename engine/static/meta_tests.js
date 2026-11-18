@@ -43,8 +43,8 @@
 
   function draw(el){
     if (!T.list){ el.innerHTML = `<div class="empty">${T.busy ? "Loading tests from Meta ..." : "No tests loaded."}</div>`; return }
-    const head = `<div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <b>Tests on Meta</b><span class="hint" style="margin:0">A/B tests and creative tests on the business behind this ad account. New tests and ends go into the draft; Push live sends them.</span>
+    const head = `<div style="padding:14px 16px 10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <b style="font-size:16px;font-weight:600">Tests on Meta</b><span class="hint" style="margin:0">A/B tests and creative tests on the business behind this ad account. New tests and ends go into the draft; Push live sends them.</span>
       <span style="flex:1"></span>
       <button data-t-new="split">New A/B test</button>
       <button data-t-new="creative">New creative test</button><button data-t-refresh="1">Refresh</button></div>`;
@@ -83,7 +83,7 @@
     <p class="hint">Days in the ad account's time zone. Meta suggests 7 to 30 days. A test that starts today starts 15 minutes after the push.</p>`;
   const noteRow = `<div class="row"><label>Why (optional)</label><input id="t_note" placeholder="Shown in the draft and the changelog"></div>`;
   const honest = `<p class="hint">A test can't be removed from Meta once it is pushed, only ended, and Meta can't test-run it first: Push live checks the objects with reads. Studio doesn't switch anything on for a test: paused objects deliver nothing in it.</p>`;
-  const picks = (rows, label) => `<div style="max-height:260px;overflow:auto;border:1px solid var(--line2);padding:6px">${rows.map(r =>
+  const picks = (rows, label) => `<div style="max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);padding:6px 10px">${rows.map(r =>
     `<label class="tick" style="margin:2px 0"><input type="checkbox" data-t-pick="${esc(r.id)}" data-t-name="${esc(label(r))}"> ${esc(label(r))} <span class="hint">${esc(r.status || "")}</span></label>`).join("") || `<div class="hint">Nothing to pick.</div>`}</div>`;
   const picked = () => [...document.querySelectorAll("[data-t-pick]:checked")].map(b => ({id: b.dataset.tPick, name: b.dataset.tName}));
   const grid = kind => api("/api/grid?" + qs({acct: S.acct, kind, status: "active"}));

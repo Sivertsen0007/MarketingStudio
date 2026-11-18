@@ -100,7 +100,7 @@ Marketing Studio updates itself from this repository's GitHub Releases.
   signed with **the same certificate** as the app you have. Then it swaps the app and restarts. If anything fails, your old version stays.
 - Your drafts, history and keys are not touched by an update: they live outside the app (see [Where your data lives](#where-your-data-lives)).
 
-The version you run is shown bottom left (*Marketing Studio v0.1.2*).
+The version you run is shown bottom left (*Marketing Studio v0.2.1*).
 
 **Which copies get updates**
 
@@ -121,7 +121,7 @@ have, so nobody else can push code into your copy.
 |---|---|
 | **Overview** (top left) | Switches between the dashboard and the editor |
 | **Ads · Alerts · Email · SEO · SoMe · Activity** | The areas |
-| **Account picker** | Google Ads accounts and Meta ad accounts. Meta accounts can be added in Settings |
+| **Account picker** | First in the bar under the top bar, next to when the data was fetched: switch between your Google Ads accounts and Meta ad accounts. Meta accounts can be added in Settings |
 | **↻** | Re-reads the current account from the API |
 | **Refresh data ▾** | Fetch again per source: one Google account, one Meta account, Email, SEO, SoMe, Activity, rates, or all |
 | **Push** | Turns blue with a count when the draft has changes. Opens the push summary |
@@ -714,7 +714,7 @@ The app bundle holds no personal data, and the build refuses to package anything
 Studio fetches each source **once** and keeps it until you ask for fresh data: **↻** for the current account, or **Refresh data ▾**
 for one source or all of them. Nothing is fetched in the background on a timer, on page load or when you switch tabs. The exceptions:
 a period you have never fetched is fetched once, and after **Push live** or **Undo** that account is read again so you see the live values.
-The subbar shows when the data you are looking at was fetched.
+The bar under the top bar shows when the data you are looking at was fetched, next to the account picker.
 
 That is the default, **Manual**. In **Settings > Background jobs**, *Data refresh* can be set to **Automatic**: cached data
 then expires on its own, and the background jobs that fetch data (the alert checks) run on their

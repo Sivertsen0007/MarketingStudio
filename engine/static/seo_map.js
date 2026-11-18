@@ -2,37 +2,58 @@
 // Claude proposes changes over MCP (seo_map_propose); they show here as proposals the user accepts or rejects.
 (() => {
 const CSS = `
-.tm-sub{display:flex;gap:8px;align-items:center;padding:8px 14px;background:var(--head);border-bottom:1px solid var(--line);flex-wrap:wrap;font-size:13px}
-.tm-cov{display:inline-flex;gap:6px;align-items:center;padding:3px 10px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
-.tm-cov b{font-weight:500}
-.tm-wrap{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 420px}
-.tm-wrap.nopanel{grid-template-columns:minmax(0,1fr) 0}
-.tm-main{overflow:auto;min-width:0}
-.tm-side{border-left:1px solid var(--line);overflow:auto;padding:14px 16px;background:var(--side,var(--panel))}
+.tm-sub{display:flex;gap:8px;align-items:center;padding:0 28px 12px;flex-wrap:wrap;font-size:13px}
+.tm-sub input[type=search]{min-width:220px}
+.tm-imp{display:inline-flex;align-items:center;height:34px;padding:0 14px;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1);font-weight:600;color:var(--text);cursor:pointer;transition:background var(--t) var(--ease)}
+.tm-imp:hover{background:var(--hover)}
+.tm-covs{display:flex;gap:12px;padding:0 28px 12px;flex-wrap:wrap}
+.tm-covs:empty{display:none}
+.tm-cov{flex:1;min-width:240px;max-width:380px;display:grid;grid-template-columns:auto auto 1fr;gap:2px 10px;align-items:baseline;padding:10px 16px 12px;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);font-size:12px;font-weight:500;color:var(--muted)}
+.tm-cov b{font-size:20px;font-weight:600;letter-spacing:-.4px;color:var(--text);line-height:1.1}
+.tm-bar{grid-column:1/-1;height:6px;border-radius:var(--r-pill);background:var(--accent-soft);overflow:hidden;margin-top:6px}
+.tm-bar i{display:block;height:100%;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--accent-soft),var(--accent-2))}
+.tm-wrap{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:12px;padding:0 28px 24px}
+.tm-wrap.nopanel{grid-template-columns:minmax(0,1fr) 0;gap:0}
+.tm-main{overflow:auto;min-width:0;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card)}
+.tm-side{overflow:auto;padding:18px 20px;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card)}
+.tm-wrap.nopanel .tm-side{padding:0;box-shadow:none}
+.tm-side .tm-shd{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.tm-side .tm-shd b{font-size:16px;font-weight:600;color:var(--text)}
+.tm-side .hint{font-size:12px;font-weight:500}
 .tm-main table{width:100%}
-.tm-main tr.tm-row{cursor:pointer} .tm-main tr.tm-row:hover td{background:var(--hover)}
+.tm-main th{height:40px;background:var(--head);color:var(--muted);font-size:11.5px;font-weight:600;border-right:0;border-bottom:1px solid var(--line2);cursor:default}
+.tm-main td{height:40px;border-right:0;color:var(--text2)}
+.tm-main th:first-child,.tm-main td:first-child{padding-left:18px}
+.tm-main td.wrap{white-space:normal;line-height:1.4;max-width:300px;font-size:12px;color:var(--muted)}
+.tm-main tr.tm-row{cursor:pointer;transition:background var(--t) var(--ease)} .tm-main tr.tm-row:hover td{background:var(--hover)}
 .tm-main tr.tm-row.sel td{background:var(--accent-bg)}
+.tm-main tr.tm-row.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .tm-main tr.dim td{opacity:.45}
-.tm-t{display:flex;align-items:center;gap:6px;white-space:nowrap}
-.tm-type{display:inline-block;min-width:18px;text-align:center;font-size:10px;font-weight:700;border-radius:3px;padding:1px 4px;background:var(--line2);color:var(--text2)}
-.tm-type.root{background:#1a73e8;color:#fff} .tm-type.hub{background:#5e35b1;color:#fff} .tm-type.commercial{background:#e37400;color:#fff}
-.tm-st{font-size:11px;font-weight:500;padding:2px 8px;border-radius:10px;white-space:nowrap}
-.tm-st.gap{background:var(--bad-bg,#fce8e6);color:var(--bad,#c5221f)} .tm-st.update{background:var(--warn-bg,#fef7e0);color:#8a5a00} .tm-st.ok{background:var(--ok-bg,#e6f4ea);color:var(--ok,#188038)}
-.tm-sec{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.tm-prop{margin:10px 14px 0;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-bg)}
-.tm-prop .r{display:flex;gap:8px;align-items:center;margin:4px 0;flex-wrap:wrap}
-.tm-prop .r .s{flex:1;min-width:200px}
-.tm-f{margin-bottom:10px} .tm-f label{display:block;color:var(--muted);font-size:12px;margin-bottom:3px} .tm-f input,.tm-f textarea,.tm-f select{width:100%;box-sizing:border-box}
-.tm-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.tm-iss{font-size:12px;margin:3px 0;padding:5px 8px;border-radius:4px;background:var(--warn-bg,#fef7e0)} .tm-iss.gap{background:var(--bad-bg,#fce8e6)}
-.tm-q{width:100%;font-size:12px} .tm-q td{padding:3px 4px;border-bottom:1px solid var(--line2)}
-.tm-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.tm-empty{padding:40px 20px;text-align:center;color:var(--muted)}
-.tm-site{font-size:12px;color:var(--text2);padding:6px 14px 0}
-.tm-site b{font-weight:500}
-.tm-page{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0 12px;background:var(--panel)}
-.tm-page .h{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
-.tm-dr{font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;background:var(--draft-bg,#e8f0fe);color:var(--text)}
+.tm-t{display:flex;align-items:center;gap:8px;white-space:nowrap;color:var(--text);font-weight:500}
+.tm-type{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:none;font-size:10px;font-weight:700;border-radius:var(--r-sm);background:var(--sunken);color:var(--muted)}
+.tm-type.root{background:var(--accent);color:var(--ink-text)} .tm-type.hub{background:var(--violet-bg);color:var(--violet)} .tm-type.commercial{background:var(--warn-bg);color:var(--c4)}
+.tm-st{display:inline-flex;align-items:center;height:22px;font-size:11px;font-weight:600;padding:0 8px;border-radius:var(--r-sm);white-space:nowrap}
+.tm-st.gap{background:var(--bad-bg);color:var(--bad)} .tm-st.update{background:var(--warn-bg);color:var(--warn)} .tm-st.ok{background:var(--ok-bg);color:var(--ok)}
+.tm-sec{font-size:10.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.tm-prop{margin:0 28px 12px;padding:14px 18px;border-radius:var(--r-lg);background:var(--accent-bg);box-shadow:0 0 0 1px var(--accent-soft)}
+.tm-prop>b{color:var(--accent);font-weight:600}
+.tm-prop .hint{margin:0 0 0 6px;font-size:12px}
+.tm-prop .r{display:flex;gap:8px;align-items:center;margin:8px 0 0;flex-wrap:wrap}
+.tm-prop .r .s{flex:1;min-width:200px;font-size:13px;color:var(--text2)}
+.tm-f{margin-bottom:12px} .tm-f label{display:block;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:5px} .tm-f input,.tm-f textarea,.tm-f select{width:100%;box-sizing:border-box}
+.tm-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tm-iss{font-size:12px;font-weight:500;margin:4px 0;padding:7px 10px;border-radius:var(--r-sm);background:var(--warn-bg);color:var(--warn)} .tm-iss.gap{background:var(--bad-bg);color:var(--bad)}
+.tm-q{width:100%;font-size:12px;margin:0 0 6px} .tm-q th{height:30px;background:var(--head);color:var(--muted);font-weight:600;border-right:0;font-size:11px}
+.tm-q td{height:30px;padding:0 6px;border-right:0;border-bottom:1px solid var(--line2)}
+.tm-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.tm-empty{padding:48px 20px;text-align:center;color:var(--muted);font-weight:500;line-height:1.6}
+.tm-site{font-size:12.5px;font-weight:500;color:var(--muted);padding:0 28px 12px}
+.tm-site b{font-weight:600;color:var(--text2)}
+.tm-page{border-radius:var(--r-md);padding:12px 14px;margin:0 0 12px;background:var(--head)}
+.tm-page .h{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;font-size:13px}
+.tm-page a{color:var(--accent);font-weight:600;text-decoration:none;word-break:break-all}
+.tm-dr{display:inline-flex;align-items:center;height:20px;font-size:10.5px;font-weight:600;padding:0 7px;border-radius:var(--r-sm);background:var(--draft-bg);color:var(--draft)}
+.tm-unm{padding:14px 18px 6px}
 `;
 if (!document.getElementById("tm-css")){ const st = document.createElement("style"); st.id = "tm-css"; st.textContent = CSS; document.head.appendChild(st) }
 
@@ -48,13 +69,12 @@ async function load(force){
   draw();
 }
 function shell(){
-  S.el.innerHTML = `<div class="tm-sub">
-      <span id="tmCov"></span>
+  S.el.innerHTML = `<div class="tm-covs" id="tmCov"></div><div class="tm-sub">
       <div class="fpills" id="tmPills"></div>
       <input type="search" id="tmSearch" placeholder="Search nodes, queries, URLs" value="${esc(S.search)}">
       <span class="spacer"></span>
       <button id="tmSite" title="Central entity, source context, central search intent">Site</button>
-      <label class="tb" style="cursor:pointer;padding:5px 10px;border:1px solid var(--line);border-radius:4px">Import CSV<input type="file" id="tmCsv" accept=".csv,text/csv" style="display:none"></label>
+      <label class="tm-imp">Import CSV<input type="file" id="tmCsv" accept=".csv,text/csv" style="display:none"></label>
       <button id="tmAdd" class="primary">+ Node</button>
     </div><div id="tmSiteLine" class="tm-site"></div><div id="tmProps"></div>
     <div class="tm-wrap" id="tmWrap"><div class="tm-main" id="tmMain"></div><div class="tm-side" id="tmSide"></div></div>`;
@@ -71,7 +91,7 @@ function draw(){
   const d = S.data; if (!d) return;
   const $ = s => S.el.querySelector(s);
   const cov = d.coverage || {};
-  $("#tmCov").innerHTML = ["core", "outer"].map(s => cov[s] && cov[s].nodes ? `<span class="tm-cov" title="Live = the node has a page with impressions or a WordPress post"><span class="tm-sec">${s}</span><b>${cov[s].pct}%</b> live · ${cov[s].gaps} gaps · ${cov[s].update} to update</span>` : "").join(" ");
+  $("#tmCov").innerHTML = ["core", "outer"].map(s => cov[s] && cov[s].nodes ? `<span class="tm-cov" title="Live = the node has a page with impressions or a WordPress post"><span class="tm-sec">${s}</span><b>${cov[s].pct}%</b><span>live · ${cov[s].gaps} gaps · ${cov[s].update} to update</span><span class="tm-bar"><i style="width:${Math.max(0, Math.min(100, +cov[s].pct || 0))}%"></i></span></span>` : "").join(" ");
   const cnt = k => d.nodes.filter(n => k === "all" || (k === "draft" ? n.new_post || n.in_draft : n.state === k)).length;
   $("#tmPills").innerHTML = [["all", "All"], ["gap", "Gaps"], ["update", "Needs update"], ["ok", "OK"], ["draft", "In draft"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l} <span class="n">${cnt(k)}</span></button>`).join("")
     + `<button data-f="unmapped" class="${S.filter === "unmapped" ? "on" : ""}" title="Search Console demand with no node in the map">Unmapped demand <span class="n">${(d.unmapped || []).length}</span></button>`;
@@ -123,13 +143,13 @@ function drawMain(){
       <td><span class="tm-t" style="padding-left:${depth * 18}px"><span class="tm-type ${n.type}" title="${esc(n.type)}">${TY[n.type] || "?"}</span>${esc(n.title)}${n.children ? ` <span class="hint">(${n.children})</span>` : ""}${n.new_post ? ` <span class="tm-dr" title="A new page is waiting in the SEO draft">new page in draft</span>` : n.in_draft ? ` <span class="tm-dr" title="Edits waiting in the SEO draft">${n.in_draft} in draft</span>` : ""}</span></td>
       <td><span class="tm-sec">${esc(n.section)}</span></td><td class="num">${N(n.clicks)}</td><td class="num">${dc(n.delta_clicks)}</td><td class="num">${N(n.impressions)}</td>
       <td class="num">${n.position ? n.position.toFixed(1) : ""}</td><td class="num">${N(n.sessions)}</td>
-      <td><span class="tm-st ${n.state}">${STATE[n.state]}</span></td><td class="wrap" style="font-size:12px;color:var(--text2)">${esc((n.issues || []).map(i => i.text).join(" ").slice(0, 140))}</td></tr>`).join("")}</tbody></table>`
+      <td><span class="tm-st ${n.state}">${STATE[n.state]}</span></td><td class="wrap">${esc((n.issues || []).map(i => i.text).join(" ").slice(0, 140))}</td></tr>`).join("")}</tbody></table>`
     : `<div class="tm-empty">Nothing matches this filter.</div>`;
   main.onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr){ S.sel = tr.dataset.id; drawMain(); openNode(S.sel) } };
 }
 function drawUnmapped(main){
   const u = S.data.unmapped || [];
-  main.innerHTML = u.length ? `<div style="padding:10px 14px" class="hint">Pages with Search Console impressions that no node points at, with their top queries. Add one as a node, or ask Claude to fit them into the map.</div>
+  main.innerHTML = u.length ? `<div class="hint tm-unm">Pages with Search Console impressions that no node points at, with their top queries. Add one as a node, or ask Claude to fit them into the map.</div>
     <table><thead><tr><th>Page</th><th class="num">Impr.</th><th class="num">Clicks</th><th>Top queries</th><th></th></tr></thead><tbody>
     ${u.map((g, i) => `<tr><td>${esc(g.page)}</td><td class="num">${N(g.impressions)}</td><td class="num">${N(g.clicks)}</td>
       <td class="wrap" style="font-size:12px">${esc(g.queries.slice(0, 6).map(q => q.query).join(", "))}</td><td><button class="link" data-add="${i}">Add as node</button></td></tr>`).join("")}</tbody></table>`
@@ -145,7 +165,7 @@ function openNode(id, parent, preset){
   Object.assign(side.dataset, {teamColl: "seo:map_nodes", teamId: id || "", teamLabel: n.title || ""});  // [team live] presence, locks, claim
   const opts = (sel, list) => list.map(v => `<option ${v === sel ? "selected" : ""}>${v}</option>`).join("");
   const parents = d.nodes.filter(x => x.id !== n.id).sort((a, b) => a.title.localeCompare(b.title));
-  side.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><b>${id ? "Node" : "New node"}</b><button class="link" id="tmClose">Close</button></div>
+  side.innerHTML = `<div class="tm-shd"><b>${id ? "Node" : "New node"}</b><button class="link" id="tmClose">Close</button></div>
     ${id ? pageBox(n) : ""}
     ${(n.issues || []).map(i => `<div class="tm-iss ${i.level}">${esc(i.text)}</div>`).join("")}
     ${id && n.url ? `<p class="hint" style="margin:8px 0">${N(n.clicks)} clicks · ${N(n.impressions)} impressions · CTR ${((n.ctr || 0) * 100).toFixed(1)}% · position ${n.position ? n.position.toFixed(1) : "-"} · ${N(n.sessions)} sessions · ${N(n.key_events)} key events</p>` : ""}

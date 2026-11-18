@@ -43,14 +43,14 @@
   function draw(el){
     if (!A.data){ el.innerHTML = `<div class="empty">${A.busy ? "Loading audiences ..." : "No audiences loaded."}</div>`; return }
     const g = google();
-    const head = `<div style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <b>${g ? "Audience lists" : "Audiences"}</b>
+    const head = `<div style="padding:14px 16px 10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <b style="font-size:16px;font-weight:600">${g ? "Audience lists" : "Audiences"}</b>
       <input id="a_q" placeholder="Filter" value="${h(A.q)}" style="width:160px">
       <span style="flex:1"></span>
       ${g ? `<button data-a-new="website">New website list</button><button data-a-new="combined">New combined list</button>`
           : `<button data-a-new="website">New website audience</button><button data-a-new="engagement">New engagement audience</button><button data-a-new="lookalike">New lookalike</button>`}
       <button data-a-reload="1" title="Show the data Studio last fetched (Refresh data fetches it again)">Reload</button></div>
-      <p class="hint" style="padding:0 12px;margin:0 0 6px">${h(A.data.size_note)} ${h(A.data.customer_note)}. Everything here goes into the draft; Push live sends it.</p>`;
+      <p class="hint" style="padding:0 16px;margin:0 0 10px">${h(A.data.size_note)} ${h(A.data.customer_note)}. Everything here goes into the draft; Push live sends it.</p>`;
     const rs = rows();
     if (!rs.length){ el.innerHTML = head + `<div class="empty">No audiences${A.q ? " match the filter" : ""}.</div>`; return }
     const cols = g ? ["List", "Type", "Size (Search)", "Size (Display)", "Membership", "Rule", "Used by", "Status", ""]

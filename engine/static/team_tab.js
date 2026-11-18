@@ -13,29 +13,37 @@
   const areaName = a => AREA[a] || a || "";
 
   document.head.insertAdjacentHTML("beforeend", `<style>
-  .tt-root{display:flex;flex-direction:column;min-height:0;flex:1}
-  .tt-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 360px}
-  .tt-feed{overflow:auto;padding:10px 16px}
-  .tt-side{overflow:auto;border-left:1px solid var(--line);padding:10px 14px;background:var(--side,var(--panel))}
-  .tt-side section{margin-bottom:18px}
-  .tt-root h3{font-size:13px;font-weight:500;margin:6px 0 8px;color:var(--text2);display:flex;align-items:center;gap:8px}
+  .tt-root{display:flex;flex-direction:column;min-height:0;flex:1;background:var(--bg)}
+  .tt-head{display:flex;align-items:flex-end;gap:12px;padding:22px 28px 14px;flex-wrap:wrap}
+  .tt-head .ttl{flex:1;min-width:240px}
+  .tt-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
+  .tt-head p{margin:4px 0 0;font-size:13.5px;font-weight:500;color:var(--muted)}
+  .tt-root .toolbar{background:transparent;border:0;box-shadow:none;padding:0 28px 14px}
+  .tt-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;padding:0 28px 20px}
+  .tt-feed{overflow:auto;padding:8px 20px 16px;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-card)}
+  .tt-side{overflow:auto;padding:16px 18px;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-card)}
+  .tt-side section{margin-bottom:20px;flex:none;display:block}
+  .tt-root h3{font-size:16px;font-weight:600;margin:8px 0 10px;color:var(--text);display:flex;align-items:center;gap:8px}
   .tt-root h3 .sp{flex:1}
-  .tt-ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 10px;padding:8px 4px;border-bottom:1px solid var(--line2);align-items:baseline}
-  .tt-ev .w{font-size:12px;color:var(--muted);white-space:nowrap}
-  .tt-ev .s{min-width:0} .tt-ev .s b{font-weight:500}
-  .tt-ev .k{font-size:11px;color:var(--muted);margin-left:6px}
+  .tt-ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;padding:12px 2px;border-bottom:1px solid var(--line2);align-items:baseline}
+  .tt-ev:last-child{border-bottom:0}
+  .tt-ev .w{font-size:11.5px;font-weight:500;color:var(--muted);white-space:nowrap}
+  .tt-ev .s{min-width:0;color:var(--text2)} .tt-ev .s b{font-weight:600;color:var(--text)}
+  .tt-ev .k{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--sunken);font-size:10.5px;font-weight:600;color:var(--muted);margin-left:6px}
   .tt-items{grid-column:2/4;display:flex;flex-wrap:wrap;gap:4px}
-  .tt-items button,.tt-link{border:1px solid var(--line2);background:var(--panel);border-radius:10px;padding:1px 8px;font-size:12px;color:var(--text2);cursor:pointer;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .tt-items button:hover,.tt-link:hover{border-color:var(--accent);color:var(--accent)}
-  .tt-p{display:flex;gap:8px;align-items:baseline;padding:5px 0;font-size:13px}
-  .tt-p .x{min-width:0;flex:1} .tt-p .m{font-size:12px;color:var(--muted)}
-  .tt-mn{padding:7px 8px;border-radius:6px;margin-bottom:6px;border:1px solid var(--line2);cursor:pointer}
-  .tt-mn.unread{border-color:var(--accent);background:var(--accent-bg)}
-  .tt-mn .h{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted)} .tt-mn .h b{color:var(--text);font-weight:500} .tt-mn .h .sp{flex:1}
-  .tt-mn .h b{white-space:nowrap} .tt-mn .on{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .tt-mn .b{font-size:13px;white-space:pre-wrap;word-break:break-word;margin:3px 0 0}
-  .tt-empty{color:var(--muted);font-size:13px;padding:8px 0}
-  @media (max-width:900px){.tt-body{grid-template-columns:1fr}.tt-side{border-left:0;border-top:1px solid var(--line)}}
+  .tt-items button,.tt-link{height:24px;border:0;background:var(--panel);box-shadow:var(--sh-1);border-radius:var(--r-pill);padding:0 10px;font-size:11.5px;font-weight:600;color:var(--text2);cursor:pointer;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color var(--t) var(--ease),background var(--t) var(--ease)}
+  .tt-items button:hover,.tt-link:hover{background:var(--accent-bg);color:var(--accent)}
+  .tt-p{display:flex;gap:8px;align-items:baseline;padding:6px 0;font-size:13px}
+  .tt-p .x{min-width:0;flex:1;font-weight:500} .tt-p .m{font-size:11.5px;color:var(--muted)}
+  .tt-mn{padding:10px 12px;border-radius:var(--r-md);margin-bottom:8px;background:var(--head);cursor:pointer;transition:background var(--t) var(--ease)}
+  .tt-mn:hover{background:var(--hover)}
+  .tt-mn.unread{background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent)}
+  .tt-mn .h{display:flex;gap:6px;align-items:center;font-size:11.5px;font-weight:500;color:var(--muted)} .tt-mn .h b{color:var(--text);font-weight:600} .tt-mn .h .sp{flex:1}
+  .tt-mn .h b{white-space:nowrap} .tt-mn .on{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tt-mn .b{font-size:13px;color:var(--text2);white-space:pre-wrap;word-break:break-word;margin:4px 0 0}
+  .tt-none{padding:60px 28px;text-align:center;color:var(--muted);font-weight:500}
+  .tt-empty{color:var(--muted);font-size:13px;font-weight:500;padding:12px 0}
+  @media (max-width:900px){.tt-body{grid-template-columns:1fr}}
   </style>`);
 
   // ---------- the tab button: only while in a team ----------
@@ -54,12 +62,12 @@
   function render(el){
     T.el = el;
     if (!TM.st.joined || TM.st.removed){
-      el.innerHTML = `<div class="empty" style="padding:40px">${TM.st.removed ? "This Mac was removed from the team." : "You are not in a team."} Open Setup &gt; Team to join one with an invite link.</div>`;
+      el.innerHTML = `<div class="empty tt-none">${TM.st.removed ? "This Mac was removed from the team." : "You are not in a team."} Open Setup &gt; Team to join one with an invite link.</div>`;
       return;
     }
-    el.innerHTML = `<div class="tt-root"><div class="toolbar"><b>Team: ${esc(TM.st.team || "")}</b>
-      <select id="ttPerson" title="Show one person's activity"></select><select id="ttArea" title="Show one area"></select>
-      <span class="spacer" style="flex:1"></span><button id="ttRefresh">Refresh</button></div>
+    el.innerHTML = `<div class="tt-root"><div class="tt-head"><div class="ttl"><h1>Team</h1><p>Team: ${esc(TM.st.team || "")}. What everyone changed, who is where, and your mentions.</p></div>
+      <button id="ttRefresh">Refresh</button></div>
+      <div class="toolbar"><select id="ttPerson" title="Show one person's activity"></select><select id="ttArea" title="Show one area"></select></div>
       <div class="tt-body"><section class="tt-feed"><h3>Activity</h3><div id="ttFeed"><div class="tt-empty">Loading ...</div></div></section>
       <aside class="tt-side"><section id="ttWho"></section><section id="ttMent"></section><section id="ttNotify"></section><section id="ttMembers"></section></aside></div></div>`;
     const $ = s => el.querySelector(s);

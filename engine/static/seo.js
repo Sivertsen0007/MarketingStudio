@@ -1,50 +1,77 @@
 // Marketing Studio - SEO area: masterliveaboards.com posts, Search Console, GA4, the SEO draft and the user's Publish button.
 (() => {
 const CSS = `
-.seo-bar{gap:10px}
-.seo-bar .seo-tabs button .n{margin-left:4px}
-.seo-target{font-size:12px;font-weight:500;padding:3px 9px;border-radius:2px;background:var(--line2);color:var(--text2);white-space:nowrap}
-.seo-target.prod{background:var(--bad);color:#fff}
-.seo-target.dry{background:var(--info-bg);color:var(--text)}
-.seo-sub{display:flex;gap:10px;align-items:center;padding:8px 14px;background:var(--head);border-bottom:1px solid var(--line);flex-wrap:wrap;font-size:13px}
-.seo-sub input[type=search]{min-width:240px}
+.seo-root{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--bg)}
+.seo-head{display:flex;align-items:flex-end;gap:12px;padding:22px 28px 14px;flex-wrap:wrap}
+.seo-head .ttl{flex:1;min-width:240px}
+.seo-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
+.seo-head p{margin:4px 0 0;font-size:13.5px;font-weight:500;color:var(--muted)}
+.seo-head .acts{display:flex;gap:8px;align-items:center}
+.seo-root .toolbar.seo-bar{background:transparent;border:0;box-shadow:none;padding:0 28px 14px;gap:10px}
+.seo-bar #seoSite{max-width:240px}
+.seo-tabs.fpills{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken);flex-wrap:nowrap}
+.seo-tabs.fpills button{height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
+.seo-tabs.fpills button:hover{color:var(--text);background:transparent}
+.seo-tabs.fpills button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
+.seo-tabs button .n{display:inline-block;min-width:18px;margin-left:6px;padding:0 5px;border-radius:var(--r-pill);background:var(--accent-bg);color:var(--accent);font-size:11px;font-weight:700;line-height:17px;text-align:center}
+.seo-target{display:inline-flex;align-items:center;height:28px;font-size:12px;font-weight:600;padding:0 10px;border-radius:var(--r-pill);background:var(--sunken);color:var(--text2);white-space:nowrap}
+.seo-target.prod{background:var(--bad);color:var(--ink-text)}
+.seo-target.dry{background:var(--accent-bg);color:var(--accent)}
+.seo-sub{display:flex;gap:10px;align-items:center;padding:0 28px 12px;flex-wrap:wrap;font-size:13px}
+.seo-sub input[type=search]{min-width:260px}
+.seo-sub .hint{margin:0;font-size:12px;font-weight:500}
 .seo-body{flex:1;min-height:0;display:flex;flex-direction:column}
-.seo-scroll{overflow:auto;flex:1;padding:16px 20px}
-.seo-body table tr.seo-row{cursor:pointer}
+.seo-body>.grid-wrap{margin:0 28px 24px;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);flex:1;min-height:0}
+.seo-scroll{overflow:auto;flex:1;padding:0 28px 28px}
+.seo-body table th{height:40px;background:var(--head);color:var(--muted);font-size:11.5px;font-weight:600;border-right:0;border-bottom:1px solid var(--line2)}
+.seo-body table td{height:42px;border-right:0;color:var(--text2)}
+.seo-body table th:first-child,.seo-body table td:first-child{padding-left:20px}
+.seo-body table tr.seo-row{cursor:pointer;transition:background var(--t) var(--ease)}
 .seo-body table tr.seo-row:hover td{background:var(--hover)}
-.seo-body td.title{max-width:360px}
-.seo-body td.wrap{white-space:normal;min-width:260px;max-width:420px;line-height:1.35;padding-top:4px;padding-bottom:4px;height:auto}
-.seo-up{color:var(--ok)} .seo-down{color:var(--bad)}
-.seo-len{font-size:11px;color:var(--muted);margin-left:6px} .seo-len.bad{color:var(--warn)}
-.seo-errs{margin:0;padding:8px 14px;background:var(--warn-bg);font-size:13px}
+.seo-body td.title{max-width:360px;color:var(--text);font-weight:600}
+.seo-body td.wrap{white-space:normal;min-width:260px;max-width:420px;line-height:1.4;padding-top:8px;padding-bottom:8px;height:auto}
+.seo-body .chip.draft{font-size:11px;font-weight:600;padding:2px 7px;border-radius:var(--r-sm);background:var(--draft-bg);color:var(--draft)}
+.seo-up{color:var(--ok);font-weight:600} .seo-down{color:var(--bad);font-weight:600}
+.seo-len{display:inline-block;font-size:10.5px;font-weight:600;color:var(--faint);margin-left:6px;padding:0 5px;border-radius:var(--r-xs);background:var(--sunken)} .seo-len.bad{color:var(--warn);background:var(--warn-bg)}
+.seo-errs{margin:0 28px 12px;padding:10px 14px;border-radius:var(--r-md);background:var(--warn-bg);color:var(--text2);font-size:12.5px;font-weight:500;line-height:1.55}
 dialog.seo-wide{width:min(1180px,96vw)}
-.seo-dtabs{display:flex;gap:6px;margin:0 0 12px}
-.seo-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.seo-f{margin-bottom:12px} .seo-f label{display:flex;justify-content:space-between;color:var(--muted);font-size:13px;margin-bottom:3px}
+.seo-dtabs{display:inline-flex;gap:2px;margin:0 0 16px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
+.seo-dtabs button{height:30px;padding:0 14px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px}
+.seo-dtabs button:hover{background:transparent;color:var(--text)}
+.seo-dtabs button.on,.seo-dtabs button.primary{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
+.seo-grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.seo-f{margin-bottom:14px} .seo-f label{display:flex;justify-content:space-between;align-items:baseline;gap:8px;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:6px}
 .seo-f input,.seo-f textarea{width:100%}
-.seo-f textarea.code{font-family:"Roboto Mono",ui-monospace,Menlo,monospace;font-size:12px;min-height:340px}
-.seo-snip{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--panel);margin-bottom:12px;font-family:Arial,sans-serif}
-.seo-snip .u{font-size:12px;color:var(--text2)} .seo-snip .t{font-size:19px;color:#1a0dab;margin:3px 0;line-height:1.3}
-@media (prefers-color-scheme: dark){.seo-snip .t{color:#99c3ff}}
-.seo-snip .d{font-size:13px;color:var(--text2);line-height:1.45}
-.seo-prev{width:100%;height:340px;border:1px solid var(--line);border-radius:4px;background:#fff}
+.seo-f textarea.code{font:12px/1.6 var(--mono);min-height:340px;background:var(--head)}
+.seo-snip{border-radius:var(--r-lg);padding:14px 16px;background:var(--panel);box-shadow:var(--sh-card);margin-bottom:12px;font-family:Arial,sans-serif}
+.seo-snip .u{font-size:12px;color:var(--text2)} .seo-snip .t{--serp-link:#1a0dab;font-size:19px;color:var(--serp-link);margin:4px 0;line-height:1.3}
+.seo-snip .d{font-size:13px;color:var(--text2);line-height:1.5}
+.seo-prev{width:100%;height:340px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel)}
 .seo-cats{display:flex;flex-wrap:wrap;gap:6px}
-.seo-cats label{display:inline-flex;gap:5px;align-items:center;font-size:13px;color:var(--text2);border:1px solid var(--line);border-radius:14px;padding:2px 9px}
-.seo-img{max-width:100%;max-height:170px;border-radius:4px;border:1px solid var(--line)}
-.seo-box{border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:14px;background:var(--panel)}
-.seo-box h3{margin:0 0 8px;font-size:15px;font-weight:500}
+.seo-cats label{display:inline-flex;gap:6px;align-items:center;font-size:12.5px;font-weight:600;color:var(--text2);height:28px;padding:0 10px;border-radius:var(--r-pill);background:var(--panel);box-shadow:var(--sh-1);cursor:pointer;margin:0;transition:background var(--t) var(--ease)}
+.seo-cats label:has(input:checked){background:var(--accent-bg);color:var(--accent);box-shadow:0 0 0 1px var(--accent-soft)}
+.seo-img{max-width:100%;max-height:170px;border-radius:var(--r);box-shadow:var(--sh-1)}
+.seo-box{border-radius:var(--r-lg);padding:16px 18px;margin-bottom:12px;background:var(--panel);box-shadow:var(--sh-card)}
+.seo-box h3{margin:0 0 10px;font-size:16px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:8px}
+.seo-box h3 .hint{margin:0;font-size:12px;font-weight:500}
 .seo-box table{width:100%;min-width:0}
-.seo-sec{margin:0 0 22px} .seo-sec h2{font-size:16px;font-weight:500;margin:0 0 4px}
-.seo-ch{display:grid;grid-template-columns:150px 1fr auto;gap:10px;padding:8px 0;border-bottom:1px solid var(--line2);font-size:13px;align-items:start}
+.seo-box table th{height:36px;background:var(--head);color:var(--muted);font-size:11.5px;font-weight:600;border-right:0;cursor:default}
+.seo-box table td{height:38px;border-right:0;color:var(--text2)}
+.seo-sec{margin:0 0 24px} .seo-sec h2{font-size:18px;font-weight:600;margin:0 0 4px;color:var(--text)}
+.seo-sec>.hint{margin:0 0 10px}
+.seo-ch{display:grid;grid-template-columns:150px 1fr auto;gap:12px;padding:10px 0;border-bottom:1px solid var(--line2);font-size:13px;align-items:start}
+.seo-ch:last-child{border-bottom:0}
 .seo-ch .old{color:var(--muted);text-decoration:line-through;word-break:break-word}
-.seo-ch .new{word-break:break-word;background:var(--draft-bg);color:var(--text);padding:1px 4px;border-radius:2px}
-.seo-iss{display:block;font-size:12px;margin-top:3px} .seo-iss.error{color:var(--bad)} .seo-iss.warn{color:var(--warn)} .seo-iss.info{color:var(--muted)}
-.seo-post-h{font-weight:500;margin:14px 0 2px}
-.seo-steps{font-size:12px;color:var(--muted)}
-.seo-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#9aa0a6;margin-right:5px}
+.seo-ch .new{word-break:break-word;background:var(--draft-bg);color:var(--text);padding:2px 6px;border-radius:var(--r-xs)}
+.seo-iss{display:block;font-size:12px;font-weight:500;margin-top:4px} .seo-iss.error{color:var(--bad)} .seo-iss.warn{color:var(--warn)} .seo-iss.info{color:var(--muted)}
+.seo-post-h{font-weight:600;font-size:14px;color:var(--text);margin:16px 0 4px}
+.seo-steps{font-size:12px;font-weight:500;color:var(--muted)}
+.seo-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint);margin-right:6px}
 .seo-dot.ok{background:var(--ok)} .seo-dot.bad{background:var(--bad)}
-.seo-kv{display:grid;grid-template-columns:170px 1fr;gap:6px 12px;font-size:13px}
-.seo-kv b{font-weight:500;color:var(--muted)}
+.seo-kv{display:grid;grid-template-columns:170px 1fr;gap:8px 14px;font-size:13px}
+.seo-kv b{font-weight:600;color:var(--muted);font-size:12.5px}
+.seo-root .prob{margin:0 28px 12px;padding:10px 14px;border-radius:var(--r);background:var(--bad-bg);color:var(--text);font-size:13px}
+.seo-scroll>.hint{margin:4px 0}
 `;
 if (!document.getElementById("seo-css")){ const st = document.createElement("style"); st.id = "seo-css"; st.textContent = CSS; document.head.appendChild(st) }
 
@@ -70,16 +97,17 @@ async function openItem(coll, id){
 // ---- shell ----
 function render(el){
   T.el = el;
-  el.innerHTML = `<div class="toolbar seo-bar">
-    <select id="seoSite" title="Which site"><option value="ml">masterliveaboards.com</option><option value="dt" disabled>divetravel.co.uk (off until the director agrees)</option></select>
+  el.innerHTML = `<div class="seo-root"><div class="seo-head"><div class="ttl"><h1>SEO</h1><p>Blog posts, Search Console and GA4. Publish is your own button.</p></div>
+    <div class="acts"><span id="seoTarget" class="seo-target"></span>
+    <button id="seoRefresh" title="Read WordPress, Search Console and GA4 again">Refresh</button>
+    <button id="seoPublish" class="primary" title="Your button only: publish the SEO draft">Publish</button></div></div>
+  <div class="toolbar seo-bar">
     <div class="fpills seo-tabs" id="seoTabs"></div>
     <span class="spacer"></span>
+    <select id="seoSite" title="Which site"><option value="ml">masterliveaboards.com</option><option value="dt" disabled>divetravel.co.uk (off until the director agrees)</option></select>
     <select id="seoRange" title="Date range for Search Console and GA4"><option value="7">Last 7 days</option><option value="28">Last 28 days</option><option value="90">Last 90 days</option><option value="custom">Custom ...</option></select>
     <span id="seoCustom" style="display:none"><input type="date" id="seoStart"> to <input type="date" id="seoEnd"> <button id="seoApply">Apply</button></span>
-    <span id="seoTarget" class="seo-target"></span>
-    <button id="seoRefresh" title="Read WordPress, Search Console and GA4 again">Refresh</button>
-    <button id="seoPublish" class="primary" title="Your button only: publish the SEO draft">Publish</button>
-  </div><div id="seoBody" class="seo-body"></div>`;
+  </div><div id="seoBody" class="seo-body"></div></div>`;
   $("#seoRange").value = T.range;
   $("#seoRange").onchange = e => { T.range = e.target.value; $("#seoCustom").style.display = T.range === "custom" ? "" : "none"; if (T.range !== "custom"){ localSet("seo.range", T.range); reload() } };
   $("#seoApply").onclick = () => { T.start = $("#seoStart").value; T.end = $("#seoEnd").value; if (T.start && T.end) reload(); else toast("Pick a start and end date") };

@@ -10,43 +10,75 @@ const E = {state:null, rows:[], counts:{}, filter: localGet("email.filter") || "
 if (!document.getElementById("em-css")){
   const st = document.createElement("style"); st.id = "em-css";
   st.textContent = `
-.em-banner{display:flex;gap:10px;align-items:center;padding:8px 14px;background:var(--warn-bg);color:var(--text);font-size:13px;border-bottom:1px solid var(--line)}
-.em-banner.ok{background:var(--ok-bg)}.em-banner.info{background:var(--info-bg)}
+.em-root{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--bg)}
+.em-head{display:flex;align-items:flex-end;gap:12px;padding:22px 28px 14px;flex-wrap:wrap}
+.em-head .ttl{flex:1;min-width:240px}
+.em-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
+.em-head p{margin:4px 0 0;font-size:13.5px;font-weight:500;color:var(--muted)}
+.em-head .acts{display:flex;gap:8px;align-items:center}
+.em-banner{display:flex;gap:10px;align-items:center;margin:0 28px 14px;padding:10px 14px;border-radius:var(--r-md);background:var(--warn-bg);color:var(--text2);font-size:13px;font-weight:500;flex-wrap:wrap}
+.em-banner b{color:var(--warn);font-weight:600}
+.em-banner.ok{background:var(--ok-bg)} .em-banner.ok b{color:var(--ok)}
+.em-banner.info{background:var(--accent-bg)} .em-banner.info b{color:var(--accent)}
+.em-banner.load{background:transparent;color:var(--muted);padding:22px 0 0}
 .em-note{color:var(--muted);font-size:12px}
-.em-need{font-size:12px;color:var(--text2);padding:6px 14px;background:var(--info-bg);border-bottom:1px solid var(--line)}
+.em-need,.em-ro{margin:0 28px 12px;padding:9px 14px;border-radius:var(--r-md);font-size:12.5px;font-weight:500}
+.em-need{background:var(--accent-bg);color:var(--text2)}
+.em-ro{background:var(--panel);box-shadow:var(--sh-1);color:var(--muted)}
 .em-spacer{flex:1}
-.em-search{width:220px;padding:5px 10px;border:1px solid var(--line);border-radius:4px;background:var(--panel)}
-.pill.em-draft i{background:#9aa0a6}.pill.em-scheduled i{background:var(--accent)}.pill.em-sending i{background:#f9ab00}
+.em-root .toolbar.em-bar{background:transparent;border:0;box-shadow:none;padding:0 28px 12px;gap:8px}
+.em-search{width:240px}
+.pill.em-draft i{background:var(--faint)}.pill.em-scheduled i{background:var(--accent)}.pill.em-sending i{background:var(--c4)}
 .pill.em-sent i{background:var(--ok)}.pill.em-failed i{background:var(--bad)}.pill.em-failed{color:var(--bad)}.pill.em-cancelled{color:var(--muted)}
-.em-grid tbody tr{cursor:pointer}
-.em-ed{flex:1;min-height:0;display:grid;grid-template-columns:minmax(380px,44%) 1fr}
-.em-left{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--panel)}
-.em-fields{padding:12px 14px 4px;overflow:auto;flex:none;max-height:52%}
-.em-fields .row{grid-template-columns:120px 1fr;margin-bottom:8px}
-.em-fields input,.em-fields select{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:4px;background:var(--panel)}
-.em-fields input[readonly]{background:var(--head);color:var(--muted)}
-.em-fields .chg input,.em-fields .chg select{background:var(--draft-bg)}
-.em-cnt{font-size:11px;color:var(--muted);margin-left:6px}.em-cnt.over{color:var(--bad);font-weight:500}
-.em-code{flex:1;min-height:0;display:flex;flex-direction:column;padding:4px 14px 12px}
-.em-code .h{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin-bottom:4px}
-.em-code textarea{flex:1;min-height:160px;resize:none;font:12.5px/1.5 "Roboto Mono",ui-monospace,Menlo,monospace;padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text);white-space:pre;overflow:auto;tab-size:2}
-.em-code.chg textarea{border-color:var(--draft)}
-.em-right{display:flex;flex-direction:column;min-height:0;background:var(--head)}
-.em-pbar{display:flex;gap:6px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px;background:var(--panel)}
-.em-pbar .src{color:var(--muted)}
-.em-pbar button.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
-.em-pbar button{padding:3px 12px}
-.em-frame{flex:1;min-height:0;overflow:auto;display:flex;justify-content:center;padding:12px}
-.em-frame iframe{border:0;background:#fff;height:100%;min-height:400px;width:100%;max-width:760px;box-shadow:0 1px 3px #0003;border-radius:4px}
-.em-frame.mobile iframe{width:375px}
-.em-checks{flex:none;max-height:34%;overflow:auto;padding:8px 12px;border-top:1px solid var(--line);background:var(--panel);font-size:13px}
-.em-checks .p{padding:4px 8px;border-radius:2px;margin:3px 0;color:var(--text);word-break:break-word}
-.em-checks .p.error{background:var(--bad-bg)}.em-checks .p.warn{background:var(--warn-bg)}
-.em-checks .okline{color:var(--ok);font-weight:500}
-.em-etb .t{font-weight:500;max-width:28vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.em-etb .sep{width:1px;align-self:stretch;background:var(--line);margin:0 4px}
-.em-ro{font-size:12px;color:var(--muted);padding:6px 14px;background:var(--head);border-bottom:1px solid var(--line)}
+.em-card{margin:0 28px 24px;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);overflow:auto;flex:1;min-height:0}
+.em-card.grid-wrap{flex:0 1 auto}
+.em-grid{width:100%}
+.em-grid th{height:40px;background:var(--head);color:var(--muted);font-size:11.5px;font-weight:600;border-right:0;border-bottom:1px solid var(--line2)}
+.em-grid td{height:44px;border-right:0;color:var(--text2)}
+.em-grid th:first-child,.em-grid td:first-child{padding-left:20px} .em-grid th:last-child,.em-grid td:last-child{padding-right:20px}
+.em-grid td:first-child{color:var(--text);font-weight:600}
+.em-grid tbody tr{cursor:pointer;transition:background var(--t) var(--ease)}
+.em-grid tbody tr:last-child td{border-bottom:0}
+.em-grid .chip{font-size:11px;font-weight:600;padding:2px 7px;border-radius:var(--r-sm);background:var(--sunken);color:var(--muted);margin-left:4px}
+.em-grid .chip.draft{background:var(--draft-bg);color:var(--draft)}
+.em-ed{flex:1;min-height:0;display:grid;grid-template-columns:minmax(380px,44%) 1fr;gap:12px;padding:0 28px 20px}
+.em-left,.em-right{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-card);overflow:hidden}
+.em-fields{padding:18px 20px 6px;overflow:auto;flex:none;max-height:52%}
+.em-fields .row{grid-template-columns:120px 1fr;margin-bottom:10px}
+.em-fields .row>label{font-size:12.5px;font-weight:600;color:var(--muted)}
+.em-fields input,.em-fields select{width:100%}
+.em-fields input[readonly]{background:var(--head);color:var(--text2);box-shadow:none}
+.em-fields .chg input,.em-fields .chg select{background:var(--draft-bg);border-color:var(--draft)}
+.em-cnt{font-size:11px;font-weight:600;color:var(--faint);margin-left:6px}.em-cnt.over{color:var(--bad)}
+.em-code{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px 20px 18px;border-top:1px solid var(--line2)}
+.em-code .h{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;font-weight:600;color:var(--muted);margin:6px 0 8px}
+.em-code textarea{flex:1;min-height:160px;resize:none;font:12px/1.6 var(--mono);padding:12px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--head);color:var(--text2);white-space:pre;overflow:auto;tab-size:2;box-shadow:none}
+.em-code textarea:focus{background:var(--panel)}
+.em-code.chg textarea{border-color:var(--draft);background:var(--draft-bg)}
+.em-right{background:var(--panel)}
+.em-pbar{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line2);font-size:12px}
+.em-pbar .src{color:var(--muted);font-weight:500;margin-left:4px}
+.em-seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
+.em-seg button{height:28px;padding:0 14px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:12.5px}
+.em-seg button:hover{background:transparent;color:var(--text)}
+.em-seg button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
+.em-pbar>button{height:32px;padding:0 12px;font-size:12.5px}
+.em-frame{flex:1;min-height:0;overflow:auto;display:flex;justify-content:center;padding:20px;background:var(--sunken)}
+.em-frame iframe{border:0;background:var(--panel);height:100%;min-height:400px;width:100%;max-width:760px;box-shadow:var(--sh-card);border-radius:var(--r-md);transition:width .25s var(--ease)}
+.em-frame.mobile iframe{width:375px;border-radius:var(--r-xl);box-shadow:0 0 0 8px var(--ink),var(--sh-pop)}
+.em-checks{flex:none;max-height:34%;overflow:auto;padding:12px 16px;border-top:1px solid var(--line2);font-size:13px}
+.em-checks .hint{margin:0;font-size:12.5px}
+.em-checks .p{padding:7px 10px;border-radius:var(--r-sm);margin:4px 0;color:var(--text2);word-break:break-word;font-size:12.5px;background:var(--head)}
+.em-checks .p.error{background:var(--bad-bg)} .em-checks .p.error b{color:var(--bad)}
+.em-checks .p.warn{background:var(--warn-bg)} .em-checks .p.warn b{color:var(--warn)}
+.em-checks .okline{color:var(--ok);font-weight:600;padding:2px 0 4px}
+.em-root .toolbar.em-etb{background:transparent;border:0;box-shadow:none;padding:20px 28px 14px;gap:8px}
+.em-etb .t{font-size:18px;font-weight:600;color:var(--text);max-width:28vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:4px}
+.em-etb .sep{width:1px;align-self:stretch;background:var(--line);margin:4px 2px}
+.em-etb .hint{margin:0;font-size:12px}
+.em-back{display:inline-flex;align-items:center;gap:6px}
 .em-when{font-size:13px;color:var(--muted);margin-top:4px}
+.em-root .prob{margin:16px 28px;padding:10px 14px;border-radius:var(--r);background:var(--bad-bg);color:var(--text);font-size:13px}
 @media (max-width:900px){.em-ed{grid-template-columns:1fr}.em-right{min-height:480px}}
 `;
   document.head.appendChild(st);
@@ -110,18 +142,17 @@ const needAttr = k => can(k) ? "" : `disabled title="${esc((E.state || {}).needs
 // ---- campaigns list ----
 async function renderList(){
   const el = E.el; E.cur = null;
-  el.innerHTML = `<div class="em-banner">Loading ...</div>`;
-  try { E.state = await api(A("state")) } catch(e) { el.innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
-  el.innerHTML = `${banner()}
-    <div class="toolbar">
+  el.innerHTML = `<div class="em-root"><div class="em-banner load">Loading ...</div></div>`;
+  try { E.state = await api(A("state")) } catch(e) { el.innerHTML = `<div class="em-root"><div class="prob">${esc(e.message)}</div></div>`; return }
+  el.innerHTML = `<div class="em-root"><div class="em-head"><div class="ttl"><h1>Email</h1><p>Campaigns from your email platform. Test, schedule and send are your own buttons.</p></div>
+    <div class="acts"><button data-em="refresh">Refresh</button><button data-em="new" class="primary">New campaign</button></div></div>
+    ${banner()}
+    <div class="toolbar em-bar">
       <div class="fpills" id="emPills"></div>
       <input id="emSearch" class="em-search" placeholder="Search name, subject, list" value="${esc(E.search)}">
       <select id="emView" title="Columns">${Object.keys(VIEWS).map(v => `<option value="${v}" ${v === E.view ? "selected" : ""}>View: ${v}</option>`).join("")}</select>
-      <span class="em-spacer"></span>
-      <button data-em="refresh">Refresh</button>
-      <button data-em="new" class="primary">New campaign</button>
     </div>
-    <div class="grid-wrap" id="emGrid"><div class="empty">Loading campaigns ...</div></div>`;
+    <div class="grid-wrap em-card" id="emGrid"><div class="empty">Loading campaigns ...</div></div></div>`;
   el.onclick = onClick;
   el.oncontextmenu = onRowMenu;
   $("#emSearch").oninput = e => { E.search = e.target.value; clearTimeout(E._st); E._st = setTimeout(loadGrid, 250) };
@@ -164,11 +195,11 @@ function onClick(e){
 (function(){
   if (document.getElementById("emMenuCss")) return;
   const st = document.createElement("style"); st.id = "emMenuCss";
-  st.textContent = `.em-menu{position:fixed;z-index:60;min-width:190px;background:var(--panel,#fff);border:1px solid var(--line,#dadce0);border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px 0;font-size:13px}
-  .em-menu button{display:block;width:100%;text-align:left;border:0;border-radius:0;background:none;padding:8px 14px;color:var(--text,#202124)}
-  .em-menu button:hover:not(:disabled){background:var(--hover,#f1f3f4)}
-  .em-menu button.danger{color:var(--bad,#c5221f)} .em-menu button:disabled{color:var(--muted,#80868b);cursor:default}
-  .em-menu .why{padding:2px 14px 6px;color:var(--muted,#80868b);font-size:11px;max-width:240px}`;
+  st.textContent = `.em-menu{position:fixed;z-index:60;min-width:200px;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-pop);padding:6px;font-size:13px}
+  .em-menu button{display:flex;align-items:center;width:100%;height:32px;text-align:left;border:0;border-radius:var(--r-sm);background:none;box-shadow:none;padding:0 10px;color:var(--text);font-weight:500}
+  .em-menu button:hover:not(:disabled){background:var(--hover)}
+  .em-menu button.danger{color:var(--bad)} .em-menu button:disabled{color:var(--faint);cursor:default}
+  .em-menu .why{padding:2px 10px 6px;color:var(--muted);font-size:11px;font-weight:500;max-width:240px}`;
   document.head.appendChild(st);
 })();
 function closeRowMenu(){ const m = document.getElementById("emMenu"); if (m) m.remove(); document.removeEventListener("mousedown", outsideMenu, true) }
@@ -212,7 +243,7 @@ function audOptions(sel){
 }
 async function openEditor(id){
   const el = E.el;
-  el.innerHTML = `<div class="em-banner">Opening ...</div>`;
+  el.innerHTML = `<div class="em-root"><div class="em-banner load">Opening ...</div></div>`;
   try {
     const [c, aud] = await Promise.all([api(A("campaign", {id})), E.aud ? Promise.resolve(E.aud) : api(A("audiences"))]);
     E.cur = c; E.aud = aud;
@@ -224,9 +255,9 @@ function drawEditor(){
   const {campaign:c, original:o, draft:d} = E.cur;
   const editable = o.status === "draft";
   const ro = editable ? "" : "readonly";
-  E.el.innerHTML = `${banner()}
+  E.el.innerHTML = `<div class="em-root">
     <div class="toolbar em-etb">
-      <button data-em="back">Back to campaigns</button>
+      <button data-em="back" class="em-back">&larr; Back to campaigns</button>
       <span class="t" title="${esc(c.name)}">${esc(c.name)}</span>${statusPill(o.status)}
       <span id="emDraftChip">${d ? `<span class="chip draft" title="Edits saved in Studio, not yet on ${esc(PN())} (by ${esc(d.by)})">Studio draft</span>` : ""}</span>
       <span class="em-spacer"></span>
@@ -243,6 +274,7 @@ function drawEditor(){
           : `<button data-em="schedule" ${needAttr("schedule")}>Schedule</button><button data-em="now" class="live" ${needAttr("schedule")}>Send now</button>`) : ""}
       ${o.status === "scheduled" ? `<button data-em="cancel" class="danger" ${needAttr("schedule")}>Cancel schedule</button>` : ""}
     </div>
+    ${banner()}
     ${can("edit") ? "" : `<div class="em-need">${esc(E.state.needs_api)}: Save to platform, Send test, Schedule, Send now and Cancel schedule. Your edits stay as a Studio draft, and Create draft on platform makes a new draft from them.</div>`}
     ${editable ? "" : `<div class="em-ro">${o.status === "scheduled" ? `Scheduled for ${esc(fmtDate(o.scheduled_for, true))} (London). Cancel the schedule to edit it again.` : o.status === "sent" ? `Sent ${esc(fmtDate(o.sent_at, true))}. A sent email can't be changed or unsent.` : `This campaign is ${esc(o.status)}. Only drafts can be changed.`}</div>`}
     <div class="em-ed" data-team-coll="email" data-team-id="${esc(o.id)}" data-team-label="${esc(c.name)}" data-team-bar="before">
@@ -260,11 +292,11 @@ function drawEditor(){
         <div class="em-code" id="emCodeBox"><div class="h"><span>HTML</span><span id="emHtmlN"></span></div><textarea id="em_html" spellcheck="false" ${ro}>${esc(c.html)}</textarea></div>
       </div>
       <div class="em-right">
-        <div class="em-pbar"><button data-emdev="desktop">Desktop</button><button data-emdev="mobile">Mobile</button><button data-em="prev" title="Preview again">Refresh</button><span class="src" id="emSrc"></span></div>
+        <div class="em-pbar"><span class="em-seg"><button data-emdev="desktop">Desktop</button><button data-emdev="mobile">Mobile</button></span><button data-em="prev" title="Preview again">Refresh</button><span class="src" id="emSrc"></span></div>
         <div class="em-frame" id="emFrame"><iframe id="emIframe" sandbox="" title="Email preview"></iframe></div>
         <div class="em-checks" id="emChecks"><span class="hint">Press Check to run every check (links too). Send, Schedule and Send test run them as well.</span></div>
       </div>
-    </div>`;
+    </div></div>`;
   E.el.onclick = onClick;
   for (const f of [...FIELDS, "html"]) $("#em_" + f).addEventListener("input", onEdit);
   $("#em_aud").addEventListener("change", onEdit);

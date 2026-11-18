@@ -36,7 +36,7 @@
     const vids = L.videos.filter(x => !q || `${x.title} ${x.name} ${x.video_id}`.toLowerCase().includes(q));
     const pend = uploads();
     const errs = Object.entries(L.errors || {});
-    root.innerHTML = `<div style="padding:12px 16px;overflow:auto;height:100%;box-sizing:border-box">
+    root.innerHTML = `<div style="padding:18px 24px;overflow:auto;height:100%;box-sizing:border-box">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
         <button class="primary" id="vdNewCamp" title="A Demand Gen campaign: video ads on YouTube (Video campaigns can't be made through the API)">+ Demand Gen campaign</button>
         <button id="vdNewGroup">+ Ad group</button><button id="vdNewAd">+ Video ad</button>
@@ -47,26 +47,26 @@
       <p class="hint" style="margin:0 0 10px">Video ads on YouTube are made as Demand Gen video ads (Google doesn't let tools create Video campaigns). Pick
         <b>YouTube only</b> channels to keep them on YouTube. Everything here goes into the draft; Push live sends it, new campaigns Paused.</p>
       ${errs.length ? `<p class="prob">Some parts didn't load: ${errs.map(([k, e]) => h(k + ": " + e)).join("; ")}</p>` : ""}
-      ${pend.length ? `<h3 style="font-weight:500;font-size:15px">Waiting to upload</h3><table><thead><tr><th>Video</th><th>File</th><th>By</th><th></th></tr></thead><tbody>
+      ${pend.length ? `<h3 style="font-weight:600;font-size:16px;margin:22px 0 10px;color:var(--text)">Waiting to upload</h3><table><thead><tr><th>Video</th><th>File</th><th>By</th><th></th></tr></thead><tbody>
         ${pend.map(i => `<tr><td>${h(i.change.title)}</td><td>${h(i.change.file_name || String(i.change.file || "").split("/").pop())}</td><td>${i.by === "claude" ? "Claude" : h(i.by)}</td>
           <td>${i.problems.length ? `<span class="prob">${h(i.problems.join("; "))}</span>` : `<button class="live" data-up="${h(i.id)}">Upload</button>`}</td></tr>`).join("")}</tbody></table>` : ""}
-      <h3 style="font-weight:500;font-size:15px">Demand Gen ads (${L.ads.length})</h3>
+      <h3 style="font-weight:600;font-size:16px;margin:22px 0 10px;color:var(--text)">Demand Gen ads (${L.ads.length})</h3>
       ${L.ads.length ? `<table><thead><tr><th>Status</th><th>Campaign</th><th>Ad group</th><th>Type</th><th>Headline</th><th>Videos</th><th>Approval</th><th></th></tr></thead><tbody>
         ${L.ads.map(a => { const ro = trial(a.campaign); return `<tr><td>${h(a.status)}</td><td>${h(a.campaign)}${ro ? ` <span class="chip warn">trial</span>` : ""}</td><td>${h(a.ad_group)}</td>
           <td>${h(a.type)}</td><td>${h(a.headlines[0] || a.name || "")}</td><td>${a.videos.length || ""}</td><td>${h(a.approval)}</td>
           <td style="white-space:nowrap">${ro ? "" : `<button data-st="${h(a.ad_id)}" data-to="${a.status === "Enabled" ? "paused" : "enabled"}">${a.status === "Enabled" ? "Pause" : "Enable"}</button>
           ${a.video ? `<button data-edit="${h(a.ad_id)}">Edit</button>` : ""}`}</td></tr>` }).join("")}</tbody></table>` : `<p class="hint">No Demand Gen ads yet.</p>`}
-      <h3 style="font-weight:500;font-size:15px">Demand Gen ad groups (${L.ad_groups.length})</h3>
+      <h3 style="font-weight:600;font-size:16px;margin:22px 0 10px;color:var(--text)">Demand Gen ad groups (${L.ad_groups.length})</h3>
       ${L.ad_groups.length ? `<table><thead><tr><th>Status</th><th>Campaign</th><th>Ad group</th><th>Channels</th><th></th></tr></thead><tbody>
         ${L.ad_groups.map(g => `<tr><td>${h(g.status)}</td><td>${h(g.campaign)}</td><td>${h(g.ad_group)}</td><td>${h(g.channels)}</td>
           <td>${trial(g.campaign) ? `<span class="chip warn">trial</span>` : `<button data-grp="${h(g.id)}">Change</button>`}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">No Demand Gen ad groups.</p>`}
-      <h3 style="font-weight:500;font-size:15px">Uploads from Studio</h3>
+      <h3 style="font-weight:600;font-size:16px;margin:22px 0 10px;color:var(--text)">Uploads from Studio</h3>
       ${V.hist.length ? `<table><thead><tr><th>When</th><th>Title</th><th>File</th><th>Result</th><th></th></tr></thead><tbody>
         ${V.hist.slice(0, 20).map((r, i) => `<tr><td>${h(r.ts.replace("T", " ").slice(0, 16))}</td><td>${h(r.title)}</td><td>${h(r.file)}</td>
           <td>${r.ok ? "Uploaded" : `<span class="prob">${h(r.error || "failed")}</span>`}<span id="vdSt${i}"></span></td>
           <td>${r.ok && r.resource ? `<button data-chk="${i}">Check status</button>` : ""}</td></tr>`).join("")}</tbody></table>`
         : `<p class="hint">None yet. Upload from Mac sends a file to YouTube (unlisted) through Google Ads; it needs your Upload click (and the team's approval if your team requires it).</p>`}
-      <h3 style="font-weight:500;font-size:15px">Video assets (${L.videos.length}) <input id="vdQ" placeholder="Search title or id" value="${h(V.q)}" style="margin-left:8px;font-weight:400"></h3>
+      <h3 style="font-weight:600;font-size:16px;margin:22px 0 10px;color:var(--text)">Video assets (${L.videos.length}) <input id="vdQ" placeholder="Search title or id" value="${h(V.q)}" style="margin-left:8px;font-weight:500;font-size:13px"></h3>
       <table><thead><tr><th>Title</th><th>YouTube id</th><th>Length</th><th>Asset id</th><th></th></tr></thead><tbody>
         ${vids.slice(0, 300).map(x => `<tr><td>${h(x.title || x.name)}</td><td><a href="https://www.youtube.com/watch?v=${encodeURIComponent(x.video_id)}" target="_blank" rel="noopener">${h(x.video_id)}</a></td>
           <td>${dur(x.duration_s)}</td><td>${h(x.asset_id)}</td><td><button data-use="${h(x.video_id)}">Use in a video ad</button></td></tr>`).join("")}

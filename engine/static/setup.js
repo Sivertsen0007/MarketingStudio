@@ -7,18 +7,22 @@
     const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); return j;
   }
   const css = `
-  #setupPage{position:fixed;inset:0;z-index:50;background:var(--bg,#f8f9fa);overflow:auto;display:none}
-  #setupPage.on{display:block}
-  .su-wrap{max-width:760px;margin:0 auto;padding:28px 20px 60px}
-  .su-wrap h2{font-weight:400;font-size:24px;margin:0 0 4px} .su-sub{color:var(--muted,#5f6368);margin:0 0 20px}
-  .su-card{background:var(--panel,#fff);border:1px solid var(--line,#dadce0);border-radius:8px;padding:16px 18px;margin-bottom:14px}
-  .su-card h3{margin:0 0 10px;font-size:15px;font-weight:500;display:flex;align-items:center;gap:8px}
-  .su-row{display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:start;margin:8px 0}
-  .su-row label{padding-top:7px;font-size:13px} .su-row input{width:100%;box-sizing:border-box}
-  .su-help{font-size:12px;color:var(--muted,#5f6368);margin-top:3px}
-  .su-dot{width:8px;height:8px;border-radius:50%;background:#dadce0;display:inline-block} .su-dot.ok{background:#1e8e3e}
-  .su-acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}
-  .su-top{display:flex;align-items:center;gap:10px;margin-bottom:16px} .su-top .sp{flex:1}
+  #setupPage{position:fixed;inset:0;z-index:50;background:var(--bg);overflow:auto;display:none}
+  #setupPage.on{display:block;animation:su-in var(--t) var(--ease)}
+  @keyframes su-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .su-wrap{max-width:780px;margin:0 auto;padding:36px 24px 60px}
+  .su-wrap h2{font-weight:600;font-size:26px;letter-spacing:-.3px;margin:0 0 4px;color:var(--text)} .su-sub{color:var(--muted);font-size:14px;font-weight:500;margin:0 0 4px}
+  .su-card{background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-card);padding:20px 22px;margin-bottom:12px}
+  .su-card h3{margin:0 0 10px;font-size:16px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px}
+  .su-card details summary{margin:4px 0}
+  .su-row{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:start;margin:10px 0}
+  .su-row label{padding-top:8px;font-size:13px;font-weight:600;color:var(--text2)} .su-row input{width:100%;box-sizing:border-box}
+  .su-help{font-size:12px;font-weight:500;color:var(--muted);margin-top:4px;line-height:1.5}
+  .su-help a{color:var(--accent);font-weight:600;text-decoration:none} .su-help a:hover{text-decoration:underline}
+  .su-dot{width:8px;height:8px;border-radius:50%;background:var(--line);display:inline-block;flex:none} .su-dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg)}
+  .su-acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .su-code{font:12px/1.5 var(--mono);background:var(--sunken);color:var(--text2);padding:8px 10px;border-radius:var(--r-sm);word-break:break-all;flex:1}
+  .su-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:22px} .su-top .sp{flex:1}
   @media (max-width:640px){.su-row{grid-template-columns:1fr}}`;
   document.head.insertAdjacentHTML("beforeend", `<style>${css}</style>`);
   document.body.insertAdjacentHTML("beforeend", `<div id="setupPage" role="dialog" aria-label="Setup"></div>`);
@@ -35,7 +39,7 @@
       <div class="su-card"><h3>Import from a .env file</h3><p class="su-help" style="margin:0 0 8px">Have your keys in a .env file (KEY=value lines)? Pick it and Studio saves every key it knows: secrets into the Keychain. The file itself is not kept.</p>
         <div class="su-acts"><input type="file" id="suEnvFile" accept=".env,text/plain,*" style="max-width:320px"><span id="suEnvMsg" class="su-help"></span></div></div>
       <div class="su-card"><h3>Use with Claude Code</h3><p class="su-help" style="margin:0 0 8px">Run this once in Terminal. Claude then sees the same accounts and drafts as this app, can add changes to the draft (you still press Push), and can load keys from a .env file with the tool setup_import_env_file.</p>
-        <div class="su-acts"><code id="suMcp" style="font-size:12px;background:var(--hover,#f1f3f4);padding:6px 8px;border-radius:4px;word-break:break-all;flex:1">${esc(S.mcp_command)}</code><button id="suMcpCopy">Copy</button></div></div>
+        <div class="su-acts"><code id="suMcp" class="su-code">${esc(S.mcp_command)}</code><button id="suMcpCopy">Copy</button></div></div>
       <div class="su-card" id="suTeam"></div>
       <div class="su-card"><h3><span class="su-dot ${gOk ? "ok" : ""}"></span>Google (Ads, Search Console, GA4)</h3>
         <p class="su-help" style="margin:0 0 8px">${S.google_signed_in ? `Signed in${S.google_account ? " as <b>" + esc(S.google_account) + "</b>" : ""}.` : S.google_service_account ? "Using the service-account key copied from AI-Hub." : "Fill in the OAuth client below, save, then sign in. Your Google user needs access to the Ads accounts."}</p>

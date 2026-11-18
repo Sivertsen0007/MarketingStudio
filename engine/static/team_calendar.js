@@ -24,39 +24,76 @@ const lget = k => { try { return localStorage.getItem("studio.cal." + k) } catch
 const lset = (k, v) => { try { localStorage.setItem("studio.cal." + k, v) } catch(e) {} };
 
 const CSS = `
+.tc-root{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--bg)}
+.tc-head{display:flex;align-items:flex-end;gap:12px;padding:22px 28px 14px;flex-wrap:wrap}
+.tc-head .ttl{flex:1;min-width:240px}
+.tc-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
+.tc-head p{margin:4px 0 0;font-size:13.5px;font-weight:500;color:var(--muted)}
+.tc-root .toolbar.tc-bar{background:transparent;border:0;box-shadow:none;padding:0 28px 14px}
 .tc-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.tc-tabs button{border:0;background:none;padding:6px 10px;border-bottom:2px solid transparent;border-radius:0;color:var(--muted)}
-.tc-tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
-.tc-scroll{overflow:auto;flex:1;min-height:0;padding:12px 16px}
-.tc-legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin:0 0 10px}
-.tc-dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;margin-right:4px}
-.tc-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
-.tc-month{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
-.tc-day{border:1px solid var(--line);border-radius:6px;background:var(--panel);min-height:90px;padding:4px;min-width:0}
-.tc-week .tc-day{min-height:260px}
-.tc-day.today{border-color:var(--accent)} .tc-day.out{opacity:.55}
-.tc-day h4{margin:0 0 4px;font-size:12px;font-weight:500;color:var(--muted)} .tc-day h4 .n{float:right}
-.tc-it{display:block;border-left:4px solid #888;background:var(--hover);border-radius:3px;padding:3px 5px;margin-bottom:3px;font-size:12px;line-height:1.3;overflow:hidden;cursor:default}
-.tc-it .t{font-weight:500} .tc-it .s{color:var(--muted);font-size:11px}
-.tc-it.st-review{outline:1px dashed var(--warn)} .tc-it.st-planned{opacity:.85}
-.tc-it.st-published,.tc-it.st-sent{opacity:.6}
-.tc-card{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:10px 12px;margin-bottom:12px}
-.tc-card h3{margin:0 0 4px;font-size:14px;font-weight:500;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.tc-badge{font-size:11px;padding:1px 7px;border-radius:9px;background:var(--line2);color:var(--text2);font-weight:400}
+.tc-tabs,.tc-seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
+.tc-tabs button,.tc-seg button{height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
+.tc-tabs button:hover,.tc-seg button:hover{background:transparent;color:var(--text)}
+.tc-tabs button.on,.tc-seg button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
+.tc-nav{width:34px;height:34px;padding:0;font-size:16px;line-height:1}
+#tcTitle{font-size:15px;font-weight:600;color:var(--text);margin-left:6px}
+.tc-scroll{overflow:auto;flex:1;min-height:0;padding:0 28px 28px}
+.tc-legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px;font-weight:500;color:var(--muted);margin:0 0 12px}
+.tc-legend span{display:inline-flex;align-items:center}
+.tc-legend .who{height:26px;padding:0 10px;border-radius:var(--r-pill);background:var(--panel);box-shadow:var(--sh-1);color:var(--text2);font-weight:600}
+.tc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.tc-cal{border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);overflow:hidden}
+.tc-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+.tc-month{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+.tc-dow{height:38px;display:flex;align-items:center;padding:0 12px;font-size:11.5px;font-weight:600;color:var(--muted);background:var(--head);border-bottom:1px solid var(--line2)}
+.tc-day{border-right:1px solid var(--line2);border-bottom:1px solid var(--line2);min-height:110px;padding:8px 8px 6px;min-width:0;transition:background var(--t) var(--ease)}
+.tc-day:nth-child(7n){border-right:0}
+.tc-day:hover{background:var(--hover)}
+.tc-week .tc-day{min-height:calc(100vh - 330px);border-bottom:0}
+.tc-day.today h4 .d{background:var(--accent);color:var(--ink-text)}
+.tc-day.out{background:var(--head)} .tc-day.out h4{color:var(--faint)}
+.tc-day h4{display:flex;align-items:center;gap:6px;margin:0 0 6px;font-size:12px;font-weight:600;color:var(--text2)}
+.tc-day h4 .d{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:var(--r-pill);font-variant-numeric:tabular-nums}
+.tc-day h4 .n{margin-left:auto;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-pill);background:var(--sunken);color:var(--muted);font-size:10.5px}
+.tc-day h4 .n.over{background:var(--bad-bg);color:var(--bad)}
+.tc-it{--oc:var(--faint);display:block;background:color-mix(in srgb,var(--oc) 10%,var(--panel));box-shadow:inset 3px 0 0 var(--oc);border-radius:var(--r-sm);padding:5px 8px 5px 10px;margin-bottom:4px;font-size:12px;line-height:1.35;overflow:hidden;cursor:default;color:var(--text2);transition:background var(--t) var(--ease)}
+.tc-it:hover{background:color-mix(in srgb,var(--oc) 17%,var(--panel))}
+.tc-it .t{font-weight:600;color:var(--text)} .tc-it .s{color:var(--muted);font-size:11px;font-weight:500}
+.tc-it.st-review{box-shadow:inset 3px 0 0 var(--oc),inset 0 0 0 1px var(--warn);background:var(--warn-bg)}
+.tc-it.st-planned{opacity:.9}
+.tc-it.st-published,.tc-it.st-sent{opacity:.55}
+.tc-card{border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);padding:18px 20px;margin-bottom:12px}
+.tc-card h3{margin:0 0 6px;font-size:16px;font-weight:600;color:var(--text);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tc-badge{display:inline-flex;align-items:center;height:22px;font-size:11px;padding:0 8px;border-radius:var(--r-sm);background:var(--sunken);color:var(--text2);font-weight:600}
 .tc-badge.team{background:var(--accent-bg);color:var(--accent)}
-.tc-help{font-size:12px;color:var(--muted);margin:0 0 8px;line-height:1.45}
-.tc-rules{width:100%;border-collapse:collapse;font-size:12.5px} .tc-rules td,.tc-rules th{padding:3px 4px;border-bottom:1px solid var(--line2);text-align:left;vertical-align:top}
+.tc-help{font-size:12.5px;font-weight:500;color:var(--muted);margin:0 0 10px;line-height:1.55}
+.tc-help b{color:var(--text2);font-weight:600}
+.tc-root .prob{padding:10px 14px;border-radius:var(--r);background:var(--bad-bg);color:var(--text);font-size:13px}
+.tc-rules{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;margin:4px 0 8px}
+.tc-rules td,.tc-rules th{height:auto;padding:6px;border:0;border-bottom:1px solid var(--line2);text-align:left;vertical-align:middle;white-space:normal;max-width:none;overflow:visible}
+.tc-rules th{position:static;background:var(--head);color:var(--muted);font-size:11.5px;font-weight:600;cursor:default;height:34px}
 .tc-rules input[type=text]{width:100%;min-width:0;box-sizing:border-box} .tc-rules td.ar{white-space:nowrap}
-.tc-row{display:flex;gap:8px;align-items:center;margin:4px 0;flex-wrap:wrap} .tc-row label{min-width:190px;font-size:13px;color:var(--text2)}
-.tc-row input[type=number]{width:80px} .tc-row input[type=text],.tc-row textarea{flex:1;min-width:200px}
-.tc-acts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center}
-.tc-lib{width:100%;border-collapse:collapse;font-size:13px} .tc-lib td{padding:5px 6px;border-bottom:1px solid var(--line2);vertical-align:top}
-.tc-lib pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,monospace;max-height:120px;overflow:auto}
-#tcPick{position:fixed;z-index:60;display:none;font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--accent);box-shadow:0 1px 3px #0003}
-#tcPickDlg{border:1px solid var(--line);border-radius:8px;padding:0;width:min(640px,calc(100% - 32px));background:var(--panel);color:var(--text)}
-#tcPickDlg::backdrop{background:#0004}
-#tcPickDlg .h{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)} #tcPickDlg .b{padding:8px 14px;max-height:60vh;overflow:auto}
-#tcPickDlg .it{border:1px solid var(--line2);border-radius:6px;padding:6px 8px;margin-bottom:6px;cursor:pointer} #tcPickDlg .it:hover{border-color:var(--accent)}
+.tc-rules td.ar label{display:inline-flex;gap:4px;align-items:center;margin-right:8px;font-weight:500}
+.tc-row{display:flex;gap:10px;align-items:center;margin:8px 0;flex-wrap:wrap} .tc-row label{min-width:220px;font-size:13px;font-weight:500;color:var(--text2)}
+.tc-row input[type=number]{width:90px} .tc-row input[type=text],.tc-row textarea{flex:1;min-width:200px}
+.tc-acts{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center}
+.tc-libw{border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);overflow:hidden}
+.tc-lib{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+.tc-lib td{height:auto;padding:12px 14px;border:0;border-bottom:1px solid var(--line2);vertical-align:top;white-space:normal;max-width:none;overflow:visible;color:var(--text2)}
+.tc-lib tr:last-child td{border-bottom:0}
+.tc-lib tr:hover td{background:var(--hover)}
+.tc-lib td:first-child{padding-left:20px}
+.tc-lib b{color:var(--text);font-weight:600}
+.tc-lib pre{margin:2px 0 0;white-space:pre-wrap;word-break:break-word;font:12px/1.5 var(--mono);color:var(--text2);max-height:120px;overflow:auto}
+.tc-lib button{height:30px;padding:0 12px;font-size:12.5px}
+#tcPick{position:fixed;z-index:60;display:none;font-size:11px;font-weight:600;height:22px;line-height:22px;padding:0 9px;border-radius:var(--r-pill);border:0;background:var(--panel);color:var(--accent);box-shadow:var(--sh-pop)}
+#tcPickDlg{border:0;border-radius:var(--r-xl);padding:0;width:min(640px,calc(100% - 32px));background:var(--panel);color:var(--text);box-shadow:var(--sh-dlg)}
+#tcPickDlg::backdrop{background:rgba(17,19,24,.35);backdrop-filter:blur(2px)}
+#tcPickDlg .h{display:flex;gap:8px;align-items:center;padding:18px 22px 12px;font-size:18px;font-weight:600}
+#tcPickDlg .h select,#tcPickDlg .h input,#tcPickDlg .h button{font-size:13px}
+#tcPickDlg .b{padding:4px 22px 20px;max-height:60vh;overflow:auto}
+#tcPickDlg .it{border-radius:var(--r-md);padding:10px 12px;margin-bottom:8px;cursor:pointer;background:var(--panel);box-shadow:var(--sh-1);transition:box-shadow var(--t) var(--ease),background var(--t) var(--ease)}
+#tcPickDlg .it:hover{background:var(--accent-bg);box-shadow:0 0 0 1.5px var(--accent)}
 @media (max-width:900px){.tc-week{grid-template-columns:1fr}.tc-week .tc-day{min-height:0}.tc-row label{min-width:0}}
 `;
 if (!document.getElementById("tc-css")){ const st = document.createElement("style"); st.id = "tc-css"; st.textContent = CSS; document.head.appendChild(st) }
@@ -65,12 +102,13 @@ const T = {el:null, tab: lget("tab") || "cal", view: lget("view") || "week", anc
 
 function render(el){
   T.el = el;
-  el.innerHTML = `<div class="toolbar tc-bar">
+  el.innerHTML = `<div class="tc-root"><div class="tc-head"><div class="ttl"><h1>Calendar</h1><p>Every channel in one place, each owner in their team colour.</p></div>
+      <button id="tcRefresh">Refresh</button></div>
+    <div class="toolbar tc-bar">
       <span class="tc-tabs"><button data-tab="cal">Calendar</button><button data-tab="lib">Library</button><button data-tab="set">Team settings</button></span>
-      <span id="tcNav" class="tc-bar"><span style="width:10px"></span><button data-v="week">Week</button><button data-v="month">Month</button>
-        <button data-go="-1" title="Back">&lsaquo;</button><button data-go="0">Today</button><button data-go="1" title="Forward">&rsaquo;</button><b id="tcTitle"></b></span>
-      <span style="flex:1"></span><button id="tcRefresh">Refresh</button></div>
-    <div class="tc-scroll" id="tcBody"></div>`;
+      <span id="tcNav" class="tc-bar"><span style="width:10px"></span><span class="tc-seg"><button data-v="week">Week</button><button data-v="month">Month</button></span>
+        <button data-go="-1" class="tc-nav" title="Back">&lsaquo;</button><button data-go="0">Today</button><button data-go="1" class="tc-nav" title="Forward">&rsaquo;</button><b id="tcTitle"></b></span></div>
+    <div class="tc-scroll" id="tcBody"></div></div>`;
   el.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { T.tab = b.dataset.tab; lset("tab", T.tab); draw() });
   el.querySelectorAll("[data-v]").forEach(b => b.onclick = () => { T.view = b.dataset.v; lset("view", T.view); loadCal() });
   el.querySelectorAll("[data-go]").forEach(b => b.onclick = () => {
@@ -108,7 +146,7 @@ async function loadCal(){
 function item(x){
   const o = x.owner || {};
   const tip = `${CH[x.channel] || x.channel} · ${x.status} · ${o.name}${x.audience_name ? " · to " + x.audience_name : ""}${x.link ? " · " + x.link : ""}`;
-  return `<span class="tc-it st-${esc(x.status)}" style="border-left-color:${colour(o.colour)}" title="${esc(tip)}">
+  return `<span class="tc-it st-${esc(x.status)}" style="--oc:${colour(o.colour)}" title="${esc(tip)}">
     <span class="s">${esc(hm(x.when))} ${esc(CH[x.channel] || x.channel)}</span> <span class="t">${esc(x.title)}</span>
     <span class="s">· ${esc(x.status)} · ${esc(o.name)}</span></span>`;
 }
@@ -116,19 +154,19 @@ function drawCal(s, e){
   const D = T.data, byDay = {};
   for (const x of D.entries) (byDay[ymd(new Date(x.when))] = byDay[ymd(new Date(x.when))] || []).push(x);
   const lim = D.limits || {}, today = ymd(new Date()), month = T.anchor.getMonth();
-  let h = `<div class="tc-legend">${(D.people || []).map(p => `<span><i class="tc-dot" style="background:${colour(p.colour)}"></i>${esc(p.name)}</span>`).join("")}
+  let h = `<div class="tc-legend">${(D.people || []).map(p => `<span class="who"><i class="tc-dot" style="background:${colour(p.colour)}"></i>${esc(p.name)}</span>`).join("")}
     <span>Dashed: in review. Faded: already out.</span><span>Limits: ${esc(lim.max_per_channel_day)} a day per channel, ${esc(lim.min_gap_hours)} h apart.</span></div>`;
-  h += `<div class="${T.view === "week" ? "tc-week" : "tc-month"}">`;
-  if (T.view === "month") h += DAYS.map(d => `<div class="tc-help" style="margin:0;text-align:center">${d}</div>`).join("");
+  h += `<div class="tc-cal"><div class="${T.view === "week" ? "tc-week" : "tc-month"}">`;
+  if (T.view === "month") h += DAYS.map(d => `<div class="tc-dow">${d}</div>`).join("");
   for (let d = new Date(s); d < e; d = addDays(d, 1)){
     const k = ymd(d), list = byDay[k] || [];
     const per = {}; list.forEach(x => per[x.channel] = (per[x.channel] || 0) + 1);
     const over = Object.entries(per).filter(([, n]) => n > (lim.max_per_channel_day || 99)).map(([c]) => CH[c] || c);
     h += `<div class="tc-day ${k === today ? "today" : ""} ${T.view === "month" && d.getMonth() !== month ? "out" : ""}">
-      <h4>${T.view === "week" ? DAYS[(d.getDay() + 6) % 7] + " " : ""}${d.getDate()}${over.length ? ` <span class="n" style="color:var(--bad)" title="Over the daily limit">${esc(over.join(", "))}</span>` : list.length ? `<span class="n">${list.length}</span>` : ""}</h4>
+      <h4>${T.view === "week" ? DAYS[(d.getDay() + 6) % 7] + " " : ""}<span class="d">${d.getDate()}</span>${over.length ? ` <span class="n over" title="Over the daily limit">${esc(over.join(", "))}</span>` : list.length ? `<span class="n">${list.length}</span>` : ""}</h4>
       ${list.map(item).join("")}</div>`;
   }
-  body().innerHTML = h + `</div>` + (D.entries.length ? "" : `<p class="tc-help" style="margin-top:10px">Nothing with a time in this range. SoMe posts, email campaigns and SEO publishes show here once they have one.</p>`);
+  body().innerHTML = h + `</div></div>` + (D.entries.length ? "" : `<p class="tc-help" style="margin-top:10px">Nothing with a time in this range. SoMe posts, email campaigns and SEO publishes show here once they have one.</p>`);
 }
 
 // ---------- library ----------
@@ -142,10 +180,10 @@ async function loadLib(){
       ${L.can_add ? `<div class="tc-row"><select id="tcNk">${Object.entries(K).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("")}</select>
         <input type="text" id="tcNl" placeholder="Label (optional)" style="max-width:220px"><textarea id="tcNt" rows="2" placeholder="The text, URL, utm_source=...&amp;utm_medium=... or HTML"></textarea>
         <button id="tcNadd" class="primary">Add</button></div>` : `<p class="tc-help">Viewers can't add to the library.</p>`}</div>
-    <table class="tc-lib">${L.items.map(x => `<tr><td style="width:120px"><span class="tc-badge">${esc(K[x.kind] || x.kind)}</span></td>
+    <div class="tc-libw"><table class="tc-lib">${L.items.map(x => `<tr><td style="width:120px"><span class="tc-badge">${esc(K[x.kind] || x.kind)}</span></td>
       <td>${x.label ? `<b>${esc(x.label)}</b><br>` : ""}<pre>${esc(x.text)}</pre></td><td style="width:140px" class="tc-help">${esc(x.by)}<br>${esc((x.created || "").slice(0, 10))}</td>
       <td style="width:150px"><button data-copy="${esc(x.id)}">Copy</button> ${L.can_add ? `<button class="link" data-del="${esc(x.id)}">Remove</button>` : ""}</td></tr>`).join("")
-      || `<tr><td class="tc-help">The library is empty.</td></tr>`}</table>`;
+      || `<tr><td class="tc-help">The library is empty.</td></tr>`}</table></div>`;
   const $ = s => body().querySelector(s);
   $("#tcLk").onchange = e => { T.libKind = e.target.value; loadLib() };
   if ($("#tcNadd")) $("#tcNadd").onclick = async () => {

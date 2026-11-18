@@ -144,7 +144,7 @@ pick what the grid shows:
 
 | Google Ads | Meta |
 |---|---|
-| Campaigns, Ad groups, Keywords, Negative keywords, Ads (RSA + DSA), Asset groups (PMax), Sitelinks, Callouts, Snippets, Prices, Promotions, Locations, Audiences, Shared lists, Recommendations | Campaigns, Ad sets, Ads, Audiences, Lead forms (read-only) |
+| Campaigns, Ad groups, Keywords, Negative keywords, Ads (RSA + DSA), Asset groups (PMax), Sitelinks, Callouts, Snippets, Prices, Promotions, Locations, Audiences, Audience lists, Shared lists, Recommendations, Videos | Campaigns, Ad sets, Ads, Audiences, Lead forms (read-only), Tests |
 
 **Middle: the grid.**
 
@@ -302,9 +302,29 @@ sure Meta is about them.
 
 ## Audiences
 
-- **Google Ads**: *Audiences* under MANAGE lists the audience lists on each campaign. Attach lists, detach them, or switch a
-  campaign between observation and targeting; each is a draft change that goes live with Push live.
-- **Meta**: *Audiences* lists the ad account's custom and lookalike audiences with their size. It is read-only.
+**Audience lists** (a Google Ads account) and **Audiences** (a Meta ad account) list every audience with its type, size,
+membership days and where it is used. Every change goes into the draft, and only Push live sends it.
+
+- **Google Ads**:
+  - **Make** website-visitor lists (URL rules, any or all of them, optional exclusions, 1 to 540 days, optionally
+    filled from recent visitors) and combined lists (all of / any of / none of other lists).
+  - **Edit** a list's name, description and membership days. Rules and members are set when a list is made; to change
+    them, make a new list.
+  - **Remove** a list only when nothing uses it; otherwise Studio names the campaigns, ad groups or combined lists that do.
+  - **Attach** lists to a campaign, detach them, or switch the campaign between observation and targeting (*Audiences* under MANAGE).
+- **Meta**:
+  - **Make** website audiences (URL or pixel event rules, up to 180 days), engagement audiences (Facebook Page and
+    Instagram profile, up to 730 days; lead forms, up to 90 days) and lookalikes (seeded on a website, engagement,
+    Instagram or app audience of at least 100 people).
+  - **Edit** an audience's name and description.
+  - **Remove** an audience only when no ad set uses it.
+  - **Add or exclude** audiences on an ad set.
+- **Customer lists are read-only** on both platforms. Studio never uploads, reads or changes customer data, never puts a
+  customer list inside a combined list, and never uses one as a lookalike seed.
+- **Spend tick**: changes that can widen who sees your ads, and undoing them, need the spend tick first. That covers ad set
+  audiences and targeting on Meta, and membership days on Google.
+- Video-viewer audiences on Meta aren't offered yet, and Google doesn't let tools make YouTube-viewer lists; target the ones
+  you already have.
 
 ---
 
@@ -698,6 +718,7 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Pacing | `pacing_status` (targets, spend, forecast, flags, recommendations), `pacing_add_to_draft` (budget changes into the draft only) |
 | Alerts | `alerts_list` (rules and recent alerts), `alert_rule_add` (a rule in Studio's local config) |
 | Creatives | `creative_performance` (asset and ad performance for a date range, read-only) |
+| Audiences | `audiences_list` (Google audience lists or Meta custom audiences, with size and where used; read), `audience_add_to_draft` (make, edit or remove audiences and attach them; draft only; no customer lists) |
 | Video ads | `video_assets_list` (videos, uploads, Demand Gen campaigns, ad groups and ads, logos; read), `demandgen_add_to_draft` (Demand Gen campaigns, ad groups, video ads, pauses and video assets; draft only; no upload tool) |
 | Calendar | `calendar_list`, `library_list`, `team_settings_get` (read only) |
 
@@ -721,6 +742,11 @@ Marketing Studio.app
     ├── pacing.py          budget pacing: spend, forecast, targets, draft budget recommendations
     ├── alerts.py          Ads alerts: rules, read-only checks, history, delivery
     ├── creatives.py       creative and asset performance; row actions into the draft
+    ├── audiences.py, meta_audiences.py   audience lists (Google) and custom audiences (Meta)
+    ├── demandgen.py, youtube_upload.py   Demand Gen video ads; video upload through Google Ads
+    ├── meta_tests.py      Meta A/B and creative tests
+    ├── experiments.py     keeps Google Ads experiment trial campaigns out of reach
+    ├── scheduler.py       background jobs (only while Refresh data is automatic)
     ├── areas/             Pacing, Alerts, Creatives, Email, SEO, SoMe, Activity
     ├── mcp_server.py      the MCP server for Claude (stdio)
     ├── updater.py         in-app updates from GitHub Releases
@@ -757,8 +783,12 @@ schedule. Switch it back to Manual at any time; nothing is fetched automatically
 
 - Nothing goes live without **your Push live**. Claude, the MCP server and the draft can never push.
 - New campaigns, ad sets and ads are created **paused**.
-- Spend increases and permanent removals need an **extra tick** before Push live is enabled.
+- Spend increases, wider targeting and permanent removals need an **extra tick** before Push live is enabled. An undo that
+  can raise spend asks for the same tick.
+- Push live checks every change again, including changes that came from a teammate's draft. One problem stops the whole push.
 - Every push stores the values from before it, so **Undo** can put them back.
+- Google Ads experiment trial campaigns can't be changed or undone from Studio, so a running experiment stays as it is.
+- Customer lists are never uploaded, changed or used as seeds.
 - Meta: nothing that existed before a push is ever deleted or archived.
 - Checks before a push: dead links (blocks), prices and percentages that are not on the linked page, link placement, price formatting.
 - The engine answers only on `127.0.0.1`, refuses other hosts and origins, and every change request needs a per-launch secret that only the page gets.
@@ -766,7 +796,7 @@ schedule. Switch it back to Manual at any time; nothing is fetched automatically
 ## Privacy
 
 - Studio talks only to Google, Meta, your email platform, WordPress, LinkedIn, the ECB rates API and GitHub (for updates). There is no telemetry.
-- It never downloads lead form leads or subscriber lists. Activity hides staff names unless you ask for them.
+- It never downloads lead form leads or subscriber lists, and never uploads customer lists. Activity hides staff names unless you ask for them.
 - Keys never leave your Mac, are never logged, and are never shown again after you save them.
 
 ---
@@ -789,7 +819,11 @@ Plain `python3`, no pytest. Each file runs on its own and never touches the real
 ```sh
 cd engine
 for t in tests/test_*.py; do python3 "$t"; done
+cd ../teamserver
+for t in tests/test_*.py; do python3 "$t"; done
 ```
+
+The tests use fakes for Google and Meta: they never call a live API.
 
 ## Build the app
 

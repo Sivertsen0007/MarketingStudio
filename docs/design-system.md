@@ -18,6 +18,7 @@ radius or shadow: they use the tokens below.
 | `--sunken` | `#f1f2f5` | Keyboard hints, tracks, empty wells |
 | `--hover` | `#f4f5f8` | Hover on rows, menu items, ghost buttons |
 | `--line` / `--line2` | `#e6e8ee` / `#eff0f4` | Dividers and input borders / row lines |
+| `--line-strong` / `--line-stronger` | `#d6d9e1` / `#b9bdc8` | Input border on hover, scrollbar thumb / thumb on hover |
 | `--text` | `#111318` | Headings, values, primary text |
 | `--text2` | `#3d4049` | Body text |
 | `--muted` | `#8a8e98` | Labels, secondary text, inactive tabs |
@@ -26,12 +27,17 @@ radius or shadow: they use the tokens below.
 | `--accent-2` | `#2f6bf0` | Hover on blue, gradient end |
 | `--accent-bg` / `--accent-soft` | `#eef2ff` / `#d3e1fb` | Selected rows, info tint / progress track, chart fill |
 | `--violet` / `--violet-bg` | `#a56bf0` / `#f4ecfe` | Second series, Claude and draft accents |
-| `--ink` | `#17181c` | Primary (dark) button |
+| `--ink` / `--ink-2` | `#17181c` / `#2a2c33` | Primary (dark) button, toast / primary button on hover |
+| `--on-accent` | `#fff` | Text and icons on a blue or coloured fill |
 | `--ok` / `--ok-bg` | `#1c9a4c` / `#e3f7e9` | Live, success, up |
 | `--warn` / `--warn-bg` | `#b45309` / `#fff4e0` | Warnings |
+| `--warn-dot` | `#f5a524` | Amber status dot (connections, data warning, legend) |
+| `--idle` | `#a9acb4` | Paused / unknown status dot |
 | `--bad` / `--bad-bg` | `#e5484d` / `#fdecec` | Problems, errors, down, notification dot |
 | `--draft` / `--draft-bg` | `#8b4fe0` / `#f4ecfe` | In draft |
 | `--c1` ... `--c6` | blue, violet, green, orange, light blue, red | Chart series, in that order |
+| `--scrim` | `rgba(17,19,24,.35)` | Dialog backdrop |
+| `--glass` | `rgba(255,255,255,.22)` | Counter badge on a filled (blue) button |
 
 ### Type
 
@@ -64,9 +70,18 @@ Spacing steps: 4, 8, 12, 16, 20, 24, 36. Cards pad 18-24, gaps between cards 12.
 
 ## Components
 
-**Top bar.** White, no bottom border, a 1px `--line2` hairline under it. Brand left (Marketing **Studio**, 18/600). Area tabs are
-pill tabs: 36 high, radius 9, padding 9/14, 13/600; inactive `--muted` on transparent, active `--text` on white with `--sh-1`.
-Actions on the right are secondary buttons.
+**Top bar.** White, no bottom border, a 1px `--line2` hairline under it. Brand left: a 28px blue gradient mark and
+Marketing **Studio** (18). Then the pill tabs: Overview first, then the areas. 36 high, radius 9, padding 0/14, 13/600; inactive
+`--muted` on transparent, active `--text` on white with `--sh-1`. Actions on the right are secondary buttons 34 high (`.tb`);
+Push turns blue with a counter when the draft has changes. Under 1380px the brand name and the Setup/Settings icons hide.
+
+**Data bar.** Sits on the canvas, not in a card: account picker (select without a border, `--sh-1`), freshness chips as white
+chips with `--sh-1` (status tints when they warn), and the legend right: white chips with a small coloured square.
+
+**Work panes (Ads).** Tree, grid and Edit/Draft are three white cards on the canvas with 12px gaps. The tree uses rounded
+rows (radius 6) with the selected row in `--sel` and blue text. MANAGE is a list of tabs: the open one is a white tab with
+`--sh-1` and a blue count pill. The grid toolbar has a search with an icon, filter pills as a segmented control (`--sunken`
+track, white active pill) and 34px selects and buttons. The Edit/Draft switch is the same segmented pill style.
 
 **Buttons.** Height 32-34, radius `--r`, padding 0 12-14, 12.5-13/600, optional 14px icon with gap 8.
 - Secondary (default): white, `--sh-1`, no border.
@@ -82,11 +97,19 @@ Selects carry a small chevron. Search inputs have a 14px search icon and may sho
 **Dropdowns and menus.** White, radius `--r-lg`, `--sh-pop`, padding 6. Items 32 high, radius `--r-sm`, hover `--hover`,
 selected item `--accent-bg` with `--accent` text. Group labels 11/600 `--muted`.
 
-**Chips and badges.** Radius 5-6, padding 3/8, 11/600. Status tints: ok, warn, bad, draft, info (`--accent-bg`). Trend chip:
-`+4.8%` in `--ok` on `--ok-bg` with a small arrow. Counter badge on a button: pill, `--accent` on white or white on `--accent`.
+**Chips and badges.** Radius 5-6, padding 3/8, 11/600. Status tints: ok, warn, bad, draft, info (`--accent-bg`), as
+`.chip.ok` and so on, text in the status colour. Trend chip `.chip.trend` (`.down` for red): `+4.8%` in `--ok` on `--ok-bg` with a
+small arrow. Counter badge on a button: pill, `--accent` on `--accent-bg`, or white on `--glass` inside a blue button.
+Status pill (`.pill`): pill radius, tinted by status (Enabled/Active green, Paused grey, Removed red), 7px dot.
 
 **Cards.** White, radius `--r-lg`, `--sh-card`, padding 18-24. Header row: title (16-18/600) left, small icon buttons
-(`+`, `···`) or a secondary button right. KPI card: label 13/500 `--text2`, big number, trend chip.
+(`+`, `···`), a secondary button or a neutral chip right. KPI card: label 13/500 `--text2`, big number, trend chip.
+A `.tile` on its own is a small KPI card; inside an `.ov-card` the tiles sit side by side, split by `--line2` hairlines.
+Key figures (`.tile.hi`) show the number in `--accent`.
+
+**Overview.** Breadcrumb (12/500 `--muted`), greeting as page title, subtitle, tools right (freshness, period select, dark
+Refresh). Then one card per channel with five KPIs, a bar chart and a share list built from the destination rows, the area
+cards (Email, SEO, SoMe), and the two tables as cards with the table running edge to edge under the card header.
 
 **Tables and grids.** Header `--head`, 11.5/600 `--muted`, sticky. Rows 38-40 high, `--line2` dividers, hover `--hover`,
 selected `--sel`. Numbers right-aligned, tabular. In-draft cells keep the draft tint; problems and warnings keep their tints.
@@ -108,11 +131,20 @@ Backdrop `rgba(17,19,24,.35)` with a light blur.
 
 **Tooltips.** `--ink` small tooltip for icons; white card tooltip for charts.
 
-**Empty and loading states.** Muted text centred in the card; skeleton bars in `--sunken` with a soft shimmer.
+**Empty and loading states.** Muted text centred in the card; skeleton bars (`.skel`) in `--sunken` with a soft shimmer.
+
+**Notes.** `.prob` (red on `--bad-bg`) and `.warnl` (amber on `--warn-bg`), radius 6, 12/500. Draft items are small cards
+(`--sh-card`, radius 10) with who/time, the summary in 600 and any notes under it.
+
+**Update banner.** White card bottom right, `--sh-pop`, a blue dot and a blue Update now button.
+
+A live showcase of every component is `docs/design-system.html` (its CSS is a copy of the first `<style>` block in
+`engine/index.html`; refresh the copy when the tokens change).
 
 ## Rules
 
 - No new hex values in area files: add a token here first.
+- Light only: no `prefers-color-scheme: dark` rules.
 - One primary (`--ink`) button per view; Push live is blue.
 - Shadows, not borders, separate surfaces. Borders are for inputs and table rows.
 - Keep the information density: Studio is a work tool. Rows stay compact; cards get air.

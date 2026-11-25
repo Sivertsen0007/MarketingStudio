@@ -1276,7 +1276,7 @@ function renderPreview(p, acct){
     ${meta ? `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.meta_new ? "checked" : ""}> <span>Create new ads as <b>Active</b> (they deliver once Meta approves them; new campaigns and ad sets stay Paused)</span></label>`
       : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
     <div id="lv_spendBox">${spendTick(false)}</div>
-    ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (${meta ? "permanent changes" : "removals"}). I know.</span></label>` : ""}
+    ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (${isMeta() ? "permanent changes" : "removals"}). I know.</span></label>` : ""}
     <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary><div id="lv_det">${details()}</div></details>${TR ? TR.section(p.team) : ""}`;
   showDialog(jobTitle("Push to", acct), body, [histLink(), ...(meta ? [] : [["Send to Editor instead", sendToEditor]]), ["Push live", () => livePush(acct), "live"]]);
   const btn = $("#dlgF .live");

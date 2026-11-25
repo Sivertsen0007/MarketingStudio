@@ -214,7 +214,7 @@ def _reset_meta_pacing():
         meta_api._usage_mono = 0.0
 
 
-def bench_meta(n, latency, workers=None, op="both", reuse=True):
+def bench_meta(n, latency, workers=None, op="both", reuse=False):
     """Meta preview then push (refresh=False) of n mixed changes. workers=None: the default (meta_ads.WORKERS).
     reuse: the push may reuse the preview's checks (meta_ads.REUSE_CHECKS); False checks every step again."""
     out = {}
@@ -404,12 +404,12 @@ def bench_google(n, latency, op="both"):
 
 # ---------- run + report ----------
 
-def run(n, latency, baseline=True, workers=None, no_reuse=False):
-    """{"meta": {preview, push}, "meta_noreuse": {...} (push checks everything again, if no_reuse), "meta_seq": {...}
-    (workers=1 and no reuse of checks, if baseline), "google": {...}} for n changes."""
+def run(n, latency, baseline=True, workers=None, reuse=False):
+    """{"meta": {preview, push} (the default: the push checks every step again), "meta_reuse": {...} (the push reuses
+    the preview's passes, REUSE_CHECKS on, if reuse), "meta_seq": {...} (workers=1, if baseline), "google": {...}}."""
     out = {"n": n, "latency": latency, "meta": bench_meta(n, latency, workers), "google": bench_google(n, latency)}
-    if no_reuse:
-        out["meta_noreuse"] = bench_meta(n, latency, workers, reuse=False)
+    if reuse:
+        out["meta_reuse"] = bench_meta(n, latency, workers, reuse=True)
     if baseline:
         out["meta_seq"] = bench_meta(n, latency, workers=1, reuse=False)
     return out
@@ -419,7 +419,7 @@ def _calls_txt(calls):
     return ", ".join(f"{k} {v}" for k, v in sorted(calls.items()))
 
 
-RUNS = (("meta", "Meta"), ("meta_noreuse", "Meta, no reuse"), ("google", "Google"), ("meta_seq", "Meta, sequential"))
+RUNS = (("meta", "Meta"), ("meta_reuse", "Meta, reuse checks"), ("google", "Google"), ("meta_seq", "Meta, sequential"))
 
 
 def report(results, file=sys.stdout):
@@ -472,13 +472,13 @@ def main(argv=None):
     ap.add_argument("--n", type=int, nargs="+", default=[20, 200])
     ap.add_argument("--latency", type=float, default=0.3)
     ap.add_argument("--no-baseline", action="store_true", help="skip the Meta workers=1 run (it is slow at N=200)")
-    ap.add_argument("--no-reuse", action="store_true", help="also run Meta with the push checking every step again")
+    ap.add_argument("--reuse", action="store_true", help="also run Meta with the push reusing the preview's checks (REUSE_CHECKS)")
     ap.add_argument("--json", help="also write the raw measurements to this file")
     a = ap.parse_args(argv)
     results = []
     for n in a.n:
         print(f"running N={n} ...", file=sys.stderr, flush=True)
-        results.append(run(n, a.latency, baseline=not a.no_baseline, no_reuse=a.no_reuse))
+        results.append(run(n, a.latency, baseline=not a.no_baseline, reuse=a.reuse))
     missed = report(results)
     if a.json:
         Path(a.json).write_text(json.dumps(results, indent=1, default=str))

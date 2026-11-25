@@ -2036,8 +2036,9 @@ def _checked(s):
 # and the live state of every object the step touches, read again by this push, is identical to what the preview read.
 # Anything else is checked again. Only passes are remembered (a check that found a problem, failed or was rate-limited is
 # never reused), only for change types whose touched objects are known (_touches), and the memory is per process,
-# bounded, thread-safe and emptied after every push. REUSE_CHECKS = False switches it off.
-REUSE_CHECKS = True
+# bounded, thread-safe and emptied after every push. Off by default (REUSE_CHECKS = False): the push then checks every
+# step again, so a fresh refusal still stops the whole push before anything is written. True switches reuse on.
+REUSE_CHECKS = False
 REUSE_MAX_AGE = 120.0  # seconds since the preview finished
 REUSE_MAX = 5000       # remembered passes at most (oldest dropped first)
 REUSE_KINDS = ("update", "create", "copy", "new_ad")  # validate_only POSTs; reads-only checks always run
@@ -2067,9 +2068,15 @@ def _digest(o):
     return hashlib.sha256(json.dumps(o, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
 
 
+def _who():
+    """A hash of the Meta token in use (who the checks ran as). The token itself is never stored."""
+    return hashlib.sha256(("meta-token:" + str(meta_api.TOKEN or "")).encode()).hexdigest()[:16]
+
+
 def _reuse_key(s, live):
-    """The memory key of one step's check: ad account, the whole step (its exact params), the live state it was planned on."""
-    return (str(act()), _digest({k: v for k, v in s.items() if k != "item"}), live)
+    """The memory key of one step's check: ad account, Meta token (hashed), the whole step (its exact params), the live
+    state it was planned on."""
+    return (str(act()), _who(), _digest({k: v for k, v in s.items() if k != "item"}), live)
 
 
 def _reused(key):
@@ -2078,7 +2085,8 @@ def _reused(key):
         return False
     with _reuse_lock:
         hit = _reuse.get(key)
-    return bool(hit and hit[0] == key[0] == str(act()) and 0 <= time.monotonic() - hit[1] < REUSE_MAX_AGE)
+    return bool(hit and hit[0] == key[0] == str(act()) and key[1] == _who()
+                and 0 <= time.monotonic() - hit[1] < REUSE_MAX_AGE)
 
 
 def _remember(keys):
@@ -2173,6 +2181,7 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, c
             except Exception:  # noqa: BLE001 - a progress report never stops a preview or push
                 pass
     reused = [checks == "reuse" and _reused(key) for key in keys]
+    _plan_tls.reused = sum(1 for r in reused if r)
 
     def run_check(j):
         return "" if reused[j] else _checked(jobs[j][1])
@@ -2680,13 +2689,16 @@ def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None
     back from Meta (_live_check: one batched GET per level) and gets level, live_status (ACTIVE, PAUSED,
     PENDING_REVIEW, DISAPPROVED, WITH_ISSUES, IN_PROCESS, ... or "unknown"), configured_status, review and link
     (Ads Manager); "summary" is an honest line such as "3 ads created (Paused), 2 in review, 1 edit applied".
-    While a video uploads, progress also gets status "uploading" / "processing" for that item."""
+    While a video uploads, progress also gets status "uploading" / "processing" for that item.
+    "checks_reused": how many steps' checks came from the preview just before (REUSE_CHECKS; 0 when off)."""
     cb = progress or progress_cb
     a = acct()
     _progress.start(a, "push", [(i["id"], i["summary"], 1) for i in _only(only)], "checking", "Meta is checking each change")
     res = None
     try:
+        _plan_tls.reused = 0
         res = _push(enable_new, accept_spend, accept_permanent, only, cb, refresh, workers)
+        res["checks_reused"] = getattr(_plan_tls, "reused", 0) or 0  # steps whose check came from the preview (0 when off)
         if "results" in res:
             res["items"] = _job_items(res["results"])
         return res

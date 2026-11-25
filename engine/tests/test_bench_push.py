@@ -18,17 +18,17 @@ N, LATENCY = 20, 0.05
 class SmallBench(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.r = bench.run(N, LATENCY, baseline=True)
+        cls.r = bench.run(N, LATENCY, baseline=True, reuse=True)
 
     def test_every_run_succeeds(self):
-        for ch in ("meta", "meta_seq", "google"):
+        for ch in ("meta", "meta_reuse", "meta_seq", "google"):
             for what in ("preview", "push"):
                 x = self.r[ch][what]
                 with self.subTest(ch=ch, what=what):
                     self.assertTrue(x["ok"], (x["problems"], x["message"]))
 
     def test_meta_reads_are_batched(self):
-        for ch in ("meta", "meta_seq"):
+        for ch in ("meta", "meta_reuse", "meta_seq"):
             for what in ("preview", "push"):
                 c = self.r[ch][what]["calls"]
                 with self.subTest(ch=ch, what=what):
@@ -37,9 +37,10 @@ class SmallBench(unittest.TestCase):
                     # after a push, the read-back: one batched GET per level of what was made or changed, never per item
                     self.assertEqual(c.get("GET status", 0), 3 if what == "push" else 0, c)
         self.assertEqual(self.r["meta"]["preview"]["calls"].get("CHECK"), 22)  # one per step; a copied ad makes two checks
-        self.assertEqual(self.r["meta_seq"]["push"]["calls"].get("CHECK"), 22)  # reuse off: the push checks every step again
-        # the push right after an unchanged preview reuses its passes (same account, params and live state, < 120 s)
-        self.assertNotIn("CHECK", self.r["meta"]["push"]["calls"])
+        for ch in ("meta", "meta_seq"):  # the default (REUSE_CHECKS off): the push checks every step again
+            self.assertEqual(self.r[ch]["push"]["calls"].get("CHECK"), 22, ch)
+        # switched on: the push right after an unchanged preview reuses its passes (same account, token, params, live state)
+        self.assertNotIn("CHECK", self.r["meta_reuse"]["push"]["calls"])
         push = self.r["meta"]["push"]["calls"]
         self.assertEqual(push.get("CREATE", 0) + push.get("UPDATE", 0), 25, push)
         self.assertNotIn("CREATE", self.r["meta"]["preview"]["calls"])

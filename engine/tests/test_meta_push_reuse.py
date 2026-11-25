@@ -3,7 +3,7 @@
 
 - a push reuses a preview's validate_only pass ONLY for the same ad account, a preview finished < REUSE_MAX_AGE s ago,
   the exact same step and the same freshly re-read live state of every object the step touches; anything else is
-  checked again, a problem is never reused, the memory is bounded and emptied after every push, REUSE_CHECKS switches it off
+  checked again, a problem is never reused, the memory is bounded and emptied after every push; REUSE_CHECKS is off by default (tests switch it on)
 - the per-level batched live reads (plan) and the read-back levels (after a push) run side by side
 - video upload: a chunk larger than CHUNK_READ_MAX is streamed from disk, a saved video Meta could not process is
   uploaded again, and Prepare for Meta answers JSON for any error while resolving the file
@@ -30,6 +30,11 @@ import meta_api  # noqa: E402
 import server  # noqa: E402
 
 ACT = fp.ACT
+_DEFAULT_REUSE = meta.REUSE_CHECKS  # as shipped, before any test patches it
+
+
+def meta_default_reuse():
+    return _DEFAULT_REUSE
 ALL_CHECKS = 21  # validate_only calls for fp.items(): one per step, a copied ad makes two
 ALL_STEPS = 20  # steps (what a pass is remembered for)
 
@@ -44,9 +49,10 @@ class Reuse(fp.Base):
         meta.forget_checks()
         self.addCleanup(meta.forget_checks)
         self.acct = [ACT]
-        p = mock.patch.object(meta, "act", lambda: self.acct[0])
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (mock.patch.object(meta, "act", lambda: self.acct[0]), mock.patch.object(meta, "REUSE_CHECKS", True),
+                  mock.patch.object(meta_api, "TOKEN", "token-one")):
+            p.start()
+            self.addCleanup(p.stop)
 
     def push(self, **kw):
         with mock.patch.object(meta, "refresh_account", lambda: None):
@@ -71,9 +77,30 @@ class Reuse(fp.Base):
         self.assertEqual(len(checks(g)), ALL_CHECKS)  # the preview's own checks
         self.assertTrue(res["ok"], res.get("message"))
         self.assertEqual(again, [])  # every pass reused
+        self.assertEqual(res["checks_reused"], ALL_STEPS)
         # the push still read every object live again (batched) before sending
         reads = [c for c in g.calls if c[0] == "GET" and c[1] == ""]
         self.assertGreaterEqual(len(reads), 6)
+
+    def test_off_by_default(self):
+        self.assertIs(meta_default_reuse(), False)  # shipped off
+        g = self.graph()
+        with mock.patch.object(meta, "REUSE_CHECKS", meta_default_reuse()):
+            _pv, res, again = self.preview_then(g)
+        self.assertEqual(len(again), ALL_CHECKS)
+        self.assertEqual(res["checks_reused"], 0)
+
+    def test_other_token_checks_again(self):
+        g = self.graph()
+        _pv, res, again = self.preview_then(g, between=lambda: setattr(meta_api, "TOKEN", "token-two"))
+        self.assertEqual(len(again), ALL_CHECKS)
+        self.assertEqual(res["checks_reused"], 0)
+
+    def test_token_never_stored(self):
+        self.graph()
+        meta.preview()
+        self.assertTrue(meta._reuse)
+        self.assertNotIn("token-one", repr(list(meta._reuse.items())))
 
     def test_other_account_checks_again(self):
         g = self.graph()
@@ -206,6 +233,8 @@ class Reuse(fp.Base):
         self.acct[0] = "act_2"
         self.assertFalse(meta._reused(key))  # the same key, asked from another account
         self.assertFalse(meta._reused(("act_2",) + key[1:]))
+        self.acct[0] = ACT
+        self.assertFalse(meta._reused(key[:1] + ("other-token",) + key[2:]))
 
     def test_cleared_after_every_push(self):
         g = self.graph()

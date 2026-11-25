@@ -1,4 +1,27 @@
 // Setup: keys (Keychain), Sign in with Google, move over from AI-Hub. Opens on its own when nothing is set up yet.
+// Also the shared en-GB formatters for every static/*.js file (this file loads first): window.studioFmt.
+window.studioFmt = window.studioFmt || (() => {
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const two = n => String(n).padStart(2, "0");
+  // ISO strings, "YYYY-MM-DD", "YYYYMMDD" (Google Ads Editor), "YYYY-MM-DD HH:MM", epoch seconds or ms, Date -> Date (or null)
+  const parse = v => {
+    if (v == null || v === "") return null;
+    if (v instanceof Date) return isNaN(v) ? null : v;
+    if (typeof v === "number") return new Date(v < 1e12 ? v * 1000 : v);
+    const s = String(v).trim();
+    if (/^\d{8}$/.test(s)) return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8));
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s + "T12:00:00");
+    const d = new Date(/^\d{4}-\d{2}-\d{2} \d/.test(s) ? s.replace(" ", "T") : s);
+    return isNaN(d) ? null : d;
+  };
+  const date = v => { const d = parse(v); return d ? `${d.getDate()} ${MON[d.getMonth()]} ${d.getFullYear()}` : (v == null ? "" : String(v)) };   // 25 Nov 2026
+  const time = v => { const d = parse(v); return d ? `${two(d.getHours())}:${two(d.getMinutes())}` : "" };
+  const dateTime = v => { const d = parse(v); return d ? `${date(d)}, ${time(d)}` : (v == null ? "" : String(v)) };             // 25 Nov 2026, 14:05
+  const num = (v, dp) => v == null || v === "" || isNaN(v) ? "" : Number(v).toLocaleString("en-GB", dp == null ? {} : {minimumFractionDigits: dp, maximumFractionDigits: dp});
+  const money = (v, cur) => { if (v == null || v === "" || isNaN(v)) return "";
+    try { return cur ? Number(v).toLocaleString("en-GB", {style: "currency", currency: cur}) : num(v, 2) } catch(e) { return num(v, 2) + " " + cur } };
+  return {parse, date, time, dateTime, num, money, MON};
+})();
 (function(){
   const PRESS = (document.querySelector('meta[name="studio-press"]') || {}).content || "";
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -23,6 +46,12 @@
   .su-acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
   .su-code{font:12px/1.5 var(--mono);background:var(--sunken);color:var(--text2);padding:8px 10px;border-radius:var(--r-sm);word-break:break-all;flex:1}
   .su-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:22px} .su-top .sp{flex:1}
+  .su-file{display:inline-flex;align-items:center;height:34px;padding:0 14px;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1),0 0 0 1px var(--line-strong);font-size:13px;font-weight:600;color:var(--text);cursor:pointer;margin:0}
+  .su-file:hover{background:var(--hover)} .su-file:focus-within{box-shadow:var(--ring)}
+  .su-file input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+  .su-card details.su-tech{margin-top:6px;font-size:12px;font-weight:500;color:var(--muted);line-height:1.5}
+  .su-card details.su-tech summary{cursor:pointer;color:var(--text2);font-weight:600;padding:7px 0}
+  #setupPage button.danger{color:var(--bad-text, #c8303a)}
   @media (max-width:640px){.su-row{grid-template-columns:1fr}}`;
   document.head.insertAdjacentHTML("beforeend", `<style>${css}</style>`);
   document.body.insertAdjacentHTML("beforeend", `<div id="setupPage" role="dialog" aria-label="Setup"></div>`);
@@ -37,13 +66,15 @@
       <div class="su-top"><div><h2>Setup</h2><p class="su-sub">Your keys stay on this Mac: secrets in the macOS Keychain, the rest in ${esc(S.home)}. Nothing is sent anywhere else.</p></div>
         <span class="sp"></span><button id="suClose">${S.ready ? "Done" : "Later"}</button></div>
       <div class="su-card"><h3>Import from a .env file</h3><p class="su-help" style="margin:0 0 8px">Have your keys in a .env file (KEY=value lines)? Pick it and Studio saves every key it knows: secrets into the Keychain. The file itself is not kept.</p>
-        <div class="su-acts"><input type="file" id="suEnvFile" accept=".env,text/plain,*" style="max-width:320px"><span id="suEnvMsg" class="su-help"></span></div></div>
-      <div class="su-card"><h3>Use with Claude Code</h3><p class="su-help" style="margin:0 0 8px">Run this once in Terminal. Claude then sees the same accounts and drafts as this app, can add changes to the draft (you still press Push), and can load keys from a .env file with the tool setup_import_env_file.</p>
-        <div class="su-acts"><code id="suMcp" class="su-code">${esc(S.mcp_command)}</code><button id="suMcpCopy">Copy</button></div></div>
+        <div class="su-acts"><label class="su-file">Choose .env file<input type="file" id="suEnvFile" accept=".env,text/plain,*"></label><span id="suEnvMsg" class="su-help"></span></div></div>
+      <div class="su-card"><h3>Use with Claude Code</h3><p class="su-help" style="margin:0 0 8px">Run this once in Terminal. Claude then sees the same accounts and drafts as this app and can add changes to the draft. You still press Push yourself.</p>
+        <div class="su-acts"><code id="suMcp" class="su-code">${esc(S.mcp_command)}</code><button id="suMcpCopy">Copy</button></div>
+        <details class="su-tech"><summary>Technical details</summary>The command registers Studio as an MCP server in Claude Code. Claude can also load keys from a .env file with the tool setup_import_env_file.</details></div>
       <div class="su-card" id="suTeam"></div>
       <div class="su-card"><h3><span class="su-dot ${gOk ? "ok" : ""}"></span>Google (Ads, Search Console, GA4)</h3>
-        <p class="su-help" style="margin:0 0 8px">${S.google_signed_in ? `Signed in${S.google_account ? " as <b>" + esc(S.google_account) + "</b>" : ""}.` : S.google_service_account ? "Using the service-account key copied from AI-Hub." : "Fill in the OAuth client below, save, then sign in. Your Google user needs access to the Ads accounts."}</p>
-        <div class="su-acts"><button id="suGoogle" class="primary">${S.google_signed_in ? "Sign in again" : "Sign in with Google"}</button>${S.google_signed_in ? `<button id="suGoogleOut" class="danger">Sign out</button>` : ""}<span id="suGMsg" class="su-help"></span></div></div>
+        <p class="su-help" style="margin:0 0 8px">${S.google_signed_in ? `Signed in${S.google_account ? " as <b>" + esc(S.google_account) + "</b>" : ""}.` : S.google_service_account ? "Connected with a Google robot account copied from AI-Hub." : "Fill in the Google sign-in details below, save, then sign in. Your Google user needs access to the Ads accounts."}</p>
+        <div class="su-acts"><button id="suGoogle" class="${S.google_signed_in ? "" : "primary"}">${S.google_signed_in ? "Sign in again" : "Sign in with Google"}</button>${S.google_signed_in ? `<button id="suGoogleOut" class="danger">Sign out</button>` : ""}<span id="suGMsg" class="su-help"></span></div>
+        <details class="su-tech"><summary>Technical details</summary>Sign in uses an OAuth client (Client ID and secret from Google Cloud) with the Google Ads, Search Console and Analytics scopes.${S.google_service_account ? " A service-account key from AI-Hub is also on this Mac and is used when nobody is signed in." : ""}</details></div>
       ${Object.entries(groups).map(([g, ks]) => `<div class="su-card"><h3><span class="su-dot ${ks.some(k => k.set) ? "ok" : ""}"></span>${esc(g)}</h3>
         ${ks.map(k => `<div class="su-row"><label for="su_${k.name}">${esc(k.label)}</label><div>
           <input id="su_${k.name}" data-k="${k.name}" ${k.secret ? `type="password" autocomplete="off" placeholder="${k.set ? "Saved - type to replace" : ""}"` : `value="${esc(k.value)}"`} ${k.from_env ? "disabled title='Set by the environment'" : ""}>
@@ -71,6 +102,8 @@
   }
   async function open(){ try { S = await call("/api/setup") } catch(e) { return alert(e.message) } draw(); page.classList.add("on") }
   function close(){ page.classList.remove("on"); clearInterval(poll) }
+  // Escape closes Setup like a dialog (not while a real <dialog> on top of it is open)
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && page.classList.contains("on") && !document.querySelector("dialog[open]")){ e.preventDefault(); close() } });
   window.openSetup = open;
   // first run: nothing set up yet -> open on its own
   call("/api/setup").then(s => { if (!s.ready && !s.keys.some(k => k.set)) open() }).catch(() => {});

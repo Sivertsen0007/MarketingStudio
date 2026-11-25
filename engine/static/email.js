@@ -59,7 +59,9 @@ if (!document.getElementById("em-css")){
 .em-pbar{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line2);font-size:12px}
 .em-pbar .src{color:var(--muted);font-weight:500;margin-left:4px}
 .em-seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
-.em-seg button{height:28px;padding:0 14px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:12.5px}
+.em-root .fpills button{min-height:32px}
+.em-root button.danger,.em-root .menu button.danger{color:var(--bad-text, #c8303a)}
+.em-seg button{height:32px;padding:0 14px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:12.5px}
 .em-seg button:hover{background:transparent;color:var(--text)}
 .em-seg button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .em-pbar>button{height:32px;padding:0 12px;font-size:12.5px}
@@ -139,11 +141,14 @@ const can = k => !!(E.state && E.state.can && E.state.can[k]);
 const PN = () => (E.state && E.state.platform) || "your email platform";
 const needAttr = k => can(k) ? "" : `disabled title="${esc((E.state || {}).needs_api || "")}"`;
 
+// The area page element is shared by every area: after an await, only draw if Email is still the open area.
+const gone = () => typeof S !== "undefined" && S.area && S.area !== "email";
 // ---- campaigns list ----
 async function renderList(){
   const el = E.el; E.cur = null;
   el.innerHTML = `<div class="em-root"><div class="em-banner load">Loading ...</div></div>`;
-  try { E.state = await api(A("state")) } catch(e) { el.innerHTML = `<div class="em-root"><div class="prob">${esc(e.message)}</div></div>`; return }
+  try { E.state = await api(A("state")) } catch(e) { if (!gone()) el.innerHTML = `<div class="em-root"><div class="prob">${esc(e.message)}</div></div>`; return }
+  if (gone()) return;
   el.innerHTML = `<div class="em-root"><div class="em-head"><div class="ttl"><h1>Email</h1><p>Campaigns from your email platform. Test, schedule and send are your own buttons.</p></div>
     <div class="acts"><button data-em="refresh">Refresh</button><button data-em="new" class="primary">New campaign</button></div></div>
     ${banner()}
@@ -163,7 +168,7 @@ async function loadGrid(fresh){
   try {
     const r = await api(A("campaigns", {search:E.search, fresh: fresh === true ? 1 : null}));
     E.rows = r.campaigns; E.counts = r.counts;
-  } catch(e) { $("#emGrid").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return }
+  } catch(e) { const g = $("#emGrid"); if (g) g.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return }
   drawGrid();
 }
 function drawGrid(){
@@ -173,7 +178,7 @@ function drawGrid(){
   let rows = E.rows.filter(r => E.filter === "all" || r.status === E.filter);
   if (E.sort){ const {k, d} = E.sort; rows = [...rows].sort((a, b) => { const x = a[k] ?? "", y = b[k] ?? ""; return (x > y ? 1 : x < y ? -1 : 0) * d }) }
   const cols = VIEWS[E.view] || VIEWS.Data;
-  if (!rows.length){ $("#emGrid").innerHTML = `<div class="empty">No campaigns here.</div>`; return }
+  if (!rows.length){ $("#emGrid").innerHTML = `<div class="empty">No campaigns here.<br><button data-em="new" style="margin-top:10px">New campaign</button></div>`; return }
   $("#emGrid").innerHTML = `<table class="em-grid"><thead><tr>${cols.map(c => `<th data-ems="${c}" class="${E.sort && E.sort.k === c ? "sorted" : ""}">${COLS[c].label}${E.sort && E.sort.k === c ? (E.sort.d > 0 ? " ▴" : " ▾") : ""}</th>`).join("")}</tr></thead>
     <tbody>${rows.map(r => `<tr data-emid="${esc(r.id)}">${cols.map(c => `<td class="${COLS[c].num ? "num" : ""}" title="${COLS[c].fmt ? "" : esc(r[c])}">${COLS[c].fmt ? COLS[c].fmt(r[c], r) : esc(r[c])}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
@@ -247,7 +252,8 @@ async function openEditor(id){
   try {
     const [c, aud] = await Promise.all([api(A("campaign", {id})), E.aud ? Promise.resolve(E.aud) : api(A("audiences"))]);
     E.cur = c; E.aud = aud;
-  } catch(e) { toast(e.message); return renderList() }
+  } catch(e) { if (gone()) return; toast(e.message); return renderList() }
+  if (gone()) return;
   if (window.TeamReviews) TeamReviews.ownerNote([`email/${id}`, "email"]); // [team reviews] "Owned by ..."
   drawEditor();
 }

@@ -7,8 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- Showcase of the Daymark design system used by Marketing Studio. The tokens and component CSS below are a copy of the
-     first <style> block in engine/index.html (keep them in sync); the showcase-only rules follow after it. -->
-<style>
+     first <style>
 /* Daymark design system (docs/design-system.md): light, Manrope, blue #0a46e0, white cards with soft shadows.
    Every colour, radius and shadow in Studio comes from these tokens; the area files (static/*.js) use the same names. */
 :root{
@@ -180,11 +179,13 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .node{display:flex;align-items:center;gap:8px;padding:0 10px;height:32px;margin:1px 0;border-radius:var(--r-sm);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text2);font-size:13px;font-weight:500;
   transition:background var(--t) var(--ease),color var(--t) var(--ease)}
 .node:hover{background:var(--hover)}
-.node.sel{background:var(--sel);color:var(--accent);font-weight:600}
+.node.sel{background:var(--accent-soft);color:var(--accent);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)}
+.node.sel:hover{background:var(--accent-soft)}
+.node.path{background:var(--accent-bg);color:var(--text);font-weight:600}  /* the campaign that holds the selected ad group / ad set */
 .node .tw{width:14px;color:var(--faint);flex:none;text-align:center;font-size:10px}
 .node .nm{overflow:hidden;text-overflow:ellipsis}
 .node.ag{padding-left:34px;font-weight:500;color:var(--muted)}
-.node.ag.sel{color:var(--accent)}
+.node.ag.sel{color:var(--accent);font-weight:700}
 .node .ed,.node .chip{margin-left:auto}
 .dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--ok)}
 .dot.Paused{background:var(--idle)}
@@ -195,7 +196,9 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .tabs{display:flex;flex-direction:column;overflow:auto;flex:1 1 45%;padding:0 8px 10px}
 .tab{flex:none;display:flex;justify-content:space-between;text-align:left;padding:0 10px 0 12px;height:32px;margin:1px 0;align-items:center;border:0;border-radius:var(--r-sm);background:none;box-shadow:none;white-space:nowrap;color:var(--text2);font-weight:500;font-size:13px}
 .tab:hover{background:var(--hover)}
-.tab.on{background:var(--panel);color:var(--text);font-weight:600;box-shadow:var(--sh-1)}
+.tab.on{background:var(--accent-soft);color:var(--accent);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)}
+.tab.on:hover{background:var(--accent-soft)}
+.tab.on .n{background:var(--panel)}
 .tab .n{font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-bg);border-radius:var(--r-pill);padding:0 7px;margin-left:6px;line-height:18px}
 
 /* ---- toolbar above the grid ---- */
@@ -236,8 +239,10 @@ td.edit{cursor:text}
 td.edit:hover{box-shadow:inset 0 0 0 1px var(--accent);border-radius:var(--r-xs)}
 td input,td select{height:28px;padding:2px 8px;width:100%;min-width:70px}
 input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}
-tr.focus td{background:var(--accent-bg)!important}
-tr.focus td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+tr.picked td{background:var(--accent-bg)!important}  /* ticked for a bulk action */
+tr.focus td{background:var(--accent-soft)!important}  /* open in the Edit panel */
+tr.focus td:first-child{box-shadow:inset 4px 0 0 var(--accent)}
+tr.focus td.stk-name,tr.focus td.stk-name *{font-weight:700}
 #grid tr[data-i]{scroll-margin-top:44px;scroll-margin-bottom:8px}
 .st{font-size:12.5px}
 .st.Paused{color:var(--muted)}
@@ -374,6 +379,8 @@ td.st-edit:hover .pill{box-shadow:0 0 0 1px currentColor}
 .fpills button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .fpills .n{color:var(--muted);margin-left:5px;font-size:11px;font-variant-numeric:tabular-nums}
 .fpills button.on .n{color:var(--accent)}
+.treeshow{margin:0 12px 8px}  .treeshow button{flex:1}
+.tree-more{padding:6px 10px;font-size:12px;color:var(--muted)} .tree-more button{height:auto;min-height:32px;padding:0 4px}
 
 /* ---- thumbnails + hover preview ---- */
 img.thumb{width:40px;height:40px;object-fit:cover;border-radius:var(--r-sm);display:block;background:var(--sunken);cursor:zoom-in}
@@ -503,44 +510,6 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
 
 @media (max-width:1300px){main{grid-template-columns:248px minmax(0,1fr) 340px} main.noside{grid-template-columns:248px minmax(0,1fr) 0} .ovpage{padding:8px 24px 24px}}
 @media (max-width:1100px){main{grid-template-columns:240px 1fr}aside.draft{display:none}.legend{display:none}}
-/* ---- showcase page only (not in the app) ---- */
-html,body{overflow:auto;height:auto}
-.ds-top{position:sticky;top:0}
-main.ds-main{display:block;max-width:1240px;margin:0 auto;padding:0 32px 48px}
-.sw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
-.sw i{display:block;height:56px;border-radius:var(--r-md);box-shadow:var(--sh-card);margin-bottom:8px}
-.sw b{display:block;font-size:12px;font-family:var(--mono);font-weight:500}
-.sw small{font-size:11px;color:var(--muted)}
-.type>div{display:grid;grid-template-columns:180px 1fr;align-items:baseline;gap:16px;padding:10px 0;border-bottom:1px solid var(--line2)}
-.type>div:last-child{border-bottom:0}
-.type .lbl{font-size:11.5px;color:var(--muted);font-weight:600}
-.stack{display:flex;flex-direction:column;gap:12px}
-.rowx{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.ds-focus{box-shadow:var(--sh-1),var(--ring)}
-.ds-ifocus{border-color:var(--accent);box-shadow:var(--ring)}
-.ds-static{position:static;animation:none}
-.menu.ds-static{width:260px}
-.toast.ds-static{position:static;transform:none;display:inline-block}
-.ds-line{width:100%;height:180px;display:block}
-.ds-line .grid line{stroke:var(--line2);stroke-dasharray:4 4}
-.ds-tip{display:block;width:max-content;margin-top:14px;background:var(--panel);border-radius:var(--r-sm);box-shadow:var(--sh-pop);padding:10px 12px}
-.ds-tip .d{font-size:10.5px;font-weight:500;color:var(--text)}
-.ds-tip .vals{display:flex;gap:18px;margin-top:6px}
-.ds-tip .vals span{display:flex;flex-direction:column;gap:3px}
-.ds-tip em{font-style:normal;font-size:10px;color:var(--muted)}
-.ds-tip b{font-size:14px;font-variant-numeric:tabular-nums}
-.ds-list .li{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;padding:8px 0}
-.ds-list .ic{width:40px;height:40px;border-radius:var(--r);box-shadow:var(--sh-1);display:grid;place-items:center;font-weight:700;font-size:13px}
-.ds-list b{display:block;font-size:14px;font-weight:500}
-.ds-list small{font-size:11px;color:var(--muted)}
-.ds-list .val{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
-.ds-list .val.pos{color:var(--accent)}
-.ds-dlg{border-radius:var(--r-xl);box-shadow:var(--sh-dlg);background:var(--panel)}
-.ds-upd{display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-pop);font-size:13px;font-weight:600}
-.ds-upd::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
-.ds-upd span{flex:1}
-.ds-upd button:not(.ghost){background:var(--accent);color:var(--on-accent)}
-.ds-well{background:var(--bg);border-radius:var(--r-md)}
 </style>
 </head>
 <body>

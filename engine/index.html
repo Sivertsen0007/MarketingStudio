@@ -178,11 +178,13 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .node{display:flex;align-items:center;gap:8px;padding:0 10px;height:32px;margin:1px 0;border-radius:var(--r-sm);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text2);font-size:13px;font-weight:500;
   transition:background var(--t) var(--ease),color var(--t) var(--ease)}
 .node:hover{background:var(--hover)}
-.node.sel{background:var(--sel);color:var(--accent);font-weight:600}
+.node.sel{background:var(--accent-soft);color:var(--accent);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)}
+.node.sel:hover{background:var(--accent-soft)}
+.node.path{background:var(--accent-bg);color:var(--text);font-weight:600}  /* the campaign that holds the selected ad group / ad set */
 .node .tw{width:14px;color:var(--faint);flex:none;text-align:center;font-size:10px}
 .node .nm{overflow:hidden;text-overflow:ellipsis}
 .node.ag{padding-left:34px;font-weight:500;color:var(--muted)}
-.node.ag.sel{color:var(--accent)}
+.node.ag.sel{color:var(--accent);font-weight:700}
 .node .ed,.node .chip{margin-left:auto}
 .dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--ok)}
 .dot.Paused{background:var(--idle)}
@@ -193,7 +195,9 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .tabs{display:flex;flex-direction:column;overflow:auto;flex:1 1 45%;padding:0 8px 10px}
 .tab{flex:none;display:flex;justify-content:space-between;text-align:left;padding:0 10px 0 12px;height:32px;margin:1px 0;align-items:center;border:0;border-radius:var(--r-sm);background:none;box-shadow:none;white-space:nowrap;color:var(--text2);font-weight:500;font-size:13px}
 .tab:hover{background:var(--hover)}
-.tab.on{background:var(--panel);color:var(--text);font-weight:600;box-shadow:var(--sh-1)}
+.tab.on{background:var(--accent-soft);color:var(--accent);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)}
+.tab.on:hover{background:var(--accent-soft)}
+.tab.on .n{background:var(--panel)}
 .tab .n{font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-bg);border-radius:var(--r-pill);padding:0 7px;margin-left:6px;line-height:18px}
 
 /* ---- toolbar above the grid ---- */
@@ -234,8 +238,10 @@ td.edit{cursor:text}
 td.edit:hover{box-shadow:inset 0 0 0 1px var(--accent);border-radius:var(--r-xs)}
 td input,td select{height:28px;padding:2px 8px;width:100%;min-width:70px}
 input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}
-tr.focus td{background:var(--accent-bg)!important}
-tr.focus td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+tr.picked td{background:var(--accent-bg)!important}  /* ticked for a bulk action */
+tr.focus td{background:var(--accent-soft)!important}  /* open in the Edit panel */
+tr.focus td:first-child{box-shadow:inset 4px 0 0 var(--accent)}
+tr.focus td.stk-name,tr.focus td.stk-name *{font-weight:700}
 #grid tr[data-i]{scroll-margin-top:44px;scroll-margin-bottom:8px}
 .st{font-size:12.5px}
 .st.Paused{color:var(--muted)}
@@ -372,6 +378,8 @@ td.st-edit:hover .pill{box-shadow:0 0 0 1px currentColor}
 .fpills button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .fpills .n{color:var(--muted);margin-left:5px;font-size:11px;font-variant-numeric:tabular-nums}
 .fpills button.on .n{color:var(--accent)}
+.treeshow{margin:0 12px 8px}  .treeshow button{flex:1}
+.tree-more{padding:6px 10px;font-size:12px;color:var(--muted)} .tree-more button{height:auto;min-height:32px;padding:0 4px}
 
 /* ---- thumbnails + hover preview ---- */
 img.thumb{width:40px;height:40px;object-fit:cover;border-radius:var(--r-sm);display:block;background:var(--sunken);cursor:zoom-in}
@@ -530,6 +538,7 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
 <main>
   <aside class="tree">
     <div class="pad search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg><input id="treeSearch" placeholder="Search campaigns"></div>
+    <div id="treeShow" class="fpills treeshow" role="group" aria-label="Which campaigns to list"><button data-ts="active" title="Only campaigns that are running (plus the one you have open and any with draft changes)">Active <span class="n"></span></button><button data-ts="all" title="Every campaign, including paused ones">All <span class="n"></span></button></div>
     <div id="tree" class="tree-list"></div>
     <div class="manage-h">MANAGE</div>
     <div id="tabs" class="tabs"></div>
@@ -577,7 +586,7 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const S = {acct: localGet("acct") || "ml", kind: localGet("kind") || "campaigns", camp: null, ag: null, rows: [], sort: null,
+const S = {treeShow: localGet("treeShow") || "active", acct: localGet("acct") || "ml", kind: localGet("kind") || "campaigns", camp: null, ag: null, rows: [], sort: null,
            sel: new Set(), open: new Set(), draftV: -1, tree: [], filter: localGet("filter") || "all", focus: null, views: [], accts: []};
 function localGet(k){ try { return localStorage.getItem("adsstudio." + k) } catch(e) { return null } }
 function localSet(k, v){ try { localStorage.setItem("adsstudio." + k, v) } catch(e) {} }
@@ -766,19 +775,28 @@ async function loadTree(){
 function renderTree(){
   const f = $("#treeSearch").value.toLowerCase();
   let h = `<div class="node ${!S.camp ? "sel" : ""}" data-c=""><span class="tw"></span><b>All campaigns</b></div>`;
+  // Active only: running campaigns, plus the open one and any with draft changes, so nothing you work on disappears
+  const live = c => /^(enabled|active)$/i.test(c.status || "") || c.draft || S.camp === String(c.id) || (c.ad_groups || []).some(g => g.draft);
+  const nLive = S.tree.filter(c => /^(enabled|active)$/i.test(c.status || "")).length, hidden = S.treeShow === "active" ? S.tree.filter(c => !live(c)).length : 0;
+  document.querySelectorAll("#treeShow button").forEach(b => { b.classList.toggle("on", b.dataset.ts === S.treeShow);
+    b.setAttribute("aria-pressed", b.dataset.ts === S.treeShow); b.querySelector(".n").textContent = b.dataset.ts === "active" ? nLive : S.tree.length });
   for (const c of S.tree){
+    if (S.treeShow === "active" && !f && !live(c)) continue;
     const groups = c.ad_groups.filter(g => !f || g.name.toLowerCase().includes(f));
     if (f && !c.name.toLowerCase().includes(f) && !groups.length) continue;
     const open = S.open.has(String(c.id)) || (f && groups.length);
-    h += `<div class="node ${S.camp === String(c.id) && !S.ag ? "sel" : ""}" data-c="${c.id}" title="${esc(c.name)} - ${esc(c.type)}">
+    h += `<div class="node ${S.camp === String(c.id) ? (S.ag ? "path" : "sel") : ""}" data-c="${c.id}" title="${esc(c.name)} - ${esc(c.type)}">
       <span class="tw" data-tw="${c.id}">${c.ad_groups.length ? (open ? "▾" : "▸") : ""}</span><span class="dot ${c.status}"></span><span class="nm" title="${esc(c.name)}">${esc(c.name)}</span>
       ${c.editor ? `<span class="ed">${c.editor}</span>` : ""}${expChip(c)}${c.draft ? ` <span class="chip draft" title="New in the draft: created Paused when you push live">draft</span>` : ""}</div>`;
     if (open) for (const g of (f && !c.name.toLowerCase().includes(f) ? groups : c.ad_groups))
       h += `<div class="node ag ${S.ag === String(g.id) ? "sel" : ""}" data-c="${c.id}" data-g="${g.id}" title="${esc(g.name)}"><span class="dot ${g.status}"></span><span class="nm" title="${esc(g.name)}">${esc(g.name)}</span>${g.draft ? ` <span class="chip draft">draft</span>` : ""}</div>`;
   }
+  if (hidden && !f) h += `<div class="tree-more">${hidden} paused ${hidden === 1 ? "campaign" : "campaigns"} hidden. <button class="link" data-ts="all">Show all</button></div>`;
   $("#tree").innerHTML = h;
 }
+$("#treeShow").onclick = e => { const b = e.target.closest("[data-ts]"); if (!b) return; S.treeShow = b.dataset.ts; localSet("treeShow", S.treeShow); renderTree() };
 $("#tree").onclick = e => {
+  const ts = e.target.closest("[data-ts]"); if (ts){ S.treeShow = ts.dataset.ts; localSet("treeShow", S.treeShow); return renderTree() }
   const tw = e.target.closest("[data-tw]");
   if (tw){ const id = tw.dataset.tw; S.open.has(id) ? S.open.delete(id) : S.open.add(id); return renderTree() }
   const n = e.target.closest(".node"); if (!n) return;
@@ -874,7 +892,7 @@ function renderGrid(){
   rows.slice(0, MAX).forEach(r => {
     const i = S.rows.indexOf(r);
     const removed = r.status === "Removed" || (r._draft && r._draft.status && r._draft.status.value === "Removed");
-    h += `<tr data-i="${i}" class="${r._new ? "new" : ""} ${removed ? "removed" : ""} ${S.focus && String(r.id) === S.focus ? "focus" : ""}">`;
+    h += `<tr data-i="${i}" class="${r._new ? "new" : ""} ${removed ? "removed" : ""} ${S.focus && String(r.id) === S.focus ? "focus" : ""} ${S.sel.has(i) ? "picked" : ""}">`;
     if (v.bulk) h += `<td class="cb ${cbC}">${r._new || isTrial(r) ? "" : `<input type="checkbox" data-sel="${i}" ${S.sel.has(i) ? "checked" : ""}>`}</td>`;
     for (const c of cols){
       if (c.thumb){ const mu = r.media_id && mediaUrl(r.media_id);
@@ -920,7 +938,7 @@ $("#grid").onclick = e => {
   const th = e.target.closest("th[data-s]");
   if (th){ const k = th.dataset.s; S.sort = S.sort && S.sort.key === k ? {key:k, dir:-S.sort.dir} : {key:k, dir:1}; return renderGrid() }
   if (e.target.id === "selAll"){ S.rows.forEach((r, i) => !r._new && !isTrial(r) && passFilter(r) && (e.target.checked ? S.sel.add(i) : S.sel.delete(i))); renderGrid(); return }
-  if (e.target.dataset.sel !== undefined){ const i = +e.target.dataset.sel; e.target.checked ? S.sel.add(i) : S.sel.delete(i); return updBulk() }
+  if (e.target.dataset.sel !== undefined){ const i = +e.target.dataset.sel; e.target.checked ? S.sel.add(i) : S.sel.delete(i); const tr = e.target.closest("tr"); if (tr) tr.classList.toggle("picked", e.target.checked); return updBulk() }
   const st = e.target.closest("td.st-edit");
   if (st) return statusMenu(st);
   const td = e.target.closest("td.edit");

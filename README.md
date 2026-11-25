@@ -192,7 +192,7 @@ one change. **Check** re-runs every check. **Clear** empties the draft.
 - Changes that can **raise spend** (enabling, a bigger budget, wider targeting) and **permanent** ones (removals in Google Ads) need a tick first.
 - **Details** shows each change with before → after, if you want it.
 - Google: **Send to Editor instead** writes the draft into Google Ads Editor as pending changes, so you post it from there.
-- **Push live** shows progress per change and ends with **Everything is live.**
+- **Push live** runs in the background with progress per change (close the window; the pill in the top bar opens it again) and ends with an honest summary: on Meta each ad shows its live status (Active, Paused, In review, Disapproved) with a link to Ads Manager.
 
 | | Google Ads | Meta |
 |---|---|---|

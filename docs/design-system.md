@@ -34,7 +34,7 @@ radius or shadow: they use the tokens below.
 | `--warn-dot` | `#f5a524` | Amber status dot (connections, data warning, legend) |
 | `--idle` | `#a9acb4` | Paused / unknown status dot |
 | `--bad` / `--bad-bg` | `#e5484d` / `#fdecec` | Problems, errors, down, notification dot, bars and dots (fills, not text) |
-| `--bad-text` | `#c8303a` | Red text: danger buttons (`button.danger`, `button.link.danger`, dialog danger buttons), `.chip.bad`, the alerts counter (5.33:1 on white) |
+| `--bad-text` | `#c8303a` | All red text: danger buttons (`button.danger`, `button.link.danger`, dialog danger buttons), `.chip.bad`, `.prob`, `.flag.perm`, `.pill.Removed`, `.chip.trend.down`, `.jobpill.bad`, the alerts counter (5.33:1 on white, 4.67:1 on `--bad-bg`) |
 | `--draft` / `--draft-bg` | `#8b4fe0` / `#f4ecfe` | In draft |
 | `--c1` ... `--c6` | blue, violet, green, orange, light blue, red | Chart series, in that order |
 | `--scrim` | `rgba(17,19,24,.35)` | Dialog backdrop |

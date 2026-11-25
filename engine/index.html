@@ -122,12 +122,12 @@ body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 .jbar.ok{background:var(--ok-bg)} .jbar.ok i{background:var(--ok)} .jbar.bad{background:var(--bad-bg)} .jbar.bad i{background:var(--bad)}
 .jlist{margin-top:10px}
 .jrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;padding:9px 0;border-bottom:1px solid var(--line2);font-size:13px}
-.jrow .jd{font-size:12px;color:var(--muted);margin-top:2px} .jrow .jd.bad{color:var(--bad)} .jrow .jd.warn{color:var(--warn)}
+.jrow .jd{font-size:12px;color:var(--muted);margin-top:2px} .jrow .jd.bad{color:var(--bad-text)} .jrow .jd.warn{color:var(--warn)}
 .jrow .jr{display:flex;gap:10px;align-items:center;justify-content:flex-end;white-space:nowrap}
 .jrow .jr a{font-size:12px;font-weight:600;color:var(--accent);text-decoration:none} .jrow .jr a:hover{text-decoration:underline}
 .jrow .chip .spin{width:10px;height:10px;border-width:2px}
 .jobpill{background:var(--accent-bg);color:var(--accent);box-shadow:none;flex:none} .jobpill:hover{background:var(--accent-soft)}
-.jobpill.ok{background:var(--ok-bg);color:var(--ok)} .jobpill.ok:hover{background:var(--ok-bg)} .jobpill.bad{background:var(--bad-bg);color:var(--bad)} .jobpill.bad:hover{background:var(--bad-bg)}
+.jobpill.ok{background:var(--ok-bg);color:var(--ok)} .jobpill.ok:hover{background:var(--ok-bg)} .jobpill.bad{background:var(--bad-bg);color:var(--bad-text)} .jobpill.bad:hover{background:var(--bad-bg)}
 /* media library (new Meta ad): pick a stored file, Prepare for Meta uploads it ahead of the push */
 .medlib{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);padding:2px 10px}
 .medrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2);font-size:13px}
@@ -153,7 +153,7 @@ body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 .chip.ok,.subbar .chip.ok{background:var(--ok-bg);color:var(--ok);box-shadow:none}
 .chip.bad{background:var(--bad-bg);color:var(--bad-text)}
 .chip.info{background:var(--accent-bg);color:var(--accent)}
-.chip.trend{background:var(--ok-bg);color:var(--ok);font-size:10.5px;padding:3px 8px} .chip.trend.down{background:var(--bad-bg);color:var(--bad)}
+.chip.trend{background:var(--ok-bg);color:var(--ok);font-size:10.5px;padding:3px 8px} .chip.trend.down{background:var(--bad-bg);color:var(--bad-text)}
 .tile .chip.trend{margin-top:8px}
 .chip.exp{font-size:10.5px;padding:1px 6px;margin-left:6px;background:var(--sunken);color:var(--text2)}
 .chip.exp.base{background:var(--warn-bg);color:var(--warn)}
@@ -201,8 +201,9 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .toolbar .crumb{color:var(--text);font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;margin-right:4px}
 .toolbar input#search{height:34px;padding-left:32px;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24'%3E%3Cpath fill='%238a8e98' d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E") no-repeat 11px center}
 .toolbar select{height:34px;font-size:12.5px;font-weight:600}
-.toolbar>button,.tb-right>button,.bulk button{height:34px;padding:0 12px;font-size:12.5px}
+.toolbar>button,.tb-right>button,.tb-keep>button,.bulk button{height:34px;padding:0 12px;font-size:12.5px}
 .tb-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
+.tb-keep{display:flex;gap:8px;align-items:center;flex-wrap:nowrap} /* the add button and the panel toggle wrap together */
 .grid-wrap{overflow:auto;flex:1;background:var(--panel)}
 
 /* ---- data grid: sticky header, compact rows, hairline dividers ---- */
@@ -238,7 +239,7 @@ tr.focus td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 #grid tr[data-i]{scroll-margin-top:44px;scroll-margin-bottom:8px}
 .st{font-size:12.5px}
 .st.Paused{color:var(--muted)}
-.st.Removed{color:var(--bad)}
+.st.Removed{color:var(--bad-text)}
 .st.Enabled,.st.Active{color:var(--ok)}
 .ed{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:var(--r-xs);background:var(--warn-bg);color:var(--warn)}
 .ed.draft{background:var(--draft-bg);color:var(--draft)}
@@ -249,7 +250,7 @@ tr.focus td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 @keyframes skel{from{background-position:100% 0}to{background-position:-100% 0}}
 
 /* ---- notes, problems, warnings ---- */
-.prob{font-size:12px;font-weight:500;color:var(--bad);background:var(--bad-bg);border-radius:var(--r-sm);padding:6px 10px;margin:6px 0}
+.prob{font-size:12px;font-weight:500;color:var(--bad-text);background:var(--bad-bg);border-radius:var(--r-sm);padding:6px 10px;margin:6px 0}
 .warnl{font-size:12px;font-weight:500;color:var(--warn);background:var(--warn-bg);border-radius:var(--r-sm);padding:6px 10px;margin-top:6px}
 .hint{font-size:12.5px;color:var(--muted);margin:4px 0 10px}
 
@@ -273,12 +274,12 @@ button.live:disabled{opacity:.45;cursor:default}
 .pv .ln2{font-size:11.5px;color:var(--muted);font-family:var(--mono);word-break:break-word;margin-top:2px}
 .flag{font-size:11px;font-weight:600;border-radius:var(--r-sm);padding:2px 8px;margin-top:6px;display:inline-block}
 .flag.spend{background:var(--warn-bg);color:var(--warn)}
-.flag.perm{background:var(--bad-bg);color:var(--bad)}
+.flag.perm{background:var(--bad-bg);color:var(--bad-text)}
 
 /* ---- progress (push / undo) ---- */
 .prog-h{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-weight:600}
 .prog-h .spin{width:14px;height:14px}
-.prog-h .done{color:var(--ok)} .prog-h .bad{color:var(--bad)}
+.prog-h .done{color:var(--ok)} .prog-h .bad{color:var(--bad-text)}
 .prog-row{display:grid;grid-template-columns:1fr 150px 74px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line2);font-size:13px}
 .prog-row .bar{height:10px;background:var(--accent-soft);border-radius:var(--r-pill);overflow:hidden;position:relative}
 .prog-row .bar i{display:block;height:100%;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--accent-soft),var(--accent-2));transition:width .4s var(--ease)}
@@ -287,7 +288,7 @@ button.live:disabled{opacity:.45;cursor:default}
 .prog-row.busy .bar::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:shine 1.2s linear infinite}
 @keyframes shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 .prog-row .st{font-size:11.5px;font-weight:600;color:var(--muted);text-align:right}
-.prog-row.done .st{color:var(--ok)} .prog-row.failed .st,.prog-row.reversed .st{color:var(--bad)}
+.prog-row.done .st{color:var(--ok)} .prog-row.failed .st,.prog-row.reversed .st{color:var(--bad-text)}
 .spin{width:12px;height:12px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex:none;display:inline-block;vertical-align:-2px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .tick{display:flex;gap:8px;align-items:flex-start;margin:10px 0}
@@ -317,7 +318,7 @@ dialog::backdrop{background:var(--scrim);-webkit-backdrop-filter:blur(2px);backd
 .row input:not([type=checkbox]):not([type=radio]),.row select,.row textarea{min-height:34px}
 .lines .ln{display:grid;grid-template-columns:1fr 46px 76px 24px;gap:6px;align-items:center;margin-bottom:6px}
 .cnt{font-size:11px;font-weight:600;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
-.cnt.over{color:var(--bad)}
+.cnt.over{color:var(--bad-text)}
 pre.out{white-space:pre-wrap;background:var(--sunken);padding:12px;border-radius:var(--r);font:12px/1.5 var(--mono);max-height:50vh;overflow:auto}
 
 /* ---- toasts ---- */
@@ -342,7 +343,7 @@ footer{display:flex;align-items:center;gap:14px;padding:6px 20px 8px;background:
 .pill i{width:7px;height:7px;border-radius:50%;background:var(--idle);flex:none}
 .pill.Active,.pill.Enabled{background:var(--ok-bg);color:var(--ok)}
 .pill.Active i,.pill.Enabled i{background:var(--ok)}
-.pill.Removed{background:var(--bad-bg);color:var(--bad)} .pill.Removed i{background:var(--bad)}
+.pill.Removed{background:var(--bad-bg);color:var(--bad-text)} .pill.Removed i{background:var(--bad)}
 td.st-edit{cursor:pointer}
 td.st-edit .pill:after{content:"";width:0;height:0;border-left:3px solid transparent;border-right:3px solid transparent;border-top:4px solid currentColor;opacity:.6;margin-left:1px}
 td.st-edit:hover .pill{box-shadow:0 0 0 1px currentColor}
@@ -406,7 +407,7 @@ td.thumbc{padding:2px 6px;width:52px}
 .prevbox iframe{border:0;transform-origin:top center}
 .edit-foot{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line2)}
 .edit-foot button{flex:1}
-.edit-foot .asstate{flex:2;align-self:center;font-size:12px;color:var(--muted)} .asstate.ok{color:var(--ok)} .asstate.bad{color:var(--bad)}
+.edit-foot .asstate{flex:2;align-self:center;font-size:12px;color:var(--muted)} .asstate.ok{color:var(--ok)} .asstate.bad{color:var(--bad-text)}
 
 /* ---- columns dialog ---- */
 .colpick{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -545,8 +546,8 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
       <button id="colBtn" title="Choose and order columns">Columns</button>
       <span id="bulk" class="bulk" title="Select rows first"><span id="bulkN">None selected</span>
         <button data-bulk="enabled" disabled>Enable</button><button data-bulk="paused" disabled>Pause</button><span class="bsep" aria-hidden="true"></span><button data-bulk="removed" class="danger" disabled>Remove</button></span>
-      <button id="addBtn" class="primary">New campaign</button>
-      <button id="sideOpen" title="Open the Edit and Draft panel">Edit · Draft <span id="draftN2"></span></button>
+      <span class="tb-keep"><button id="addBtn" class="primary">New campaign</button>
+      <button id="sideOpen" title="Open the Edit and Draft panel">Edit · Draft <span id="draftN2"></span></button></span>
       </span>
     </div>
     <div id="grid" class="grid-wrap"></div>
@@ -597,6 +598,8 @@ const money = v => v == null ? "" : Number(v).toFixed(2);
 const gbDate = v => v == null || v === "" ? "" : window.studioFmt ? studioFmt.date(v) : String(v);
 const gbDT = v => v == null || v === "" ? "" : window.studioFmt ? studioFmt.dateTime(String(v).slice(0, 16)) : String(v).replace("T", " ").slice(0, 16);
 const DATEF = v => esc(gbDate(v));
+// en-GB grouping for plain number cells, keeping every decimal the data has (CTR 2.37, frequency 1.0423, CPC 0.85)
+const numGB = v => Number(v).toLocaleString("en-GB", {maximumFractionDigits:6});
 // ---- display currency (Settings, saved server-side). DISPLAY ONLY: what is typed, stored in a draft or pushed to
 // Google/Meta is always the account's own currency (native values from the server, never converted here). ----
 S.disp = "own"; S.fx = null;
@@ -880,7 +883,7 @@ function renderGrid(){
       const d = r._draft && r._draft[c.key];
       const val = cellVal(r, c);
       const mon = isMoney(c) ? moneyCell(c, val) : null;
-      const shown = mon ? mon[0] : c.fmt ? c.fmt(val) : c.num && !/(^|_)id$/.test(c.key) && val !== "" && val != null && !isNaN(val) ? fmtN(val) : esc(val);
+      const shown = mon ? mon[0] : c.fmt ? c.fmt(val) : c.num && !/(^|_)id$/.test(c.key) && val !== "" && val != null && !isNaN(val) ? numGB(val) : esc(val);
       const editable = c.edit && !r._new && !isTrial(r) && (!c.when || c.when(r)) && !(S.kind === "campaigns" && c.key === "budget" && r.shared_budget);
       const stEdit = editable && (c.edit.startsWith("status") || c.edit === "mstatus");
       h += `<td class="${SK[c.key]} ${c.num ? "num" : ""} ${d ? "changed" : ""} ${stEdit ? "st-edit" : editable ? "edit" : ""}" data-k="${c.key}" title="${esc(mon ? mon[1] : val)}">${d ? `<span class="old">${isMoney(c) ? moneyCell(c, r[c.key])[0] : c.fmt ? c.fmt(r[c.key]) : esc(r[c.key])}</span>` : ""}${shown}${c.key === "campaign" ? expChip(r) : ""}</td>`;
@@ -2493,7 +2496,7 @@ async function settingsDialog(){
     const t = e.target;
     try {
       if (t.id === "fxRefresh"){ t.disabled = true; const r = await api("/api/settings/fx/refresh", {}); S.fx = r; $("#fxNote").textContent = r.note; t.disabled = false; toast("Rates refreshed"); reshowMoney() }
-      if (t.dataset.gtest){ const out = $("#gt_" + t.dataset.gtest); out.textContent = "Checking ..."; const r = await api("/api/settings/google/test", {acct:t.dataset.gtest}); out.textContent = r.message; out.style.color = r.ok ? "var(--ok)" : "var(--bad)" }
+      if (t.dataset.gtest){ const out = $("#gt_" + t.dataset.gtest); out.textContent = "Checking ..."; const r = await api("/api/settings/google/test", {acct:t.dataset.gtest}); out.textContent = r.message; out.style.color = r.ok ? "var(--ok)" : "var(--bad-text)" }
       if (t.dataset.mrn){ await api("/api/settings/meta/rename", {act:t.dataset.mrn, name:document.querySelector(`[data-mname="${t.dataset.mrn}"]`).value}); toast("Name saved"); await reloadAccounts() }
       if (t.dataset.mrm){ if (!confirm("Hide this ad account in Studio? Nothing changes in Meta. Its draft and push log stay on disk.")) return; await api("/api/settings/meta/remove", {act:t.dataset.mrm}); await reloadAccounts(); settingsDialog() }
       if (t.id === "m_add" || t.dataset.madd){ t.disabled = true; const r = await api("/api/settings/meta/add", {act:t.dataset.madd || val("m_act"), name:t.dataset.madd ? "" : val("m_name")}); toast("Added " + r.name); await reloadAccounts(); settingsDialog() }
@@ -2522,7 +2525,7 @@ async function loadJobs(){
       <select id="dataPolicy"><option value="manual" ${auto ? "" : "selected"}>Manual</option><option value="auto" ${auto ? "selected" : ""}>Automatic</option></select></div>`
     + (st.jobs.length ? st.jobs.map(j => `<div class="set-row"><div class="grow"><div>${esc(j.label)}</div>
       <div class="sub">${esc(j.schedule)} · last run ${when(j.last_run)}: ${res(j)}${j.enabled ? " · next " + when(j.next_run) : ""}${j.refresh ? (auto ? " · fetches data (Data refresh is automatic)" : " · fetches data, so it waits until Data refresh is automatic") : ""}</div>
-      ${j.last_error && j.last_status !== "ok" ? `<div class="sub" style="color:var(--bad)">${esc(j.last_error)}</div>` : ""}${j.note ? `<div class="sub">${esc(j.note)}</div>` : ""}</div>
+      ${j.last_error && j.last_status !== "ok" ? `<div class="sub" style="color:var(--bad-text)">${esc(j.last_error)}</div>` : ""}${j.note ? `<div class="sub">${esc(j.note)}</div>` : ""}</div>
       ${j.can_disable ? `<label class="sub"><input type="checkbox" data-job="${esc(j.name)}" ${j.enabled ? "checked" : ""}> On</label>` : `<span class="sub">always on</span>`}</div>`).join("")
     : `<p class="hint">No background jobs yet.</p>`)
     + `<p class="hint">${st.running ? "The scheduler is running." : "The scheduler starts with Studio."}${st.error ? " Scheduler error: " + esc(st.error) : ""} Jobs never run twice at once; a failed or slow run is shown here and the job tries again at its next time.</p>`;

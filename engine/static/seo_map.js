@@ -25,6 +25,11 @@ const CSS = `
 .tm-main td{height:40px;border-right:0;color:var(--text2)}
 .tm-main th:first-child,.tm-main td:first-child{padding-left:18px}
 .tm-main td.wrap{white-space:normal;line-height:1.4;max-width:300px;font-size:12px;color:var(--muted)}
+.tm-clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word}
+.tm-legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:0 28px 10px;font-size:12px;font-weight:500;color:var(--muted)}
+.tm-legend span{display:inline-flex;align-items:center;gap:6px}
+.tm-sub .fpills button{min-height:32px}
+.tm-side button.danger{color:var(--bad-text, #c8303a)}
 .tm-main tr.tm-row{cursor:pointer;transition:background var(--t) var(--ease)} .tm-main tr.tm-row:hover td{background:var(--hover)}
 .tm-main tr.tm-row.sel td{background:var(--accent-bg)}
 .tm-main tr.tm-row.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
@@ -33,7 +38,7 @@ const CSS = `
 .tm-type{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:none;font-size:10px;font-weight:700;border-radius:var(--r-sm);background:var(--sunken);color:var(--muted)}
 .tm-type.root{background:var(--accent);color:var(--ink-text)} .tm-type.hub{background:var(--violet-bg);color:var(--violet)} .tm-type.commercial{background:var(--warn-bg);color:var(--c4)}
 .tm-st{display:inline-flex;align-items:center;height:22px;font-size:11px;font-weight:600;padding:0 8px;border-radius:var(--r-sm);white-space:nowrap}
-.tm-st.gap{background:var(--bad-bg);color:var(--bad)} .tm-st.update{background:var(--warn-bg);color:var(--warn)} .tm-st.ok{background:var(--ok-bg);color:var(--ok)}
+.tm-st.gap{background:var(--bad-bg);color:var(--bad-text, #c8303a)} .tm-st.update{background:var(--warn-bg);color:var(--warn)} .tm-st.ok{background:var(--ok-bg);color:var(--ok)}
 .tm-sec{font-size:10.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .tm-prop{margin:0 28px 12px;padding:14px 18px;border-radius:var(--r-lg);background:var(--accent-bg);box-shadow:0 0 0 1px var(--accent-soft)}
 .tm-prop>b{color:var(--accent);font-weight:600}
@@ -60,6 +65,7 @@ if (!document.getElementById("tm-css")){ const st = document.createElement("styl
 const S = {el: null, ctx: null, data: null, filter: localGet("tm.filter") || "all", search: "", sel: null, view: "map"};
 const N = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
 const TY = {root: "R", hub: "H", attribute: "A", commercial: "C"};
+const TYN = {root: "Root: the central topic", hub: "Hub: groups the pages under it", attribute: "Attribute: one detail of a topic", commercial: "Commercial: a page that sells"};
 const STATE = {gap: "Gap", update: "Update", ok: "OK"};
 
 function render(el, ctx){ S.el = el; S.ctx = ctx; S.sel = null; shell(); load() }
@@ -75,8 +81,9 @@ function shell(){
       <span class="spacer"></span>
       <button id="tmSite" title="Central entity, source context, central search intent">Site</button>
       <label class="tm-imp">Import CSV<input type="file" id="tmCsv" accept=".csv,text/csv" style="display:none"></label>
-      <button id="tmAdd" class="primary">+ Node</button>
-    </div><div id="tmSiteLine" class="tm-site"></div><div id="tmProps"></div>
+      <button id="tmAdd" title="Add a node to the map by hand">+ Node</button>
+    </div><div id="tmSiteLine" class="tm-site"></div>
+    <div class="tm-legend" aria-label="Node types">${Object.entries(TY).map(([k, l]) => `<span><span class="tm-type ${k}">${l}</span>${esc(TYN[k])}</span>`).join("")}</div><div id="tmProps"></div>
     <div class="tm-wrap" id="tmWrap"><div class="tm-main" id="tmMain"></div><div class="tm-side" id="tmSide"></div></div>`;
   const $ = s => S.el.querySelector(s);
   $("#tmPills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; S.filter = b.dataset.f; localSet("tm.filter", S.filter); draw() };
@@ -108,7 +115,7 @@ function drawProps(){
   const sum = p => { const c = {add: 0, update: 0, remove: 0, site: 0}; (p.summary || []).forEach(x => c[x.op]++);
     return [c.add && `${c.add} new`, c.update && `${c.update} changed`, c.remove && `${c.remove} removed`, c.site && "site settings"].filter(Boolean).join(", ") };
   box.innerHTML = `<div class="tm-prop"><b>${ps.length} proposal${ps.length > 1 ? "s" : ""} for the map</b> <span class="hint">Nothing changes until you accept.</span>
-    ${ps.map(p => `<div class="r"><span class="s"><b>${p.by === "claude" ? "Claude" : esc(p.by)}</b> · ${esc((p.at || "").replace("T", " ").slice(0, 16))} · ${esc(sum(p))}${p.note ? " · " + esc(p.note) : ""}</span>
+    ${ps.map(p => `<div class="r"><span class="s"><b>${p.by === "claude" ? "Claude" : esc(p.by)}</b> · ${esc(p.at ? window.studioFmt.dateTime(p.at) : "")} · ${esc(sum(p))}${p.note ? " · " + esc(p.note) : ""}</span>
       <button class="link" data-show="${p.id}">Show</button><button data-rej="${p.id}">Reject</button><button class="primary" data-acc="${p.id}">Accept</button></div>`).join("")}</div>`;
   box.onclick = async e => {
     const a = e.target.closest("[data-acc]"), r = e.target.closest("[data-rej]"), s = e.target.closest("[data-show]");
@@ -140,10 +147,10 @@ function drawMain(){
   const dc = v => v ? `<span class="${v > 0 ? "seo-up" : "seo-down"}">${v > 0 ? "+" : ""}${N(v)}</span>` : "";
   main.innerHTML = rows.length ? `<table><thead><tr><th>Node</th><th>Section</th><th class="num">Clicks</th><th class="num">vs prev</th><th class="num">Impr.</th><th class="num">Pos.</th><th class="num">Sessions</th><th>State</th><th>Issues</th></tr></thead><tbody>
     ${rows.map(([n, depth]) => `<tr class="tm-row ${strong.has(n.id) ? "" : "dim"} ${S.sel === n.id ? "sel" : ""}" data-id="${n.id}">
-      <td><span class="tm-t" style="padding-left:${depth * 18}px"><span class="tm-type ${n.type}" title="${esc(n.type)}">${TY[n.type] || "?"}</span>${esc(n.title)}${n.children ? ` <span class="hint">(${n.children})</span>` : ""}${n.new_post ? ` <span class="tm-dr" title="A new page is waiting in the SEO draft">new page in draft</span>` : n.in_draft ? ` <span class="tm-dr" title="Edits waiting in the SEO draft">${n.in_draft} in draft</span>` : ""}</span></td>
+      <td><span class="tm-t" style="padding-left:${depth * 18}px"><span class="tm-type ${n.type}" title="${esc(TYN[n.type] || n.type)}">${TY[n.type] || "?"}</span>${esc(n.title)}${n.children ? ` <span class="hint">(${n.children})</span>` : ""}${n.new_post ? ` <span class="tm-dr" title="A new page is waiting in the SEO draft">new page in draft</span>` : n.in_draft ? ` <span class="tm-dr" title="Edits waiting in the SEO draft">${n.in_draft} in draft</span>` : ""}</span></td>
       <td><span class="tm-sec">${esc(n.section)}</span></td><td class="num">${N(n.clicks)}</td><td class="num">${dc(n.delta_clicks)}</td><td class="num">${N(n.impressions)}</td>
       <td class="num">${n.position ? n.position.toFixed(1) : ""}</td><td class="num">${N(n.sessions)}</td>
-      <td><span class="tm-st ${n.state}">${STATE[n.state]}</span></td><td class="wrap">${esc((n.issues || []).map(i => i.text).join(" ").slice(0, 140))}</td></tr>`).join("")}</tbody></table>`
+      <td><span class="tm-st ${n.state}">${STATE[n.state]}</span></td><td class="wrap">${(n.issues || []).length ? `<span class="tm-clamp" title="${esc(n.issues.map(i => i.text).join(" "))}">${esc(n.issues.map(i => i.text).join(" "))}</span>` : ""}</td></tr>`).join("")}</tbody></table>`
     : `<div class="tm-empty">Nothing matches this filter.</div>`;
   main.onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr){ S.sel = tr.dataset.id; drawMain(); openNode(S.sel) } };
 }

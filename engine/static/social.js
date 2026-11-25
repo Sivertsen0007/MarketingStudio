@@ -12,6 +12,7 @@ const SO = {view: localGet("so.view") || "calendar", mode: localGet("so.mode") |
 const CSS = `
 .so-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg)}
 .so-root{--so-fb:#4263eb;--so-ig:#e64980;--so-li:#0c8599}
+.so-root button.danger{color:var(--bad-text, #c8303a)}
 .so-head{display:flex;align-items:flex-end;gap:12px;padding:22px 28px 14px;flex-wrap:wrap}
 .so-head .ttl{flex:1;min-width:240px}
 .so-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
@@ -25,13 +26,13 @@ const CSS = `
 .so-side{width:440px;max-width:48vw;overflow:auto;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-card);display:none}
 .so-side.on{display:block}
 .so-seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
-.so-seg button{height:30px;padding:0 13px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
+.so-seg button{height:32px;padding:0 13px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
 .so-seg button:hover{background:transparent;color:var(--text)}
 .so-seg button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .so-nav{width:34px;height:34px;padding:0;font-size:16px;line-height:1}
 .so-title{font-weight:600;font-size:15px;color:var(--text);min-width:150px;text-align:center}
 .so-test{display:inline-flex;align-items:center;height:28px;background:var(--warn-bg);color:var(--warn);border-radius:var(--r-pill);padding:0 10px;font-size:12px;font-weight:600}
-.so-month{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:38px;grid-auto-rows:minmax(104px,1fr);flex:1 0 auto;min-height:600px}
+.so-month{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:38px;grid-auto-rows:minmax(118px,auto);align-content:start;flex:1 0 auto}
 .so-dow{display:flex;align-items:center;padding:0 12px;font-size:11.5px;font-weight:600;color:var(--muted);background:var(--head);border-bottom:1px solid var(--line2)}
 .so-dow.today{color:var(--accent)}
 .so-day{border-right:1px solid var(--line2);border-bottom:1px solid var(--line2);padding:6px 6px 4px;min-height:104px;overflow:hidden;transition:background var(--t) var(--ease)}
@@ -42,16 +43,16 @@ const CSS = `
 .so-day.today .so-dn{background:var(--accent);color:var(--ink-text);border-radius:var(--r-pill);padding:0 7px;min-width:22px}
 .so-day.over,.so-slot.over{outline:2px dashed var(--accent);outline-offset:-3px;background:var(--accent-bg)}
 .so-dn{font-size:12px;font-weight:600;color:var(--text2);display:inline-flex;align-items:center;justify-content:center;height:22px;margin:0 0 4px 2px;font-variant-numeric:tabular-nums}
-.so-ev{--c:var(--so-fb);display:block;width:100%;height:24px;text-align:left;font-size:11.5px;font-weight:600;line-height:24px;padding:0 7px 0 18px;margin:0 0 3px;border:0;border-radius:var(--r-sm);position:relative;
+.so-ev{--c:var(--so-fb);display:block;width:100%;height:32px;text-align:left;font-size:11.5px;font-weight:600;line-height:32px;padding:0 7px 0 18px;margin:0 0 3px;border:0;border-radius:var(--r-sm);position:relative;
   background:color-mix(in srgb,var(--c) 9%,var(--panel));box-shadow:none;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background var(--t) var(--ease)}
-.so-ev::before{content:"";position:absolute;left:7px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--c)}
+.so-ev::before{content:"";position:absolute;left:7px;top:calc(50% - 3px);width:6px;height:6px;border-radius:50%;background:var(--c)}
 .so-ev:hover{background:color-mix(in srgb,var(--c) 18%,var(--panel))}
 .so-ev.facebook{--c:var(--so-fb)}.so-ev.instagram{--c:var(--so-ig)}.so-ev.linkedin{--c:var(--so-li)}
 .so-ev.moved{background:var(--draft-bg);box-shadow:inset 0 0 0 1px var(--draft)}
 .so-ev[draggable=true]{cursor:grab}
 .so-ev .t{color:var(--muted);font-weight:500;margin-right:5px;font-variant-numeric:tabular-nums}
 .so-ev .so-st{height:16px;font-size:10px;vertical-align:1px}
-:is(.so-day,.so-slot) .so-ev .so-st{position:absolute;right:7px;top:9px;width:7px;height:7px;padding:0;margin:0;border-radius:50%;font-size:0;background:var(--faint)}
+:is(.so-day,.so-slot) .so-ev .so-st{position:absolute;right:7px;top:calc(50% - 3.5px);width:7px;height:7px;padding:0;margin:0;border-radius:50%;font-size:0;background:var(--faint)}
 :is(.so-day,.so-slot) .so-ev{padding-right:20px}
 :is(.so-day,.so-slot) .so-ev .so-st.scheduled{background:var(--accent)}:is(.so-day,.so-slot) .so-ev .so-st.published{background:var(--ok)}:is(.so-day,.so-slot) .so-ev .so-st.failed{background:var(--bad)}:is(.so-day,.so-slot) .so-ev .so-st.draft{background:var(--draft)}
 :is(.so-day,.so-slot) .so-ev .so-st.needs_checking,:is(.so-day,.so-slot) .so-ev .so-st.missed,:is(.so-day,.so-slot) .so-ev .so-st.not_scheduled,:is(.so-day,.so-slot) .so-ev .so-st.publishing{background:var(--c4)}
@@ -71,6 +72,9 @@ const CSS = `
 .so-unpl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:12px 18px;border-top:1px solid var(--line2);font-size:13px}
 .so-unpl b{font-weight:600;color:var(--text2)}
 .so-unpl .so-ev{display:inline-block;width:auto;max-width:260px;margin:0}
+.so-more{display:block;width:100%;height:32px;padding:0 7px;margin:0;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;text-align:left;font-size:11.5px;font-weight:600;color:var(--accent)}
+.so-more:hover{background:var(--accent-bg)}
+.so-main>.empty button{margin-top:10px}
 .so-ed{padding:18px 20px 90px}
 .so-edh{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .so-ed h3{margin:0;font-weight:600;font-size:18px;color:var(--text);display:flex;align-items:center;gap:8px}
@@ -80,7 +84,7 @@ const CSS = `
 .so-ticks{display:flex;gap:14px;flex-wrap:wrap}.so-ticks label{display:flex;gap:6px;align-items:center;font-weight:500}
 .so-cnt{font-size:11.5px;font-weight:500;color:var(--muted);text-align:right;margin-top:4px}.so-cnt.over{color:var(--bad)}
 .so-tabs{display:inline-flex;gap:2px;margin-bottom:6px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
-.so-tabs button{height:26px;padding:0 10px;font-size:12px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted)}
+.so-tabs button{height:32px;padding:0 12px;font-size:12px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted)}
 .so-tabs button:hover{background:transparent;color:var(--text)}
 .so-tabs button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .so-media{display:flex;gap:8px;flex-wrap:wrap}.so-mi{position:relative;width:80px;height:80px;border-radius:var(--r-md);overflow:hidden;background:var(--sunken);font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:center;text-align:center;box-shadow:var(--sh-1)}
@@ -163,12 +167,15 @@ const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())
 const localISO = d => `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-const fmtDate = s => { if (!s) return ""; const d = new Date(s); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}` };
+const fmtDate = s => s ? window.studioFmt.dateTime(s) : "";  // 25 Nov 2026, 14:05
 const num = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
 const mondayOf = d => { const x = new Date(d); x.setHours(0,0,0,0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x };
 const stChip = s => `<span class="so-st ${esc(String(s).replace(/ .*/, ""))}">${esc(String(s).replace(/_/g, " "))}</span>`;
 const mediaUrl = id => "/api/meta/media?" + qs({acct: "meta", id});
 const sapi = (k, body) => api(A + k, body);
+// After an await the user may have switched to another area: write into a detached stand-in instead of throwing on null.
+const byId = id => document.getElementById(id) || document.createElement("div");
+const MAXDAY = 3;  // month view: at most this many posts per day, then "+N more" (opens the day view)
 
 function render(el){
   if (!document.getElementById("so-css")){ const st = document.createElement("style"); st.id = "so-css"; st.textContent = CSS; document.head.appendChild(st) }
@@ -182,7 +189,7 @@ function render(el){
       <div class="so-seg" id="soView"><button data-v="calendar">Calendar</button><button data-v="list">List</button><button data-v="feed">Feed</button><button data-v="published">Published</button><button data-v="analytics">Analytics</button><button data-v="library">Library</button></div>
       <span id="soCalCtl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <div class="so-seg" id="soMode"><button data-m="month">Month</button><button data-m="week">Week</button><button data-m="day">Day</button></div>
-        <button id="soPrev" class="so-nav" title="Previous">‹</button><button id="soToday">Today</button><button id="soNext" class="so-nav" title="Next">›</button>
+        <button id="soPrev" class="so-nav" title="Previous" aria-label="Previous">‹</button><button id="soToday">Today</button><button id="soNext" class="so-nav" title="Next" aria-label="Next">›</button>
         <span class="so-title" id="soTitle"></span>
         <select id="soFCh" title="Channel"><option value="">All channels</option>${CHS.map(c => `<option value="${c}">${CH[c]}</option>`).join("")}</select>
         <select id="soFSt" title="Status"><option value="">All statuses</option>${["draft","scheduled","published","failed","missed","needs_checking","not_scheduled"].map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1).replace("_", " ")}</option>`).join("")}</select></span>
@@ -251,11 +258,11 @@ function range(){
 const shortD = d => `${d.getDate()} ${MONTHS[d.getMonth()].slice(0,3)}`;
 async function loadCalendar(){
   const [s, e] = range(), last = new Date(e - 864e5);
-  document.getElementById("soTitle").textContent = SO.view === "list" ? `${shortD(s)} - ${shortD(last)} ${last.getFullYear()}`
+  byId("soTitle").textContent = SO.view === "list" ? `${shortD(s)} - ${shortD(last)} ${last.getFullYear()}`
     : SO.mode === "month" ? `${MONTHS[SO.anchor.getMonth()]} ${SO.anchor.getFullYear()}`
     : SO.mode === "day" ? `${DOW[(s.getDay() + 6) % 7]} ${s.getDate()} ${MONTHS[s.getMonth()]} ${s.getFullYear()}`
     : `${shortD(s)} - ${shortD(last)} ${s.getFullYear()}`;
-  try { SO.cal = await sapi("calendar?" + qs({start: localISO(s), end: localISO(e)})) } catch(err) { document.getElementById("soMain").innerHTML = `<div class="so-prob">${esc(err.message)}</div>`; return }
+  try { SO.cal = await sapi("calendar?" + qs({start: localISO(s), end: localISO(e)})) } catch(err) { byId("soMain").innerHTML = `<div class="so-prob">${esc(err.message)}</div>`; return }
   drawCal();
 }
 function drawCal(){ if (!SO.cal) return; if (SO.view === "list") drawList(); else drawCalendar() }
@@ -284,7 +291,9 @@ function drawCalendar(){
   if (SO.mode === "month"){
     h += `<div class="so-month">${DOW.map(d => `<div class="so-dow">${d}</div>`).join("")}`;
     for (let i = 0; i < 42; i++){ const d = new Date(s); d.setDate(d.getDate() + i); const k = ymd(d);
-      h += `<div class="so-day ${d.getMonth() !== SO.anchor.getMonth() ? "out" : ""} ${k === today ? "today" : ""}" data-day="${k}" title="Plan a post on this day"><span class="so-dn">${d.getDate()}</span>${(byDay[k] || []).map(evHTML).join("")}</div>` }
+      const evs = byDay[k] || [], cut = evs.length > MAXDAY ? MAXDAY - 1 : MAXDAY;  // keep the cell at 3 rows: 2 posts + "+N more"
+      h += `<div class="so-day ${d.getMonth() !== SO.anchor.getMonth() ? "out" : ""} ${k === today ? "today" : ""}" data-day="${k}" title="Plan a post on this day"><span class="so-dn">${d.getDate()}</span>${evs.slice(0, cut).map(evHTML).join("")}`
+        + (evs.length > cut ? `<button class="so-more" data-more="${k}" title="Show all ${evs.length} posts on this day">+${evs.length - cut} more</button>` : "") + `</div>` }
     h += `</div>`;
   } else if (SO.mode === "week"){
     const days = [...Array(7)].map((_, i) => { const d = new Date(s); d.setDate(d.getDate() + i); return d });
@@ -293,7 +302,7 @@ function drawCalendar(){
     h += `<div class="so-week so-dayv"><div class="so-dow"></div><div class="so-dow">${DOW[(s.getDay() + 6) % 7]} ${shortD(s)}</div>` + hours([s]) + `</div>`;
   }
   if (c.unplanned.length) h += `<div class="so-unpl"><b>No time yet:</b> ${c.unplanned.map(u => `<button class="so-ev ${esc((u.channels || [])[0] || "")}" data-open="${esc(u.id)}">${esc(u.title || "(untitled)")}${stChip(u.status)}</button>`).join("")}</div>`;
-  const main = document.getElementById("soMain"); main.innerHTML = h;
+  const main = byId("soMain"); main.innerHTML = h;
   if (SO.mode !== "month"){ const slot = main.querySelector('[data-hour="7"]'); if (slot) main.scrollTop = slot.offsetTop - 40 }
   wireCal(main);
 }
@@ -302,16 +311,19 @@ function drawList(){
   const byDay = {}; for (const ev of evs){ const k = ymd(new Date(ev.when)); (byDay[k] = byDay[k] || []).push(ev) }
   let h = calHead(c) + `<div class="so-list">`;
   const keys = Object.keys(byDay).sort();
-  if (!keys.length) h += `<div class="empty">Nothing planned or published in these four weeks${SO.fch || SO.fst ? " with these filters" : ""}.</div>`;
+  if (!keys.length) h += `<div class="empty">Nothing planned or published in these four weeks${SO.fch || SO.fst ? " with these filters" : ""}.<br><button class="primary" data-newpost>New post</button></div>`;
   for (const k of keys){ const d = new Date(k + "T00:00");
     h += `<div class="so-lday"><div class="so-ldh">${DOW[(d.getDay() + 6) % 7]} ${d.getDate()} ${MONTHS[d.getMonth()]} <button class="link" data-newday="${k}">+ Add post</button></div>`
       + byDay[k].map(ev => `<div class="so-lrow">${evHTML(ev)}<span class="so-chan ${esc(ev.channel)}">${esc(CH[ev.channel])}</span></div>`).join("") + `</div>` }
   h += `</div>`;
-  const main = document.getElementById("soMain"); main.innerHTML = h; wireCal(main);
+  const main = byId("soMain"); main.innerHTML = h; wireCal(main);
 }
 function wireCal(main){
   main.onclick = async e => {
     const cm = e.target.closest("[data-cm]"), dm = e.target.closest("[data-dm]"), op = e.target.closest("[data-open]"), ev = e.target.closest("[data-ev]"), nd = e.target.closest("[data-newday]");
+    const more = e.target.closest("[data-more]");
+    if (more){ const [y, m, d] = more.dataset.more.split("-").map(Number); SO.anchor = new Date(y, m - 1, d); SO.mode = "day"; localSet("so.mode", "day"); return draw() }
+    if (e.target.closest("[data-newpost]")) return openPost(null);
     if (cm) return confirmMove(cm.dataset.cm);
     if (dm){ try { await sapi("discard_move", {id: dm.dataset.dm}); loadCalendar() } catch(err) { toast(err.message) } return }
     if (op) return openPost(op.dataset.open);
@@ -354,12 +366,12 @@ async function confirmMove(id){
 
 // ---------- published grid ----------
 async function loadPublished(){
-  const main = document.getElementById("soMain"); main.innerHTML = `<div class="empty">Reading posts from Meta ...</div>`;
+  const main = byId("soMain"); main.innerHTML = `<div class="empty">Reading posts from Meta ...</div>`;
   try { SO.pub = await sapi("published?" + qs({days: SO.pubDays, channel: SO.pubCh})) } catch(e) { main.innerHTML = `<div class="so-prob">${esc(e.message)}</div>`; return }
   drawPublished();
 }
 function drawPublished(){
-  const main = document.getElementById("soMain"); if (!SO.pub || SO.view !== "published") return;
+  const main = byId("soMain"); if (!SO.pub || SO.view !== "published") return;
   document.querySelectorAll("#soCols button").forEach(b => b.classList.toggle("on", b.dataset.c === SO.cols));
   const rows = SO.pub.rows;
   const data = [["reach","Reach"],["views","Views"],["likes","Likes / reactions"],["comments","Comments"],["shares","Shares"],["saves","Saves"],["link_clicks","Link clicks"],["clicks","All clicks"],["video_views","Video views"],["engagement","Engagement"]];
@@ -398,7 +410,7 @@ async function boostDialog(postId, channel, row){
 
 // ---------- editor ----------
 async function openPost(id, pre){
-  const side = document.getElementById("soSide"); side.classList.add("on");
+  const side = byId("soSide"); side.classList.add("on");
   if (!SO.lib) sapi("library").then(l => { SO.lib = l; if (SO.post) drawEditor() }).catch(() => {});
   if (!SO.tags) sapi("hashtags").then(t => { SO.tags = t; if (SO.post) drawEditor() }).catch(() => { SO.tags = [] });
   if (!id){ SO.post = {id: null, title: "", channels: ["facebook", "instagram"], when: "", caption: "", captions: {}, first_comment: "", hashtags: "", link: "", alt_text: "", location: "", media: [], format: "text", guest_photos: false, consent_confirmed: false, approval: "", note: "", utm: true, results: {}, status: "draft", check: null, final_links: {}, ...(pre || {})}; SO.tab = "all"; SO.quick = null; return drawEditor() }
@@ -409,7 +421,7 @@ async function openPost(id, pre){
 }
 const locked = p => Object.values(p.results || {}).some(r => ["scheduled", "publishing"].includes(r.status));
 function drawEditor(){
-  const p = SO.post, side = document.getElementById("soSide"), ro = locked(p), dis = ro ? "disabled" : "";
+  const p = SO.post, side = byId("soSide"), ro = locked(p), dis = ro ? "disabled" : "";
   const li = SO.state && SO.state.linkedin_connected;
   const txt = SO.tab === "all" ? p.caption : ((p.captions || {})[SO.tab] ?? "");
   const res = Object.entries(p.results || {});
@@ -494,7 +506,7 @@ function checksHTML(c){
   return c.problems.map(x => `<div class="so-prob">${esc(x)}</div>`).join("") + c.warnings.map(x => `<div class="so-warn">${esc(x)}</div>`).join("");
 }
 function collect(){
-  const p = SO.post, side = document.getElementById("soSide"); if (!p || !side) return;
+  const p = SO.post, side = byId("soSide"); if (!p || !side) return;
   const v = id => { const e = side.querySelector("#" + id); return e ? e.value : null };
   for (const k of ["title", "hashtags", "link", "first_comment", "alt_text", "location"]){ const x = v("so_" + k); if (x !== null) p[k] = x }
   const w = v("so_when"); if (w !== null) p.when = w;
@@ -704,7 +716,7 @@ async function settingsDialog(){
 
 // ---------- feed preview ----------
 async function loadFeed(){
-  const main = document.getElementById("soMain"); main.innerHTML = `<div class="empty">Loading the Instagram grid ...</div>`;
+  const main = byId("soMain"); main.innerHTML = `<div class="empty">Loading the Instagram grid ...</div>`;
   let f; try { f = await sapi("feed") } catch(e) { main.innerHTML = `<div class="so-prob">${esc(e.message)}</div>`; return }
   main.innerHTML = `<div class="so-legend">Instagram grid as followers will see it: planned posts (not live yet) first, then what is live. Newest top left.</div>
     <div class="so-feed">${f.items.map(x => `<div class="so-ft ${x.status !== "published" ? "plan" : ""}" ${x.post ? `data-open="${esc(x.post)}"` : x.url ? `data-url="${esc(x.url)}"` : ""} title="${esc(x.text)}">
@@ -716,7 +728,7 @@ async function loadFeed(){
 
 // ---------- analytics, best time, competitors ----------
 async function loadAnalytics(){
-  const main = document.getElementById("soMain"); main.innerHTML = `<div class="empty">Reading from Meta ...</div>`;
+  const main = byId("soMain"); main.innerHTML = `<div class="empty">Reading from Meta ...</div>`;
   let a, hm, comp;
   try { [a, hm, comp] = await Promise.all([sapi("analytics?" + qs({days: SO.anaDays})), sapi("heatmap?" + qs({channel: SO.heatCh})), sapi("competitors")]) }
   catch(e) { main.innerHTML = `<div class="so-prob">${esc(e.message)}</div>`; return }
@@ -750,7 +762,7 @@ async function loadAnalytics(){
 
 // ---------- library: templates, hashtag sets, evergreen autolists, CSV import ----------
 async function loadLibrary(){
-  const main = document.getElementById("soMain");
+  const main = byId("soMain");
   try { SO.lib = await sapi("library") } catch(e) { main.innerHTML = `<div class="so-prob">${esc(e.message)}</div>`; return }
   const L = SO.lib, posts = (SO.state.posts || []);
   main.innerHTML = `<div class="so-ana so-lib">

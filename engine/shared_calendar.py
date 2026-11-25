@@ -137,8 +137,11 @@ def _marks(root=None):
 def _email(start, end, owner):
     marks = _marks()
     out, seen = [], set()
+    platform = "Email platform"  # owner chip for campaigns nobody in Studio scheduled: the configured platform name if set
     try:
         from areas import email as em  # noqa: PLC0415
+        if em.PLATFORM and em.PLATFORM != "your email platform":
+            platform = em.PLATFORM
         rows = em.adapter().list_campaigns()
     except Exception:  # noqa: BLE001 - no platform reachable: the marks alone
         rows = []
@@ -151,7 +154,7 @@ def _email(start, end, owner):
         cid = str(c.get("id"))
         seen.add(cid)
         mk = marks.get(f"email_{cid}") or {}
-        who = owner(mk.get("_author") or mk.get("by")) if mk else {"name": "the email platform", "colour": "#888888",
+        who = owner(mk.get("_author") or mk.get("by")) if mk else {"name": platform, "colour": "#888888",
                                                                   "me": False}
         out.append({"key": f"email:{cid}", "kind": "email", "id": cid, "channel": "email", "when": iso(t),
                     "title": c.get("subject") or c.get("name") or cid, "status": c["status"], "owner": who, "link": "",

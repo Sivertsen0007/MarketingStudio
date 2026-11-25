@@ -31,7 +31,7 @@
   .tt-ev .s{min-width:0;color:var(--text2)} .tt-ev .s b{font-weight:600;color:var(--text)}
   .tt-ev .k{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--sunken);font-size:10.5px;font-weight:600;color:var(--muted);margin-left:6px}
   .tt-items{grid-column:2/4;display:flex;flex-wrap:wrap;gap:4px}
-  .tt-items button,.tt-link{height:24px;border:0;background:var(--panel);box-shadow:var(--sh-1);border-radius:var(--r-pill);padding:0 10px;font-size:11.5px;font-weight:600;color:var(--text2);cursor:pointer;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color var(--t) var(--ease),background var(--t) var(--ease)}
+  .tt-items button,.tt-link{height:32px;border:0;background:var(--panel);box-shadow:var(--sh-1);border-radius:var(--r-pill);padding:0 10px;font-size:11.5px;font-weight:600;color:var(--text2);cursor:pointer;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color var(--t) var(--ease),background var(--t) var(--ease)}
   .tt-items button:hover,.tt-link:hover{background:var(--accent-bg);color:var(--accent)}
   .tt-p{display:flex;gap:8px;align-items:baseline;padding:6px 0;font-size:13px}
   .tt-p .x{min-width:0;flex:1;font-weight:500} .tt-p .m{font-size:11.5px;color:var(--muted)}

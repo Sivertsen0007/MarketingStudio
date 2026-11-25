@@ -32,7 +32,7 @@ const CSS = `
 .tc-root .toolbar.tc-bar{background:transparent;border:0;box-shadow:none;padding:0 28px 14px}
 .tc-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .tc-tabs,.tc-seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
-.tc-tabs button,.tc-seg button{height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
+.tc-tabs button,.tc-seg button{height:32px;padding:0 14px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
 .tc-tabs button:hover,.tc-seg button:hover{background:transparent;color:var(--text)}
 .tc-tabs button.on,.tc-seg button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .tc-nav{width:34px;height:34px;padding:0;font-size:16px;line-height:1}
@@ -55,8 +55,8 @@ const CSS = `
 .tc-day h4{display:flex;align-items:center;gap:6px;margin:0 0 6px;font-size:12px;font-weight:600;color:var(--text2)}
 .tc-day h4 .d{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:var(--r-pill);font-variant-numeric:tabular-nums}
 .tc-day h4 .n{margin-left:auto;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-pill);background:var(--sunken);color:var(--muted);font-size:10.5px}
-.tc-day h4 .n.over{background:var(--bad-bg);color:var(--bad)}
-.tc-it{--oc:var(--faint);display:block;background:color-mix(in srgb,var(--oc) 10%,var(--panel));box-shadow:inset 3px 0 0 var(--oc);border-radius:var(--r-sm);padding:5px 8px 5px 10px;margin-bottom:4px;font-size:12px;line-height:1.35;overflow:hidden;cursor:default;color:var(--text2);transition:background var(--t) var(--ease)}
+.tc-day h4 .n.over{background:var(--bad-bg);color:var(--bad-text, #c8303a)}
+.tc-it{--oc:var(--faint);display:block;background:color-mix(in srgb,var(--oc) 10%,var(--panel));box-shadow:inset 3px 0 0 var(--oc);border-radius:var(--r-sm);padding:7px 8px 7px 10px;min-height:32px;box-sizing:border-box;margin-bottom:4px;font-size:12px;line-height:1.35;overflow:hidden;cursor:default;color:var(--text2);transition:background var(--t) var(--ease)}
 .tc-it:hover{background:color-mix(in srgb,var(--oc) 17%,var(--panel))}
 .tc-it .t{font-weight:600;color:var(--text)} .tc-it .s{color:var(--muted);font-size:11px;font-weight:500}
 .tc-it.st-review{box-shadow:inset 3px 0 0 var(--oc),inset 0 0 0 1px var(--warn);background:var(--warn-bg)}
@@ -107,7 +107,7 @@ function render(el){
     <div class="toolbar tc-bar">
       <span class="tc-tabs"><button data-tab="cal">Calendar</button><button data-tab="lib">Library</button><button data-tab="set">Team settings</button></span>
       <span id="tcNav" class="tc-bar"><span style="width:10px"></span><span class="tc-seg"><button data-v="week">Week</button><button data-v="month">Month</button></span>
-        <button data-go="-1" class="tc-nav" title="Back">&lsaquo;</button><button data-go="0">Today</button><button data-go="1" class="tc-nav" title="Forward">&rsaquo;</button><b id="tcTitle"></b></span></div>
+        <button data-go="-1" class="tc-nav" title="Previous" aria-label="Previous">&lsaquo;</button><button data-go="0">Today</button><button data-go="1" class="tc-nav" title="Next" aria-label="Next">&rsaquo;</button><b id="tcTitle"></b></span></div>
     <div class="tc-scroll" id="tcBody"></div></div>`;
   el.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { T.tab = b.dataset.tab; lset("tab", T.tab); draw() });
   el.querySelectorAll("[data-v]").forEach(b => b.onclick = () => { T.view = b.dataset.v; lset("view", T.view); loadCal() });
@@ -126,7 +126,10 @@ function draw(){
   T.el.querySelector("#tcNav").style.display = T.tab === "cal" ? "" : "none";
   if (T.tab === "cal") loadCal(); else if (T.tab === "lib") loadLib(); else loadSet(false);
 }
-const body = () => T.el.querySelector("#tcBody");
+// After an await the user may have switched to another area (T.el is the shared area page): write into a detached
+// stand-in then, instead of throwing "Cannot set properties of null".
+const body = () => (T.el && T.el.querySelector("#tcBody")) || document.createElement("div");
+const F = window.studioFmt;
 
 // ---------- calendar ----------
 function range(){
@@ -137,8 +140,9 @@ function range(){
 async function loadCal(){
   const [s, e] = range();
   T.el.querySelectorAll("[data-v]").forEach(b => b.classList.toggle("on", b.dataset.v === T.view));
-  T.el.querySelector("#tcTitle").textContent = T.view === "week" ? `${s.toLocaleDateString(undefined, {day:"numeric", month:"short"})} to ${addDays(e, -1).toLocaleDateString(undefined, {day:"numeric", month:"short", year:"numeric"})}`
-    : T.anchor.toLocaleDateString(undefined, {month:"long", year:"numeric"});
+  const ttl = T.el.querySelector("#tcTitle") || document.createElement("b");
+  ttl.textContent = T.view === "week" ? `${s.getDate()} ${F.MON[s.getMonth()]} to ${F.date(addDays(e, -1))}`
+    : T.anchor.toLocaleDateString("en-GB", {month:"long", year:"numeric"});
   body().innerHTML = `<p class="tc-help">Loading ...</p>`;
   try { T.data = await call(A("calendar", {start: s.toISOString(), end: e.toISOString()})) } catch(err) { body().innerHTML = `<div class="prob">${esc(err.message)}</div>`; return }
   drawCal(s, e);
@@ -181,7 +185,7 @@ async function loadLib(){
         <input type="text" id="tcNl" placeholder="Label (optional)" style="max-width:220px"><textarea id="tcNt" rows="2" placeholder="The text, URL, utm_source=...&amp;utm_medium=... or HTML"></textarea>
         <button id="tcNadd" class="primary">Add</button></div>` : `<p class="tc-help">Viewers can't add to the library.</p>`}</div>
     <div class="tc-libw"><table class="tc-lib">${L.items.map(x => `<tr><td style="width:120px"><span class="tc-badge">${esc(K[x.kind] || x.kind)}</span></td>
-      <td>${x.label ? `<b>${esc(x.label)}</b><br>` : ""}<pre>${esc(x.text)}</pre></td><td style="width:140px" class="tc-help">${esc(x.by)}<br>${esc((x.created || "").slice(0, 10))}</td>
+      <td>${x.label ? `<b>${esc(x.label)}</b><br>` : ""}<pre>${esc(x.text)}</pre></td><td style="width:140px" class="tc-help">${esc(x.by)}<br>${esc(F.date(x.created))}</td>
       <td style="width:150px"><button data-copy="${esc(x.id)}">Copy</button> ${L.can_add ? `<button class="link" data-del="${esc(x.id)}">Remove</button>` : ""}</td></tr>`).join("")
       || `<tr><td class="tc-help">The library is empty.</td></tr>`}</table></div>`;
   const $ = s => body().querySelector(s);
@@ -211,7 +215,7 @@ async function loadSet(fresh){
 }
 function head(k){
   const x = T.set.keys[k], t = x.team;
-  return `<h3>${esc(x.label)} ${t ? `<span class="tc-badge team">Set by your team</span><span class="tc-help" style="margin:0">${esc(t.updated_by)}${t.updated_at ? ", " + esc(new Date(t.updated_at).toLocaleString()) : ""}</span>` : `<span class="tc-badge">This Mac</span>`}</h3>`;
+  return `<h3>${esc(x.label)} ${t ? `<span class="tc-badge team">Set by your team</span><span class="tc-help" style="margin:0">${esc(t.updated_by)}${t.updated_at ? ", " + esc(F.dateTime(t.updated_at)) : ""}</span>` : `<span class="tc-badge">This Mac</span>`}</h3>`;
 }
 function acts(k){
   const x = T.set.keys[k], S = T.set;

@@ -16,7 +16,7 @@ const CSS = `
 .act-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:var(--r-pill);background:var(--panel);box-shadow:var(--sh-1);color:var(--text2);font-weight:600;cursor:default;transition:box-shadow var(--t) var(--ease)}
 .act-chip:hover{box-shadow:var(--sh-pop)}
 .act-chip i{width:7px;height:7px;border-radius:50%;background:var(--faint);display:inline-block}
-.act-chip.ok i{background:var(--ok)} .act-chip.error{color:var(--bad)} .act-chip.error i{background:var(--bad)} .act-chip.demo i{background:var(--c4)}
+.act-chip.ok i{background:var(--ok)} .act-chip.error{color:var(--bad-text, #c8303a)} .act-chip.error i{background:var(--bad)} .act-chip.demo i{background:var(--c4)}
 .act-chip.loading i{background:var(--accent);animation:actpulse 1s infinite alternate} .act-chip.not_connected{color:var(--muted)} .act-chip.not_connected i{background:var(--line)}
 @keyframes actpulse{from{opacity:.3}to{opacity:1}}
 .act-scroll{overflow:auto;flex:1;padding:0 28px 28px;min-height:0}
@@ -25,13 +25,13 @@ const CSS = `
   transition:box-shadow var(--t) var(--ease),transform var(--t) var(--ease),background var(--t) var(--ease)}
 .act-tile:hover{box-shadow:0 6px 20px rgba(17,19,24,.08),0 0 0 1px var(--line2);transform:translateY(-1px)}
 .act-tile.on{background:var(--accent-bg);box-shadow:0 0 0 1.5px var(--accent),var(--sh-1)}
-.act-tile .k{font-size:13px;font-weight:500;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.act-tile .k{font-size:13px;font-weight:500;color:var(--text2);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word}
 .act-tile .v{font-size:30px;font-weight:600;letter-spacing:-.6px;margin-top:6px;line-height:1.1;color:var(--text)}
 .act-tile .v .ast{font-size:13px;color:var(--muted);font-weight:500;letter-spacing:0}
 .act-tile .d{font-size:11.5px;font-weight:500;color:var(--muted);margin-top:8px;line-height:1.35}
 .act-tile .d.up,.act-tile .d.down{display:inline-block;padding:2px 7px;border-radius:var(--r-sm);font-weight:600}
 .act-tile .d.up{color:var(--ok);background:var(--ok-bg)} .act-tile .d.up::before{content:"↗";margin-right:4px}
-.act-tile .d.down{color:var(--bad);background:var(--bad-bg)} .act-tile .d.down::before{content:"↘";margin-right:4px}
+.act-tile .d.down{color:var(--bad-text, #c8303a);background:var(--bad-bg)} .act-tile .d.down::before{content:"↘";margin-right:4px}
 .act-chart{border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);padding:18px 20px 12px;margin-bottom:12px;position:relative}
 .act-chart h3{margin:0 0 12px;font-size:16px;font-weight:600;color:var(--text)}
 .act-chart h3 small{font-size:12px;font-weight:500;color:var(--muted);margin-left:8px}
@@ -114,7 +114,9 @@ function render(el){
   $("#actApply").onclick = () => { T.from = $("#actFrom").value; T.to = $("#actTo").value; if (T.from && T.to) load(); else toast("Pick a from and a to date") };
   $("#actTz").onchange = e => { T.tz = e.target.value; localSet("act.tz", T.tz); load() };
   $("#actCompare").onchange = e => { T.compare = e.target.checked; localSet("act.compare", T.compare ? "1" : "0"); draw() };
-  $("#actRefresh").onclick = async () => { $("#actRefresh").disabled = true; await dataRefresh("activity", null, {reload:false}); $("#actRefresh").disabled = false; load() };
+  $("#actRefresh").onclick = async () => { const b = $("#actRefresh"); b.disabled = true;
+    try { await dataRefresh("activity", null, {reload:false}) } catch(e) { console.error("Activity refresh failed", e); toast("Activity could not be refreshed. Try again in a moment.") }
+    b.disabled = false; if (T.el && $("#actBody")) load() };
   if (T.period === "custom" && !(T.from && T.to)){ T.period = "last_30"; $("#actPeriod").value = "last_30"; $("#actCustom").style.display = "none" }
   load();
 }
@@ -150,7 +152,8 @@ function filtered(rows){
 }
 
 function draw(){
-  if (!T.el || !$("#actBody")) return;
+  // the user may have switched area while a source was loading: draw only into this page's own elements
+  if (!T.el || !$("#actBody") || !$("#actPerLabel") || !$("#actChips")) return;
   $("#actPerLabel").textContent = T.per ? `${T.per.label}: ${fmtDay(T.per.days[0])} to ${fmtDay(T.per.days[T.per.days.length - 1])}` : "Loading ...";
   $("#actChips").innerHTML = `<span class="lbl">Sources</span>` + Object.entries(SRC).map(([s, l]) => { const r = T.res[s] || {};
     const tip = [r.note, ...(r.errors || [])].filter(Boolean).join(" | ");
@@ -176,7 +179,7 @@ function tilesHtml(){
     else if (T.compare) d = r.prev_complete === false ? "no full history to compare" : (v === pv ? "same as previous period" : `${v > pv ? "up" : "down"} ${N(Math.abs(v - pv))} on previous (${N(pv)})`);
     const cls = T.compare && r.status === "ok" && r.prev_complete !== false && v !== pv ? (v > pv ? "up" : "down") : "";
     const on = T.f.channel === src && (src !== "blog" || T.f.type === (k === "blog_pub" ? "Post published" : "Post edited"));
-    return `<div class="act-tile ${on ? "on" : ""}" data-tile="${k}" title="Show only these"><div class="k">${esc(label)}</div><div class="v">${r.status === "loading" ? "..." : N(v)}${r.complete === false ? "<span class='ast'> *</span>" : ""}</div><div class="d ${cls}">${esc(d)}</div></div>` }).join("")}</div>`;
+    return `<div class="act-tile ${on ? "on" : ""}" data-tile="${k}" title="${esc(label)}: show only these"><div class="k">${esc(label)}</div><div class="v">${r.status === "loading" ? "..." : N(v)}${r.complete === false ? "<span class='ast'> *</span>" : ""}</div><div class="d ${cls}">${esc(d)}</div></div>` }).join("")}</div>`;
 }
 
 function chartHtml(rows){
@@ -293,7 +296,7 @@ async function exportCsv(){
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = r.filename; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove() }, 1000);
     toast(`Exported ${N(r.rows)} rows${r.include_who ? " with who made them" : ""}`);
-  } catch(e) { toast("Export failed: " + e.message) }
+  } catch(e) { console.error("Activity CSV export failed", e); toast("The CSV export did not work. Try again, or narrow the filters.") }
 }
 
 window.AREAS = window.AREAS || {};

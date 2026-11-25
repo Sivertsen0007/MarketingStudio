@@ -4,7 +4,8 @@
 // Uses the page's helpers: api, qs, esc, S, toast, showDialog, poll, dlg.
 (() => {
   const T = {list: null, open: null, results: {}, busy: false};
-  const n2 = v => v == null ? "-" : Number(v).toLocaleString("en-GB", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  // money in the ad account's own currency (en-GB, with the currency sign), e.g. "£1,234.50"
+  const m2 = v => v == null ? "-" : window.studioFmt.money(v, typeof acctCur === "function" ? acctCur() : "");
   const n0 = v => v == null ? "-" : Number(v).toLocaleString("en-GB");
   const chip = st => `<span class="chip ${st === "Running" ? "ok" : st === "Scheduled" ? "draft" : ""}">${esc(st)}</span>`;
   const today = () => new Date().toISOString().slice(0, 10);
@@ -31,8 +32,8 @@
       const conf = creative && x.meta.confidence[ad] != null ? `${x.meta.confidence[ad]}%` : "";
       return `<tr class="${lead ? "focus" : ""}"><td>${esc(c.name)}${creative && hp.has(ad) ? ` <span class="chip ok">high performer</span>` : ""}</td>
         <td title="${esc(c.ids.join(", "))}">${esc(c.names.join(", ") || "-")}</td><td class="num">${c.percent != null ? esc(c.percent) + "%" : "-"}</td>
-        <td class="num">${n2(c.spend)}</td><td class="num">${n0(c.impressions)}</td><td class="num">${c.ctr != null ? esc(c.ctr) + "%" : "-"}</td>
-        <td class="num">${n0(c.results)}</td><td class="num">${n2(c.cost_per_result)}</td>${creative ? `<td class="num">${esc(conf || "-")}</td>` : ""}</tr>`;
+        <td class="num">${m2(c.spend)}</td><td class="num">${n0(c.impressions)}</td><td class="num">${c.ctr != null ? esc(c.ctr) + "%" : "-"}</td>
+        <td class="num">${n0(c.results)}</td><td class="num">${m2(c.cost_per_result)}</td>${creative ? `<td class="num">${esc(conf || "-")}</td>` : ""}</tr>`;
     }).join("");
     return `<p class="${x.thin ? "chip warn" : "chip ok"}" style="display:inline-block;white-space:normal">${esc(x.verdict)}</p>
       <table style="margin-top:8px"><thead><tr><th>Cell</th><th>In the cell</th><th>Share</th><th>Spend</th><th>Impr.</th><th>CTR</th><th>Results</th><th>Cost/result</th>${creative ? "<th>Confidence</th>" : ""}</tr></thead>

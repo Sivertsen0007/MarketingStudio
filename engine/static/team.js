@@ -51,7 +51,7 @@
     badge(".tm-out", T.pending_out || 0);
     badge(".tm-cf", T.conflicts || 0);
     btn.classList.toggle("waiting", !!T.remote_waiting && !T.removed);
-    const last = T.last_sync ? new Date(T.last_sync).toLocaleString() : "never";
+    const last = T.last_sync ? window.studioFmt.dateTime(T.last_sync) : "never";
     btn.title = T.removed ? "This Mac was removed from the team. Open Setup > Team."
       : `Team ${T.team}: last sync ${last}. ${T.remote_waiting || 0} change(s) from the team waiting, ${T.pending_out || 0} of yours to send`
         + (T.conflicts ? `, ${T.conflicts} conflict(s)` : "") + ((T.failed || []).length ? `, ${T.failed.length} not accepted by the server` : "")
@@ -142,11 +142,11 @@
     }
     const me = T.me || {};
     el.innerHTML = `<h3><span class="su-dot ${T.removed ? "" : "ok"}"></span>Team: ${esc(T.team)}</h3>
-      ${T.removed ? `<p class="su-help" style="margin:0 0 8px;color:var(--bad)">This Mac was removed from the team. Your drafts are still here. Leave the team to clear it, then join again with a new invite if you need to.</p>` : ""}
+      ${T.removed ? `<p class="su-help" style="margin:0 0 8px;color:var(--bad-text, #c8303a)">This Mac was removed from the team. Your drafts are still here. Leave the team to clear it, then join again with a new invite if you need to.</p>` : ""}
       <p class="su-help" style="margin:0 0 8px"><span class="tm-who" style="background:${/^#[0-9a-fA-F]{6}$/.test(me.colour || "") ? me.colour : "#888888"}"></span><b>${esc(me.name)}</b> (${esc(me.role)}${me.approver ? ", approver" : ""}) on ${esc(T.server)}.
-        Last sync: ${T.last_sync ? esc(new Date(T.last_sync).toLocaleString()) : "never"}${T.last_error ? `. <span style="color:var(--bad)">${esc(T.last_error)}</span>` : ""}</p>
+        Last sync: ${T.last_sync ? esc(window.studioFmt.dateTime(T.last_sync)) : "never"}${T.last_error ? `. <span style="color:var(--bad-text, #c8303a)">${esc(T.last_error)}</span>` : ""}</p>
       ${T.can_send === false ? `<p class="su-help" style="margin:0 0 8px">You are a viewer: you receive the team's drafts, but viewers can't send changes.</p>` : ""}
-      ${(T.failed || []).length ? `<div class="su-help" style="margin:0 0 8px;color:var(--bad)">Not accepted by the team server (sent again once you edit them):<ul style="margin:4px 0 0 18px;padding:0">
+      ${(T.failed || []).length ? `<div class="su-help" style="margin:0 0 8px;color:var(--bad-text, #c8303a)">Not accepted by the team server (sent again once you edit them):<ul style="margin:4px 0 0 18px;padding:0">
         ${T.failed.map(f => `<li>${esc(f.coll)} ${esc(f.id)}: ${esc(f.reason)}</li>`).join("")}</ul></div>` : ""}
       ${(T.skipped || []).length ? `<details class="su-help" style="margin:0 0 8px"><summary style="cursor:pointer">${T.skipped.length} item(s) from the team could not be used here</summary><ul style="margin:4px 0 0 18px;padding:0">
         ${T.skipped.map(f => `<li>${esc(f.coll)} ${esc(f.id)}: ${esc(f.reason)}</li>`).join("")}</ul></details>` : ""}

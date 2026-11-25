@@ -10,12 +10,13 @@ const CSS = `
 .seo-root .toolbar.seo-bar{background:transparent;border:0;box-shadow:none;padding:0 28px 14px;gap:10px}
 .seo-bar #seoSite{max-width:240px}
 .seo-tabs.fpills{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken);flex-wrap:nowrap}
-.seo-tabs.fpills button{height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
+.seo-tabs.fpills button{height:32px;padding:0 14px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600}
+.seo-root .fpills button{min-height:32px}
 .seo-tabs.fpills button:hover{color:var(--text);background:transparent}
 .seo-tabs.fpills button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .seo-tabs button .n{display:inline-block;min-width:18px;margin-left:6px;padding:0 5px;border-radius:var(--r-pill);background:var(--accent-bg);color:var(--accent);font-size:11px;font-weight:700;line-height:17px;text-align:center}
 .seo-target{display:inline-flex;align-items:center;height:28px;font-size:12px;font-weight:600;padding:0 10px;border-radius:var(--r-pill);background:var(--sunken);color:var(--text2);white-space:nowrap}
-.seo-target.prod{background:var(--bad);color:var(--ink-text)}
+.seo-target.prod{background:var(--bad-text, #c8303a);color:var(--ink-text)}
 .seo-target.dry{background:var(--accent-bg);color:var(--accent)}
 .seo-sub{display:flex;gap:10px;align-items:center;padding:0 28px 12px;flex-wrap:wrap;font-size:13px}
 .seo-sub input[type=search]{min-width:260px}
@@ -31,12 +32,15 @@ const CSS = `
 .seo-body td.title{max-width:360px;color:var(--text);font-weight:600}
 .seo-body td.wrap{white-space:normal;min-width:260px;max-width:420px;line-height:1.4;padding-top:8px;padding-bottom:8px;height:auto}
 .seo-body .chip.draft{font-size:11px;font-weight:600;padding:2px 7px;border-radius:var(--r-sm);background:var(--draft-bg);color:var(--draft)}
-.seo-up{color:var(--ok);font-weight:600} .seo-down{color:var(--bad);font-weight:600}
+.seo-up{color:var(--ok);font-weight:600} .seo-down{color:var(--bad-text, #c8303a);font-weight:600}
+.seo-root button.danger{color:var(--bad-text, #c8303a)}
+.seo-dacts{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.seo-dacts button.ghost.danger{color:var(--bad-text, #c8303a)}
 .seo-len{display:inline-block;font-size:10.5px;font-weight:600;color:var(--faint);margin-left:6px;padding:0 5px;border-radius:var(--r-xs);background:var(--sunken)} .seo-len.bad{color:var(--warn);background:var(--warn-bg)}
 .seo-errs{margin:0 28px 12px;padding:10px 14px;border-radius:var(--r-md);background:var(--warn-bg);color:var(--text2);font-size:12.5px;font-weight:500;line-height:1.55}
 dialog.seo-wide{width:min(1180px,96vw)}
 .seo-dtabs{display:inline-flex;gap:2px;margin:0 0 16px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
-.seo-dtabs button{height:30px;padding:0 14px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px}
+.seo-dtabs button{height:32px;padding:0 14px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:13px}
 .seo-dtabs button:hover{background:transparent;color:var(--text)}
 .seo-dtabs button.on,.seo-dtabs button.primary{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .seo-grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
@@ -63,7 +67,7 @@ dialog.seo-wide{width:min(1180px,96vw)}
 .seo-ch:last-child{border-bottom:0}
 .seo-ch .old{color:var(--muted);text-decoration:line-through;word-break:break-word}
 .seo-ch .new{word-break:break-word;background:var(--draft-bg);color:var(--text);padding:2px 6px;border-radius:var(--r-xs)}
-.seo-iss{display:block;font-size:12px;font-weight:500;margin-top:4px} .seo-iss.error{color:var(--bad)} .seo-iss.warn{color:var(--warn)} .seo-iss.info{color:var(--muted)}
+.seo-iss{display:block;font-size:12px;font-weight:500;margin-top:4px} .seo-iss.error{color:var(--bad-text, #c8303a)} .seo-iss.warn{color:var(--warn)} .seo-iss.info{color:var(--muted)}
 .seo-post-h{font-weight:600;font-size:14px;color:var(--text);margin:16px 0 4px}
 .seo-steps{font-size:12px;font-weight:500;color:var(--muted)}
 .seo-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint);margin-right:6px}
@@ -83,7 +87,8 @@ const P = (k, body) => api("/api/area/seo/" + k, body || {});
 const rq = () => T.range === "custom" ? {start: T.start, end: T.end} : {range: T.range};
 const N = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
 const pct = v => v == null ? "" : (100 * v).toFixed(1) + "%";
-const day = s => s ? s.slice(0, 10) : "";
+const day = s => s ? window.studioFmt.date(s) : "";  // 25 Nov 2026
+const when = s => s ? window.studioFmt.dateTime(s) : "";
 const LBL = {title: "Title", slug: "Slug", seo_title: "SEO title", meta_desc: "Meta description", focus_kw: "Focus keyphrase", excerpt: "Excerpt", categories: "Categories", content: "Body"};
 const short = (v, n = 140) => { const s = Array.isArray(v) ? v.join(", ") : String(v ?? ""); return s.length > n ? s.slice(0, n) + " ..." : s };
 
@@ -100,7 +105,7 @@ function render(el){
   el.innerHTML = `<div class="seo-root"><div class="seo-head"><div class="ttl"><h1>SEO</h1><p>Blog posts, Search Console and GA4. Publish is your own button.</p></div>
     <div class="acts"><span id="seoTarget" class="seo-target"></span>
     <button id="seoRefresh" title="Read WordPress, Search Console and GA4 again">Refresh</button>
-    <button id="seoPublish" class="primary" title="Your button only: publish the SEO draft">Publish</button></div></div>
+    <button id="seoPublish" class="blue" disabled title="Nothing in the SEO draft yet">Publish</button></div></div>
   <div class="toolbar seo-bar">
     <div class="fpills seo-tabs" id="seoTabs"></div>
     <span class="spacer"></span>
@@ -116,19 +121,29 @@ function render(el){
   $("#seoTabs").onclick = e => { const b = e.target.closest("[data-t]"); if (b){ T.tab = b.dataset.t; localSet("seo.tab", T.tab); show() } };
   loadSettings().then(() => { loadDraft(); show() });
 }
+const draftCount = () => T.draft ? (T.draft.changes || []).length + (T.draft.new_posts || []).length : 0;
+// Publish is the page's one main (blue) action, and only clickable when the draft has something in it
+function pubState(){
+  const b = $("#seoPublish"); if (!b) return;
+  const n = draftCount();
+  b.disabled = !n;
+  b.title = n ? "Your button only: publish the SEO draft" : "Nothing in the SEO draft yet";
+}
 function tabs(){
-  const n = T.draft ? T.draft.changes.length + (T.draft.new_posts || []).length : 0;
+  const n = draftCount();
+  pubState();
+  if (!$("#seoTabs")) return;
   $("#seoTabs").innerHTML = [["map", `Topical map${T.mapProps ? `<span class="n">${T.mapProps}</span>` : ""}`], ["posts", "Posts"], ["opps", "Opportunities"], ["draft", `Draft<span class="n">${n}</span>`], ["settings", "Settings"]]
     .map(([k, l]) => `<button data-t="${k}" class="${k === T.tab ? "on" : ""}">${l}</button>`).join("");
 }
 function targetChip(){
   const s = T.settings || {};
-  const el = $("#seoTarget"); if (!el) return;
+  const el = $("#seoTarget"); if (!el || !$("#seoPublish")) return;
   const live = s.mode === "live" && s.connected;
   el.className = "seo-target " + (live ? (s.target === "prod" ? "prod" : "") : "dry");
   el.textContent = live ? (s.target === "prod" ? "PROD: live WordPress" : "Staging") : `Dry run (${s.target === "prod" ? "prod" : "staging"})`;
   el.title = live ? "Publish writes to WordPress " + s.target : "Publish only records what it would send. Connect WordPress in Settings.";
-  $("#seoPublish").className = live && s.target === "prod" ? "live" : "primary";
+  $("#seoPublish").className = live && s.target === "prod" ? "live" : "blue"; pubState();
 }
 async function loadSettings(){ try { T.settings = await A("settings") } catch(e) { T.settings = {target: "staging", mode: "dry"} } targetChip() }
 async function loadDraft(){ try { T.draft = await A("draft") } catch(e) { T.draft = {changes: []} } tabs(); if (T.tab === "draft") drawDraft() }
@@ -139,7 +154,7 @@ function mapScript(){
 }
 function show(){
   tabs();
-  const b = $("#seoBody");
+  const b = $("#seoBody"); if (!b) return;  // switched to another area while loading
   if (T.tab === "posts"){ b.innerHTML = postsShell(); wirePosts(); if (T.data) drawPosts(); else loadPosts() }
   else if (T.tab === "opps"){ b.innerHTML = `<div class="seo-scroll" id="seoOpp"><p class="hint">Loading opportunities ...</p></div>`; loadOpps() }
   else if (T.tab === "draft"){ b.innerHTML = `<div class="seo-scroll" id="seoDraft"></div>`; drawDraft(); loadHistory() }
@@ -189,7 +204,7 @@ function wirePosts(){
 }
 async function loadPosts(force){
   if (T.tab !== "posts") return;
-  try { T.data = await A("posts", {...rq(), ...(force ? {force: 1} : {})}) } catch(e) { $("#seoTable").innerHTML = `<tbody><tr><td class="prob">${esc(e.message)}</td></tr></tbody>`; return }
+  try { T.data = await A("posts", {...rq(), ...(force ? {force: 1} : {})}) } catch(e) { const t = $("#seoTable"); if (t) t.innerHTML = `<tbody><tr><td class="prob">${esc(e.message)}</td></tr></tbody>`; return }
   T.settings = T.data.settings || T.settings; targetChip(); drawPosts();
 }
 function drawPosts(){
@@ -308,7 +323,7 @@ function insHTML(r){
   if (!r) return `<span class="hint">Not checked yet.</span>`;
   return `<div class="seo-kv"><b>Verdict</b><span><span class="seo-dot ${r.verdict === "PASS" ? "ok" : "bad"}"></span>${esc(r.coverage || r.verdict || "")}</span>
     <b>Last crawl</b><span>${esc((r.last_crawl || "").replace("T", " ").replace("Z", ""))}</span><b>Google canonical</b><span>${esc(r.google_canonical || "")}</span>
-    <b>Robots / fetch</b><span>${esc(r.robots || "")} · ${esc(r.fetch || "")}</span><b>Checked</b><span>${esc(new Date(r.at * 1000).toLocaleString("en-GB"))}</span></div>`;
+    <b>Robots / fetch</b><span>${esc(r.robots || "")} · ${esc(r.fetch || "")}</span><b>Checked</b><span>${esc(when(r.at))}</span></div>`;
 }
 async function savePost(p, init){
   const now = {title: $("#sp_title").value, slug: $("#sp_slug").value.trim(), seo_title: $("#sp_seo_title").value, meta_desc: $("#sp_meta_desc").value,
@@ -426,31 +441,35 @@ function drawDraft(){
   const by = {}; ch.forEach(x => (by[x.post_id] = by[x.post_id] || []).push(x));
   const nps = (T.draft || {}).new_posts || [];
   const newHTML = nps.length ? `<div class="seo-sec" style="margin:10px 0 18px"><h2>New pages (${nps.length})</h2>${nps.map(x => `<div class="seo-ch" style="grid-template-columns:1fr auto"><div><b>${esc(x.title)}</b> <span class="chip draft">${x.status === "draft" ? "WordPress draft" : "Publishes live"}</span>
-      <div class="hint" style="margin:2px 0 0">/${esc(x.slug)}/ · ${x.node_title ? "map: " + esc(x.node_title) + " · " : ""}written by ${esc(x.by)}${x.edited_by && x.edited_by !== x.by ? ", edited by " + esc(x.edited_by) : ""} · ${esc(x.edited_at || x.at)}</div>${x.note ? `<div class="hint">${esc(x.note)}</div>` : ""}${issHTML(x.issues)}</div>
+      <div class="hint" style="margin:2px 0 0">/${esc(x.slug)}/ · ${x.node_title ? "map: " + esc(x.node_title) + " · " : ""}written by ${esc(x.by)}${x.edited_by && x.edited_by !== x.by ? ", edited by " + esc(x.edited_by) : ""} · ${esc(when(x.edited_at || x.at))}</div>${x.note ? `<div class="hint">${esc(x.note)}</div>` : ""}${issHTML(x.issues)}</div>
       <div><button data-np="${x.id}" class="primary">Edit</button> <button class="link" data-nprm="${x.id}">Remove</button></div></div>`).join("")}</div>` : "";
-  box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b>${ch.length} change${ch.length === 1 ? "" : "s"}${nps.length ? ` and ${nps.length} new page${nps.length === 1 ? "" : "s"}` : ""} in the SEO draft</b><span class="spacer"></span>
-      <button id="sdClear" class="danger">Clear</button><button id="sdCheck">Check</button><button id="sdPub" class="primary">Publish ...</button></div>
+  const empty = !ch.length && !nps.length;
+  box.innerHTML = `<div class="seo-dacts"><b>${ch.length} change${ch.length === 1 ? "" : "s"}${nps.length ? ` and ${nps.length} new page${nps.length === 1 ? "" : "s"}` : ""} in the SEO draft</b>
+      <button id="sdClear" class="ghost danger" ${empty ? "disabled" : ""}>Clear draft</button><span class="spacer"></span>
+      <button id="sdCheck" ${empty ? "disabled" : ""}>Check draft</button><button id="sdPub" class="blue" ${empty ? `disabled title="Nothing in the SEO draft yet"` : ""}>Publish ...</button></div>
     <p class="hint">Nothing here is in WordPress. Suggestions (notes) stay in the draft until you write the text in the post editor. Only your Publish button sends edits.</p>
     ${newHTML}${Object.values(by).map(xs => `<div class="seo-post-h">${esc(xs[0].post_title)} <button class="link" data-open="${xs[0].post_id}">Open post</button></div>
-      ${xs.map(x => `<div class="seo-ch"><div>${esc(x.label || LBL[x.field] || x.field)}${x.kind === "todo" ? ` <span class="chip warn">Suggestion</span>` : ""}<div class="hint" style="margin:2px 0 0">by ${esc(x.by)} · ${esc(x.at)}</div></div>
+      ${xs.map(x => `<div class="seo-ch"><div>${esc(x.label || LBL[x.field] || x.field)}${x.kind === "todo" ? ` <span class="chip warn">Suggestion</span>` : ""}<div class="hint" style="margin:2px 0 0">by ${esc(x.by)} · ${esc(when(x.at))}</div></div>
         <div>${x.kind === "todo" ? esc(x.note) : `<span class="old">${esc(short(x.old, 300))}</span><br><span class="new">${esc(short(x.new, 300))}</span>`}${x.note && x.kind !== "todo" ? `<div class="hint">${esc(x.note)}</div>` : ""}${issHTML(x.issues)}</div>
-        <button class="link" data-rm="${x.id}" title="Remove from the draft">Remove</button></div>`).join("")}`).join("") || `${nps.length ? "" : `<p class="hint">The draft is empty. Open a post or a topical-map node and edit it, or ask Claude to write a page (MCP: seo_write_page).</p>`}`}
+        <button class="link" data-rm="${x.id}" title="Remove from the draft">Remove</button></div>`).join("")}`).join("") || `${nps.length ? "" : `<p class="hint">The draft is empty. Open a post or a topical-map node and edit it, or ask Claude to write a page (MCP: seo_write_page).</p><button data-gotab="map">Open the topical map</button>`}`}
     <div class="seo-sec" style="margin-top:26px"><h2>Published from Studio</h2><div id="sdHist"><p class="hint">Loading ...</p></div></div>`;
   box.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => { T.draft = await P("remove", {ids: [b.dataset.rm]}); drawDraft(); tabs(); loadHistory() });
   box.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openPost(+b.dataset.open));
+  box.querySelectorAll("[data-gotab]").forEach(b => b.onclick = () => { T.tab = b.dataset.gotab; localSet("seo.tab", T.tab); show() });
   box.querySelectorAll("[data-np]").forEach(b => b.onclick = () => openNewPage({id: b.dataset.np}));
   box.querySelectorAll("[data-nprm]").forEach(b => b.onclick = () => { const x = nps.find(y => y.id === b.dataset.nprm);
     showDialog("Remove this new page?", `<p>"${esc(x.title)}" is removed from the draft. It was never in WordPress.</p>`, [["Cancel", () => dlg.close()], ["Remove", async () => { T.draft = await P("new_post_remove", {id: x.id}); dlg.close(); drawDraft(); tabs() }, "danger"]]) });
   $("#sdClear").onclick = () => showDialog("Clear the SEO draft?", `<p>This removes all ${ch.length} changes and suggestions${nps.length ? ` and ${nps.length} new page${nps.length === 1 ? "" : "s"}` : ""}. WordPress is not touched.</p>`,
     [["Cancel", () => dlg.close()], ["Clear", async () => { T.draft = await P("clear"); dlg.close(); drawDraft(); tabs(); loadHistory() }, "danger"]]);
-  $("#sdCheck").onclick = async () => { $("#sdCheck").disabled = true; $("#sdCheck").textContent = "Checking links ...";
+  $("#sdCheck").onclick = async () => { $("#sdCheck").disabled = true; $("#sdCheck").textContent = "Checking draft ...";
     try { const r = await P("check"); T.draft = {...T.draft, changes: r.changes}; drawDraft(); loadHistory(); toast("Checked, links included") } catch(e) { toast(e.message) } };
   $("#sdPub").onclick = publishFlow;
 }
 async function loadHistory(){
   const box = $("#sdHist"); if (!box) return;
   let h = []; try { h = await A("history") } catch(e) {}
-  box.innerHTML = h.length ? h.map(p => `<div class="seo-ch" style="grid-template-columns:160px 1fr auto"><div>${esc(p.at)}<div class="hint" style="margin:0">${p.writer === "wp" ? "WordPress" : "Dry run"} · ${esc(p.target)}</div></div>
+  if (!box.isConnected) return;
+  box.innerHTML = h.length ? h.map(p => `<div class="seo-ch" style="grid-template-columns:160px 1fr auto"><div>${esc(when(p.at))}<div class="hint" style="margin:0">${p.writer === "wp" ? "WordPress" : "Dry run"} · ${esc(p.target)}</div></div>
       <div>${p.posts.map(x => `${x.new ? `<span class="chip draft">New</span> ` : ""}${esc(x.title)} <span class="hint">(${esc(x.fields.map(f => LBL[f] || f).join(", "))})</span>`).join("<br>")}</div>
       <div>${p.undone ? `<span class="chip">Undone</span>` : `<button class="danger" data-undo="${esc(p.push_id)}">Undo</button>`}</div></div>`).join("") : `<p class="hint">Nothing published yet.</p>`;
   box.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => undoFlow(b.dataset.undo));

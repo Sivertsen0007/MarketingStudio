@@ -110,10 +110,10 @@
   // Every field in full: long text folds behind an expander (never cut), HTML shows rendered in a sandbox (no scripts,
   // no same-origin) with its source a click away. What the approver confirms is exactly this set.
   const long = (t, cls) => t.length > 600 || t.split("\n").length > 12
-    ? `<details><summary>${esc(t.slice(0, 140).replace(/\s+/g, " "))} ... (${t.length.toLocaleString()} characters: show all)</summary><span class="${cls}">${esc(t)}</span></details>`
+    ? `<details><summary>${esc(t.slice(0, 140).replace(/\s+/g, " "))} ... (${t.length.toLocaleString("en-GB")} characters: show all)</summary><span class="${cls}">${esc(t)}</span></details>`
     : `<span class="${cls}">${esc(t)}</span>`;
   const html = (t, cls) => t ? `<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="${esc(t)}" class="tr-frame"></iframe>
-    <details><summary>Source (${t.length.toLocaleString()} characters)</summary><span class="${cls}">${esc(t)}</span></details>` : "";
+    <details><summary>Source (${t.length.toLocaleString("en-GB")} characters)</summary><span class="${cls}">${esc(t)}</span></details>` : "";
   function linesHTML(lines){
     return (lines || []).map(l => { const show = l.kind === "html" ? html : long;
       return `<div class="tr-ln"><div>${esc(l.label)}</div><div>${l.old ? `<div class="old">${l.kind === "html" ? "Before:" : ""}${show(l.old, "old")}</div>` : ""}<div>${l.old && l.kind === "html" ? "After:" : ""}${show(l.new, "new")}</div></div></div>` }).join("");

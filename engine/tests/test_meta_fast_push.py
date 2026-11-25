@@ -396,7 +396,11 @@ class JobLayer(Base):
             r = meta.push(accept_spend=True)
         self.assertEqual([x["status"] for x in r["items"]], ["done"] * 20)
         self.assertEqual([x["key"] for x in r["items"]], [x["key"] for x in r["results"]])
-        self.assertEqual(r["items"][0], {"key": "i0", "label": "change 0", "status": "done", "ids": {"object_id": "a1"}, "error": None})
+        first = r["items"][0]
+        self.assertEqual({k: first[k] for k in ("key", "label", "status", "ids", "error")},
+                         {"key": "i0", "label": "change 0", "status": "done", "ids": {"object_id": "a1"}, "error": None})
+        self.assertEqual((first["level"], first["live_status"]), ("ad", "unknown"))  # the fake Graph has no effective_status
+        self.assertIn("selected_ad_ids=a1", first["link"])
         self.items[:] = items()
         self.graph(refuse={"a3"})
         with mock.patch.object(meta, "refresh_account", lambda: None):

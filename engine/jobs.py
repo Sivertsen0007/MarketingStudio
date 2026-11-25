@@ -5,7 +5,7 @@ server.py starts a job when a live preview / push route gets "background": true 
 last ~50 are kept. Only one push job per account runs at a time (start() raises Busy with the running job's id).
 
 Job record:
-  {id, kind: preview|push, source: google|meta, acct, state: running|done|failed|error, ok, started, finished,
+  {id, kind: preview|push|upload, source: google|meta, acct, state: running|done|failed|error, ok, started, finished,
    progress: {done, total, label}, items: [{key, label, status, detail, link}], result, error}
 state: done = finished and went through; failed = a push that finished but the engine said ok: false (spend not ticked,
 refused, needs approval, partly reversed: see result.message); error = an exception (see error).
@@ -32,8 +32,8 @@ _fallback = {}  # id -> progress.py key, for jobs whose engine has no progress k
 class Busy(Exception):
     """A push job is already running for this account."""
 
-    def __init__(self, job_id):
-        super().__init__(f"a push is already running for this account (job {job_id})")
+    def __init__(self, job_id, what="a push is already running for this account"):
+        super().__init__(f"{what} (job {job_id})")
         self.job_id = job_id
 
 
@@ -101,6 +101,9 @@ class Reporter:
             _fallback[self.job_id] = key
 
 
+LIVE_KEYS = ("level", "live_status", "configured_status", "review")  # Meta push read-back (meta_ads._live_check)
+
+
 def _items_from_result(res):
     out = []
     for x in (res.get("items") if isinstance(res, dict) else None) or []:
@@ -109,24 +112,31 @@ def _items_from_result(res):
         err = x.get("error") or ("; ".join(map(str, x["problems"])) if x.get("problems") else None)
         out.append({"key": str(x.get("key", x.get("id"))), "label": str(x.get("label") or x.get("summary") or x.get("key") or ""),
                     "status": _status(x.get("status") or ("error" if err else "done")), "detail": err or x.get("detail"),
-                    "link": x.get("link"), **({"ids": x["ids"]} if x.get("ids") is not None else {})})
+                    "link": x.get("link"), **({"ids": x["ids"]} if x.get("ids") is not None else {}),
+                    **{k: x[k] for k in LIVE_KEYS if k in x}})
     return out
 
 
-def start(kind, source, acct, fn, after=None):
-    """Run fn(report) in a thread. kind: preview or push. after(job_copy) runs once the job is marked done or error
-    (never raises into the job). Raises Busy for a second push on the same account."""
-    if kind not in ("preview", "push") or source not in ("google", "meta"):
-        raise ValueError("kind must be preview or push, source google or meta")
+def start(kind, source, acct, fn, after=None, ref=None):
+    """Run fn(report) in a thread. kind: preview, push or upload (Prepare for Meta). after(job_copy) runs once the job
+    is marked done or error (never raises into the job). Raises Busy for a second push on the same account, or a
+    second upload of the same ref (media id) on the same account."""
+    if kind not in ("preview", "push", "upload") or source not in ("google", "meta"):
+        raise ValueError("kind must be preview, push or upload, source google or meta")
     jid = secrets.token_urlsafe(9)
     with _lock:
         if kind == "push":
             busy = next((j["id"] for j in _jobs.values() if j["kind"] == "push" and j["acct"] == acct and j["state"] == "running"), None)
             if busy:
                 raise Busy(busy)
+        if kind == "upload":
+            busy = next((j["id"] for j in _jobs.values() if j["kind"] == "upload" and j["acct"] == acct and j.get("ref") == ref
+                         and j["state"] == "running"), None)
+            if busy:
+                raise Busy(busy, "this file is already being prepared for Meta")
         _jobs[jid] = {"id": jid, "kind": kind, "source": source, "acct": acct, "state": "running", "ok": None, "started": time.time(),
                       "finished": None, "progress": {"done": 0, "total": 0, "label": "Starting"}, "items": [],
-                      "result": None, "error": None}
+                      "result": None, "error": None, **({"ref": ref} if ref is not None else {})}
         _prune()
     rep = Reporter(jid)
 

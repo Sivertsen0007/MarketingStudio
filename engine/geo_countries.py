@@ -99,7 +99,27 @@ GROUPS = (
 SUB_KINDS = (("regions", "region"), ("cities", "city"), ("zips", "postcode"), ("places", "place"),
              ("geo_markets", "market"), ("electoral_districts", "electoral district"), ("neighborhoods", "neighbourhood"),
              ("subcities", "area"), ("medium_geo_areas", "area"), ("large_geo_areas", "area"), ("small_geo_areas", "area"),
-             ("metro_areas", "metro area"), ("subneighborhoods", "area"), ("custom_locations", "pin"))
+             ("metro_areas", "metro area"), ("subneighborhoods", "area"), ("custom_locations", "map pin"))
+PIN = "a map pin"  # a custom location (pin) without a name or address
+
+
+def place_phrase(word, nm):
+    """'the region Bavaria', or 'a map pin' for an unnamed pin."""
+    return nm if nm == PIN else f"the {word} {nm}"
+
+
+# Meta country groups (geo_locations.country_groups) Studio can check for overlaps. None = every country.
+# Keys as Meta names them; groups not listed here can't be checked, so they only give a warning.
+COUNTRY_GROUPS = {
+    "worldwide": None,
+    "eea": EU + ("IS", "LI", "NO"),
+    "eu": EU,
+    "europe": dict(GROUPS)["Europe"] + ("RU",),
+    "nafta": ("US", "CA", "MX"),
+    "gcc": ("AE", "BH", "KW", "OM", "QA", "SA"),
+    "asean": ("BN", "KH", "ID", "LA", "MY", "MM", "PH", "SG", "TH", "VN"),
+    "mercosur": ("AR", "BR", "PY", "UY"),
+}
 LOCATION_KEYS = ("countries", "country_groups") + tuple(k for k, _ in SUB_KINDS)
 
 # special ad categories with Meta's audience restrictions (housing, employment, credit / financial products)
@@ -117,7 +137,9 @@ def label(code):
 
 
 def clean(codes):
-    """-> codes upper-cased, trimmed, duplicates dropped (order kept)."""
+    """-> codes upper-cased, trimmed, duplicates dropped (order kept). A string "GB, DE" is split."""
+    if isinstance(codes, str):
+        codes = codes.replace(";", ",").replace(" ", ",").split(",")
     out = []
     for x in codes or []:
         x = str(x).strip().upper()
@@ -136,7 +158,8 @@ def sub_places(geo):
     for key, word in SUB_KINDS:
         for e in (geo or {}).get(key) or []:
             if isinstance(e, dict):
-                out.append((word, str(e.get("name") or e.get("key") or e.get("address_string") or "?"), _cc(e)))
+                nm = e.get("name") or e.get("address_string") or ("" if key == "custom_locations" else e.get("key")) or ""
+                out.append((word, str(nm) or (PIN if key == "custom_locations" else "?"), _cc(e)))
     return out
 
 
@@ -162,8 +185,18 @@ def geo_problems(codes, targeting=None):
     pick = set(codes)
     for word, nm, cc in sub_places(geo):
         if cc in pick:
-            out.append(f"{label(cc)} overlaps the {word} {nm} ({name(cc)}) the ad set already targets: "
+            out.append(f"{label(cc)} overlaps {place_phrase(word, nm)} ({name(cc)}) the ad set already targets: "
                        f"Meta refuses overlapping locations, so leave {name(cc)} out or remove the {word} in Meta")
+    for g in geo.get("country_groups") or []:
+        key = str(g).lower()
+        if key not in COUNTRY_GROUPS:
+            continue  # can't be checked here: geo_warnings says so
+        members = COUNTRY_GROUPS[key]
+        inside = codes if members is None else [x for x in codes if x in members]
+        if inside:
+            out.append(f"{', '.join(label(x) for x in inside)} {'is' if len(inside) == 1 else 'are'} already in the country group "
+                       f"{g} this ad set targets: Meta refuses overlapping locations, so leave "
+                       f"{'it' if len(inside) == 1 else 'them'} out or change the group in Meta")
     excl = set(clean((t.get("excluded_geo_locations") or {}).get("countries")))
     both = [x for x in codes if x in excl]
     if both:
@@ -173,6 +206,16 @@ def geo_problems(codes, targeting=None):
     if not codes and not others:
         out.append("the ad set needs at least one location: pick a country (or keep a region or city)")
     return out
+
+
+def geo_warnings(codes, targeting=None):
+    """Things Studio can't check: country groups it does not know the members of."""
+    geo = (targeting or {}).get("geo_locations") or {}
+    unknown = [str(g) for g in geo.get("country_groups") or [] if str(g).lower() not in COUNTRY_GROUPS]
+    if unknown and clean(codes):
+        return [f"the ad set also targets the country group {', '.join(unknown)}: Studio can't check it for overlap with "
+                "these countries; Meta refuses overlapping locations"]
+    return []
 
 
 def special_warnings(cats, targeting=None, added=()):
@@ -214,4 +257,5 @@ def for_ui():
     """What the picker needs: every country (code, name, restricted reason) and the quick groups."""
     return {"countries": [{"code": c, "name": n, **({"restricted": RESTRICTED[c]} if c in RESTRICTED else {})}
                           for c, n in sorted(COUNTRIES, key=lambda x: unicodedata.normalize("NFKD", x[1]).encode("ascii", "ignore"))],
-            "groups": [{"name": g, "codes": list(codes)} for g, codes in GROUPS]}
+            "groups": [{"name": g, "codes": list(codes)} for g, codes in GROUPS],
+            "country_groups": {g: (list(m) if m is not None else None) for g, m in COUNTRY_GROUPS.items()}}

@@ -1762,7 +1762,7 @@ function adsetDialog(r){
       const ctry = GeoPicker.read("f_ctry"), t = {type:"meta_targeting", level:"adset", id:r.id};
       if (ctry.join(",") !== ((r.geo || {}).countries || []).join(",")){
         const bad = GeoPicker.problems(ctry, r.geo); if (bad.length) return toast(bad[0]);
-        t.countries = ctry;
+        t.countries = ctry; if (!ctry.length) t.countries_clear = true;  // no countries: only regions / cities stay
       }
       if (val("f_amin") !== amin) t.age_min = +val("f_amin");
       if (val("f_amax") !== amax) t.age_max = +val("f_amax");
@@ -2350,9 +2350,9 @@ function plChange(pl){ // parsed placements -> the change fields
 }
 // countries of an ad set: summary + "Choose countries" (static/geo_picker.js); the draft value is "GB, DE"
 function ctryFld(r){
-  const live = (r.geo || {}).countries || [], cur = r._draft && r._draft.countries ? String(r._draft.countries.value || "").split(/[ ,]+/).filter(Boolean) : live;
+  const live = (r.geo || {}).countries || [], cur = r._draft && r._draft.countries ? String(r._draft.countries.value || "").split(/[ ,]+/).filter(x => /^[A-Z]{2}$/.test(x)) : live;
   const chg = cur.join(",") !== live.join(",");
-  return `<div class="fld ${chg ? "chg" : ""}"><label><span>Countries${chg ? " · in draft" : ""}</span><span>${cur.length} selected</span></label>
+  return `<div class="fld ${chg ? "chg" : ""}"><label><span>Countries${chg ? " · in draft" : ""}</span><span id="e_ctry_n">${cur.length} selected</span></label>
     ${GeoPicker.field("e_ctry", cur, {geo:r.geo, title:"Countries for " + r.ad_set})}
     ${chg ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(GeoPicker.summaryText(live))}${live.length > 2 ? ` (${esc(live.join(", "))})` : ""}</div>` : ""}</div>`;
 }
@@ -2379,7 +2379,7 @@ function editAdset(r){
     const ctry = GeoPicker.read("e_ctry"), t = {type:"meta_targeting", level:"adset", id:r.id};
     if (ctry.join(",") !== ((r.geo || {}).countries || []).join(",")){
       const bad = GeoPicker.problems(ctry, r.geo); if (bad.length) throw new Error(bad[0]);
-      t.countries = ctry;
+      t.countries = ctry; if (!ctry.length) t.countries_clear = true;  // no countries: only regions / cities stay
     }
     if (val("e_amin") !== lmin) t.age_min = +val("e_amin");
     if (val("e_amax") !== lmax) t.age_max = +val("e_amax");

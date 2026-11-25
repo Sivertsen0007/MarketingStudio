@@ -16,13 +16,20 @@
   const name = c => (byCode[c] || {}).name || c;
   const parse = v => [...new Set(String(v || "").toUpperCase().split(/[^A-Z]+/).filter(Boolean))];
   const placesIn = (geo, code) => ((geo && geo.places) || []).filter(p => p.country === code);
+  const phrase = p => p.name === "a map pin" ? p.name : `the ${p.kind} ${p.name}`;
+  // the ad set's country groups (eea, worldwide, ...) that hold this country; unknown groups can't be checked
+  const groupsIn = (geo, code) => ((geo && geo.country_groups) || []).filter(g => {
+    const m = ((DATA && DATA.country_groups) || {})[String(g).toLowerCase()];
+    return m === null || (Array.isArray(m) && m.includes(code));
+  });
 
   // the engine's rules, mirrored: -> [problem text]
   function problems(codes, geo){
     const out = [], bad = codes.filter(c => DATA && !byCode[c]);
     if (bad.length) out.push(`Not a country code: ${bad.join(", ")}`);
     codes.forEach(c => { const x = byCode[c]; if (x && x.restricted) out.push(`${x.name} (${c}) can't be targeted: ${x.restricted}`) });
-    codes.forEach(c => placesIn(geo, c).forEach(p => out.push(`${name(c)} (${c}) overlaps the ${p.kind} ${p.name} the ad set already targets: Meta refuses overlapping locations`)));
+    codes.forEach(c => placesIn(geo, c).forEach(p => out.push(`${name(c)} (${c}) overlaps ${phrase(p)} the ad set already targets: Meta refuses overlapping locations`)));
+    codes.forEach(c => groupsIn(geo, c).forEach(g => out.push(`${name(c)} (${c}) is already in the country group ${g} this ad set targets: Meta refuses overlapping locations`)));
     const ex = codes.filter(c => ((geo && geo.excluded_countries) || []).includes(c));
     if (ex.length) out.push(`${ex.map(c => `${name(c)} (${c})`).join(", ")} ${ex.length === 1 ? "is" : "are"} excluded in this ad set: a country can't be both targeted and excluded`);
     const others = ((geo && geo.places) || []).length + ((geo && geo.country_groups) || []).length;
@@ -35,6 +42,8 @@
     if (x.restricted) return x.restricted;
     const p = placesIn(geo, code);
     if (p.length) return `The ad set already targets ${p.map(q => q.name).join(", ")} here`;
+    const g = groupsIn(geo, code);
+    if (g.length) return `Already in the ad set's country group ${g.join(", ")}`;
     if (((geo && geo.excluded_countries) || []).includes(code)) return "Excluded in this ad set";
     return null;
   }
@@ -68,6 +77,7 @@
     const i = document.getElementById(id); if (!i) return;
     i.value = codes.join(",");
     const s = document.getElementById(id + "_sum"); if (s){ s.textContent = summaryText(codes); s.title = codes.join(", ") }
+    const n = document.getElementById(id + "_n"); if (n) n.textContent = `${codes.length} selected`;
     const geo = (FIELDS[id] || {}).geo, pr = document.getElementById(id + "_prob");
     const list = !codes.length && !geo ? [] : problems(codes, geo);  // a new ad set starts empty: say so on Add to draft, not before
     if (pr){ pr.style.display = list.length ? "" : "none"; pr.textContent = list.join(". ") }

@@ -441,7 +441,7 @@ def call_audiences(name, a):
             return meta_audiences.rows(meta.load())
         bad = [c for c in changes if not (c.get("type") == meta_audiences.TYPE or (
             c.get("type") == "meta_targeting" and any(c.get(k) for k in meta_audiences.AUD_KEYS)
-            and not any(c.get(k) for k in ("countries", "age_min", "age_max"))))]
+            and "countries" not in c and not c.get("countries_clear") and not any(c.get(k) for k in ("age_min", "age_max"))))]
         if bad:
             raise ValueError("audience_add_to_draft takes Meta audience changes only (meta_audience, or meta_targeting with "
                              "audiences_add / audiences_remove / excluded_add / excluded_remove); use add_to_draft for the rest")

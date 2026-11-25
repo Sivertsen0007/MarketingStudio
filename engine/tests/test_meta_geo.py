@@ -51,6 +51,8 @@ LIVE = {s["id"]: s for s in DATA["adsets"]}
 
 
 def live(level, oid):
+    if level == "campaign":
+        return {"name": "Camp", "objective": "OUTCOME_TRAFFIC"}
     s = LIVE[str(oid)]
     return json.loads(json.dumps({"name": s["name"], "status": s["status"], "campaign_id": s["campaign_id"], "targeting": s["targeting"]}))
 
@@ -119,10 +121,10 @@ class Geo(unittest.TestCase):
         self.assertTrue(any("Norway (NO) is also excluded" in x for x in p), p)
 
     def test_at_least_one_location(self):
-        p = self.problems(tgt("s1", countries=[]))
+        p = self.problems(tgt("s1", countries=[], countries_clear=True))
         self.assertTrue(any("at least one location" in x for x in p), p)
-        self.assertEqual(self.problems(tgt("s3", countries=[])), [])  # Bavaria stays
-        self.assertEqual(self.problems(tgt("s2", countries=[])), [])  # Bavaria and Paris stay
+        self.assertEqual(self.problems(tgt("s3", countries=[], countries_clear=True)), [])  # Bavaria stays
+        self.assertEqual(self.problems(tgt("s2", countries_clear=True)), [])  # Bavaria and Paris stay
         new = meta._normalise({"type": "meta_new_adset", "campaign_id": "c1", "name": "N", "daily_budget": 10, "countries": []})
         self.assertIn("the new ad set needs at least one country", self.problems(new))
 
@@ -131,7 +133,68 @@ class Geo(unittest.TestCase):
             with self.assertRaises(ValueError):
                 meta.ops_for(tgt("s2", countries=bad))
         with self.assertRaises(ValueError):
-            meta.ops_for(tgt("s1", countries=[]))
+            meta.ops_for(tgt("s1", countries=[], countries_clear=True))
+
+    # ---- an empty list is not "remove every country" ----
+    def test_empty_list_changes_nothing_without_the_clear_flag(self):
+        c = tgt("s2", countries=[], age_min=30)  # e.g. an old draft: [] next to an age change
+        self.assertEqual(self.problems(c), [])
+        g = meta.ops_for(c)[0]["params"]["targeting"]["geo_locations"]
+        self.assertEqual(g["countries"], ["GB"])
+        self.assertIn("nothing to change", " ".join(self.problems(tgt("s2", countries=[]))))
+        self.assertTrue(any("countries_clear goes with an empty" in x for x in self.problems(tgt("s2", countries=["GB"], countries_clear=True))))
+        self.assertNotIn("countries", meta.summarise(tgt("s2", countries=[], age_min=30), DATA).split(":", 1)[1])
+
+    def test_mcp_audience_tool_refuses_country_changes(self):
+        import mcp_server  # noqa: PLC0415
+        with mock.patch.object(meta, "use", lambda k: "act_1"), mock.patch.object(meta, "add", lambda *a, **k: ["added"]):
+            for bad in ({"countries": []}, {"countries_clear": True}, {"countries": ["DE"]}):
+                with self.assertRaises(ValueError):
+                    mcp_server.call_audiences("audience_add_to_draft", {"account": "meta", "changes": [
+                        {"type": "meta_targeting", "level": "adset", "id": "s1", "audiences_add": ["e1"], **bad}]})
+            self.assertEqual(mcp_server.call_audiences("audience_add_to_draft", {"account": "meta", "changes": [
+                {"type": "meta_targeting", "level": "adset", "id": "s1", "audiences_add": ["e1"]}]}), ["added"])
+
+    # ---- the plan sends what was checked ----
+    def test_string_countries_are_pushed_as_checked(self):
+        raw = {"type": "meta_targeting", "level": "adset", "id": "s1", "countries": "gb, de"}  # not normalised (synced draft)
+        self.assertEqual(self.problems(raw), [])
+        st = meta.ops_for(raw)[0]
+        self.assertEqual(st["params"]["targeting"]["geo_locations"]["countries"], ["GB", "DE"])
+        self.assertIn("more countries", st["spend"])
+        with self.assertRaises(ValueError):
+            meta.ops_for({"type": "meta_targeting", "level": "adset", "id": "s1", "countries": "gb cu"})
+
+    def test_new_adset_codes_checked_again_in_the_plan(self):
+        base = {"type": "meta_new_adset", "campaign_id": "c1", "name": "N", "daily_budget": 10}
+        for bad in (["GB", "IR"], ["xx"], [], "gb, ru"):
+            with self.assertRaises(ValueError):
+                meta.ops_for({**base, "countries": bad}, {})
+        tg = meta.ops_for({**base, "countries": "gb, de"}, {})[0]["params"]["targeting"]
+        self.assertEqual(tg["geo_locations"]["countries"], ["GB", "DE"])
+
+    # ---- country groups and pins ----
+    def test_country_group_overlap(self):
+        def probs(groups, codes):
+            return geo.geo_problems(codes, {"geo_locations": {"country_groups": groups}})
+        self.assertTrue(any("Germany (DE) is already in the country group eea" in x for x in probs(["eea"], ["DE"])))
+        self.assertTrue(any("already in the country group worldwide" in x for x in probs(["worldwide"], ["GB"])))
+        self.assertEqual(probs(["eea"], ["GB", "US"]), [])
+        self.assertEqual(probs(["nafta"], ["GB"]), [])
+        self.assertTrue(probs(["nafta"], ["MX"]))
+        self.assertEqual(probs(["latam"], ["BR"]), [])  # unknown group: not refused ...
+        w = geo.geo_warnings(["BR"], {"geo_locations": {"country_groups": ["latam"]}})
+        self.assertTrue(w and "latam" in w[0], w)  # ... but warned
+        self.assertEqual(geo.geo_warnings(["BR"], {"geo_locations": {"country_groups": ["eea"]}}), [])
+        self.assertIn("country_groups", geo.for_ui())
+        self.assertIsNone(geo.for_ui()["country_groups"]["worldwide"])
+
+    def test_unnamed_pin(self):
+        tg = {"geo_locations": {"custom_locations": [{"latitude": 48.1, "longitude": 11.6, "radius": 10, "country_code": "DE"}]}}
+        p = geo.geo_problems(["DE"], tg)
+        self.assertTrue(any("overlaps a map pin (Germany)" in x for x in p), p)
+        self.assertEqual(geo.summary(tg["geo_locations"]), "1 map pin")
+        self.assertEqual(geo.sub_places(tg["geo_locations"])[0][1], "a map pin")
 
     # ---- the payload ----
     def test_regions_and_cities_kept_in_the_payload(self):
@@ -144,7 +207,7 @@ class Geo(unittest.TestCase):
         self.assertEqual(st["params"]["targeting"]["excluded_geo_locations"], {"countries": ["NO"]})
         self.assertEqual(st["undo"]["targeting"]["geo_locations"], {**TG_MIXED["geo_locations"]})
         # no countries left: the countries key goes, the regions and cities stay
-        g = meta.ops_for(tgt("s2", countries=[]))[0]["params"]["targeting"]["geo_locations"]
+        g = meta.ops_for(tgt("s2", countries=[], countries_clear=True))[0]["params"]["targeting"]["geo_locations"]
         self.assertNotIn("countries", g)
         self.assertEqual([r["name"] for r in g["regions"]], ["Bavaria"])
 
@@ -153,7 +216,7 @@ class Geo(unittest.TestCase):
         self.assertIn("more countries", st["spend"])
         st = meta.ops_for(tgt("s3", countries=["GB"]))[0]  # regions-only ad set gets a country
         self.assertIn("more countries", st["spend"])
-        st = meta.ops_for(tgt("s2", countries=[]))[0]
+        st = meta.ops_for(tgt("s2", countries=[], countries_clear=True))[0]
         self.assertNotIn("more countries", st["spend"])
         self.assertIn("brings back countries", st["undo_spend"])
 
@@ -175,7 +238,7 @@ class Geo(unittest.TestCase):
         self.assertEqual(t["geo"]["countries"], ["GB"])
         self.assertEqual([p["name"] for p in t["geo"]["places"]], ["Bavaria", "Paris"])
         self.assertEqual(t["geo"]["excluded_countries"], ["NO"])
-        self.assertEqual(meta._targeting(TG_REGIONS_ONLY)["countries"], "")
+        self.assertEqual(meta._targeting(TG_REGIONS_ONLY)["countries"], "None (1 region)")
         self.assertEqual(meta._targeting(TG_REGIONS_ONLY)["locations"], "1 region")
         rows = {r["id"]: r for r in meta.rows(DATA, "adsets")}
         self.assertEqual(rows["s2"]["countries"], "GB")
@@ -183,7 +246,8 @@ class Geo(unittest.TestCase):
         st = meta.ops_for(tgt("s2", countries=["GB", "IE"]))[0]
         self.assertIn("locations GB + 1 region, 1 city -> GB, IE + 1 region, 1 city", st["line"])
         self.assertIn("countries GB, IE", meta.summarise(tgt("s2", countries=["GB", "IE"]), DATA))
-        self.assertIn("regions / cities only", meta.summarise(tgt("s3", countries=[]), DATA))
+        self.assertIn("regions / cities only", meta.summarise(tgt("s3", countries=[], countries_clear=True), DATA))
+        self.assertEqual(rows["s3"]["countries"], "None (1 region)")  # regions only: never an empty Countries cell
 
 
 if __name__ == "__main__":

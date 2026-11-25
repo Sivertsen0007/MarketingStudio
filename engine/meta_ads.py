@@ -2132,7 +2132,7 @@ def _do(s, ctx=None):
         rec = {}
         if s.get("media_id"):
             fresh = act() not in (media_info(s["media_id"]).get("uploads") or {})
-            ref = upload_media(s["media_id"])
+            ref = upload_media(s["media_id"], _step_report(ctx, s))
             ctx["__uploaded"] = ctx.get("__uploaded") or fresh
             _set_media(creative, s["media_kind"], ref)
             rec["uploaded"] = {"media_id": s["media_id"], **ref}
@@ -2141,7 +2141,7 @@ def _do(s, ctx=None):
             ups = []
             for ch, mid in zip(kids, s["card_media"]):
                 fresh = act() not in (media_info(mid).get("uploads") or {})
-                ref = upload_media(mid)
+                ref = upload_media(mid, _step_report(ctx, s))
                 ctx["__uploaded"] = ctx.get("__uploaded") or fresh
                 ch["image_hash"] = ref["hash"]
                 ch.pop("picture", None)
@@ -2161,6 +2161,12 @@ def _do(s, ctx=None):
     if s["kind"] in meta_audiences.STEP_KINDS:
         return meta_audiences.do(s, sys.modules[__name__])
     raise ValueError(s["kind"])
+
+
+def _step_report(ctx, s):
+    """report(label, status, pct) for uploads inside a step -> the push's progress callback (ctx["__report"])."""
+    r = ctx.get("__report")
+    return (lambda label, status, pct=None: r(s.get("item"), label, status)) if r else None
 
 
 def _keep(done):
@@ -2329,7 +2335,208 @@ ITEM_STATUS = {"ok": "done", "failed": "error"}  # results status -> items statu
 def _job_items(results):
     """results -> the background-job shape: {key, label, status: done|error|reversed|skipped, ids, error}."""
     return [{"key": r["key"], "label": r["label"], "ids": r["ids"], "error": r["error"],
+             **{k: r[k] for k in ("level", "live_status", "configured_status", "review", "link") if k in r},
              "status": ITEM_STATUS.get(r["status"]) or ("reversed" if r.get("rolled_back") else "skipped")} for r in results]
+
+
+# ---------- what is really live after a push: one batched read-back, Ads Manager links, honest summary ----------
+
+NEW_LEVEL = {"meta_new_campaign": "campaign", "meta_new_adset": "adset", "meta_new_ad": "ad"}
+STATUS_FIELDS = {"ad": "effective_status,configured_status,ad_review_feedback,issues_info,name",
+                 "campaign": "effective_status,configured_status,issues_info,name",
+                 "adset": "effective_status,configured_status,issues_info,name"}
+IN_REVIEW = ("PENDING_REVIEW", "IN_PROCESS")
+ADS_MANAGER = "https://adsmanager.facebook.com/adsmanager/manage"
+_LINK_EDGE = {"ad": ("ads", "selected_ad_ids"), "adset": ("adsets", "selected_adset_ids"), "campaign": ("campaigns", "selected_campaign_ids")}
+
+
+def ads_manager_link(level, oid, act_id=None):
+    """Ads Manager page with this campaign / ad set / ad selected, or None for other objects."""
+    if level not in _LINK_EDGE or not oid:
+        return None
+    edge, sel = _LINK_EDGE[level]
+    digits = re.sub(r"\D", "", str(act_id or act() or ""))
+    return f"{ADS_MANAGER}/{edge}?act={digits}&{sel}={urllib.parse.quote(str(oid))}"
+
+
+def _review_text(o):
+    """Meta's review feedback and delivery issues as one readable line ('' when there are none)."""
+    out = []
+
+    def walk(v):
+        if isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+        elif v not in (None, ""):
+            out.append(str(v))
+    walk(o.get("ad_review_feedback"))
+    for i in o.get("issues_info") or []:
+        if isinstance(i, dict):
+            t = i.get("error_summary") or i.get("error_message")
+            if t:
+                out.append(str(t))
+    seen = []
+    for t in out:
+        if t not in seen:
+            seen.append(t)
+    return "; ".join(seen)
+
+
+def _status_row(level, oid, o=None):
+    o = o if isinstance(o, dict) else None
+    row = {"id": str(oid), "level": level, "name": (o or {}).get("name"), "live_status": "unknown",
+           "configured_status": None, "effective_status": None, "review": None, "link": ads_manager_link(level, oid)}
+    if o:
+        eff = o.get("effective_status")
+        row.update(configured_status=o.get("configured_status"), effective_status=eff, live_status=eff or "unknown",
+                   review=_review_text(o) or None)
+    return row
+
+
+def read_status(pairs):
+    """[(level, id)] -> {id: status row}: one GET /?ids=... per level and BATCH_IDS ids. Read-only. A refused or
+    failed read leaves its ids at live_status "unknown" (never raises)."""
+    want = collections.OrderedDict()
+    for level, oid in pairs:
+        if level in STATUS_FIELDS and oid and str(oid) not in want.setdefault(level, []):
+            want[level].append(str(oid))
+    out = {}
+    for level, ids in want.items():
+        for i in range(0, len(ids), BATCH_IDS):
+            chunk = ids[i:i + BATCH_IDS]
+            try:
+                got = get("", ids=",".join(chunk), fields=STATUS_FIELDS[level]) or {}
+            except Exception:  # noqa: BLE001 - a failed read-back never fails a push
+                got = {}
+            for oid in chunk:
+                out[oid] = _status_row(level, oid, got.get(oid) if isinstance(got, dict) else None)
+    return out
+
+
+STATUS_MAX_IDS = 200
+
+
+def status(ids, level="ad"):
+    """GET /api/meta/status: the live status of Meta objects (read-only), e.g. to refresh review status after a push.
+    ids: list or "a,b,c" of Meta ids, all of one level (ad, the default; adset; campaign).
+    -> {"statuses": [{id, level, name, live_status, configured_status, effective_status, review, link}]} in the
+    order asked; live_status "unknown" when Meta did not answer."""
+    level = str(level or "ad").lower()
+    if level not in STATUS_FIELDS:
+        raise ValueError("level must be ad, adset or campaign")
+    ids = [x.strip() for x in (ids.split(",") if isinstance(ids, str) else ids or []) if str(x).strip()]
+    if not ids:
+        raise ValueError("ids is missing")
+    if len(ids) > STATUS_MAX_IDS:
+        raise ValueError(f"at most {STATUS_MAX_IDS} ids at a time")
+    bad = [x for x in ids if not re.fullmatch(r"\d{1,30}", str(x))]
+    if bad:
+        raise ValueError(f"not a Meta id: {bad[0][:40]}")
+    got = read_status([(level, x) for x in ids])
+    return {"statuses": [got.get(x) or _status_row(level, x) for x in dict.fromkeys(ids)]}
+
+
+def _primary(entry, ids):
+    """(level, Meta id) a pushed draft item is about, or (None, None) (tests, audiences)."""
+    c = entry.get("change") or {}
+    for key, level in (("ad_id", "ad"), ("adset_id", "adset"), ("campaign_id", "campaign")):
+        if ids.get(key):
+            return level, str(ids[key])
+    if ids.get("object_id") and c.get("level") in STATUS_FIELDS and c.get("type") not in NEW_LEVEL:
+        return c["level"], str(ids["object_id"])
+    return None, None
+
+
+def _plural(n, word, many=None):
+    return f"{n} {word if n == 1 else (many or word + 's')}"
+
+
+def _nice(st):
+    return str(st or "unknown").replace("_", " ").capitalize()
+
+
+def summarise_push(results, entries=None):
+    """Honest one-line summary of a push from its per-item results (after the read-back), e.g.
+    "3 ads created (Paused), 2 in review, 1 edit applied". "Everything is live" only when every ad read back is
+    ACTIVE with no review feedback or issues, and nothing failed or is unknown."""
+    by_key = {e["id"]: e for e in entries or []}
+    ok = [r for r in results if r.get("status") == "ok"]
+    if not ok:
+        return "Nothing was pushed to Meta"
+    made = collections.OrderedDict((lvl, []) for lvl in ("campaign", "adset", "ad"))
+    edits = other = 0
+    for r in ok:
+        t = ((by_key.get(r["key"]) or {}).get("change") or {}).get("type")
+        if t in NEW_LEVEL:
+            made[NEW_LEVEL[t]].append(r.get("configured_status") or "unknown")
+        elif r.get("level"):
+            edits += 1
+        else:
+            other += 1
+    parts = []
+    for lvl, sts in made.items():
+        if sts:
+            word = {"campaign": "campaign", "adset": "ad set", "ad": "ad"}[lvl]
+            cnt = collections.Counter(sts)
+            how = _nice(sts[0]) if len(cnt) == 1 else ", ".join(f"{n} {_nice(s)}" for s, n in cnt.items())
+            parts.append(f"{_plural(len(sts), word)} created ({'status unknown' if how == 'Unknown' else how})")
+    ads = [r for r in ok if r.get("level") == "ad"]
+    review = sum(1 for r in ads if r.get("live_status") in IN_REVIEW)
+    bad = sum(1 for r in ads if r.get("live_status") == "DISAPPROVED")
+    issues = sum(1 for r in ok if r.get("live_status") == "WITH_ISSUES" or (r.get("review") and r.get("live_status") not in IN_REVIEW + ("DISAPPROVED",)))
+    unknown = sum(1 for r in ok if r.get("level") and r.get("live_status") == "unknown")
+    if review:
+        parts.append(f"{review} in review")
+    if bad:
+        parts.append(f"{bad} disapproved")
+    if issues:
+        parts.append(f"{issues} with issues")
+    if edits:
+        parts.append(f"{_plural(edits, 'edit')} applied")
+    if other:
+        parts.append(f"{_plural(other, 'other change')} applied")
+    if unknown:
+        parts.append(f"{unknown} with status unknown (Meta did not answer the check)")
+    failed = len(results) - len(ok)
+    if failed:
+        parts.append(f"{failed} not pushed")
+    line = ", ".join(parts)
+    read = [r for r in ok if r.get("level")]
+    if (ads and not failed and all(r.get("live_status") == "ACTIVE" and not r.get("review") for r in read)):
+        return f"Everything is live: {line}"
+    return line
+
+
+def _live_check(results, entries, report=None):
+    """After a push: read back what each pushed item made or changed (one batched GET per level) and add level,
+    live_status, configured_status, review and link to its result. -> summary line. Never raises."""
+    by_key = {e["id"]: e for e in entries}
+    want = {}
+    for r in results:
+        r.setdefault("live_status", None)
+        r.setdefault("review", None)
+        r.setdefault("link", None)
+        if r.get("status") != "ok":
+            continue
+        level, oid = _primary(by_key.get(r["key"]) or {}, r.get("ids") or {})
+        if level:
+            want[r["key"]] = (level, oid)
+    if want:
+        _notify(report, len(results), len(results), "Checking what is live on Meta", None, "checking")
+        try:
+            got = read_status(want.values())
+        except Exception:  # noqa: BLE001
+            got = {}
+        for r in results:
+            if r["key"] in want:
+                level, oid = want[r["key"]]
+                row = got.get(oid) or _status_row(level, oid)
+                r.update(level=level, live_status=row["live_status"], configured_status=row["configured_status"],
+                         review=row["review"], link=row["link"])
+    return summarise_push(results, entries)
 
 
 def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None, progress=None, refresh=True, workers=None,
@@ -2340,7 +2547,11 @@ def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None
     refresh_account() (the caller runs it later). workers: Meta calls at a time (default WORKERS; 1 = strictly one
     after the other). Returns the same keys as before plus "refreshed", and the per-item list twice:
     "results" ({key, label, status: ok|failed|skipped, ids, error, rolled_back}) and "items" (same, status
-    done|error|reversed|skipped, for the background-job layer)."""
+    done|error|reversed|skipped, for the background-job layer). After anything went live, each pushed item is read
+    back from Meta (_live_check: one batched GET per level) and gets level, live_status (ACTIVE, PAUSED,
+    PENDING_REVIEW, DISAPPROVED, WITH_ISSUES, IN_PROCESS, ... or "unknown"), configured_status, review and link
+    (Ads Manager); "summary" is an honest line such as "3 ads created (Paused), 2 in review, 1 edit applied".
+    While a video uploads, progress also gets status "uploading" / "processing" for that item."""
     cb = progress or progress_cb
     a = acct()
     _progress.start(a, "push", [(i["id"], i["summary"], 1) for i in _only(only)], "checking", "Meta is checking each change")
@@ -2374,11 +2585,12 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
                       ("Not pushed - this push has changes that can't be undone (tests); tick the box to accept.",
                        p["permanent"] and not accept_permanent)):
         if cond:
-            return {"ok": False, "message": why, "preview": pub, "results": _results(p["items"], why=why)}
-    steps, ctx = p["steps"], {}
+            return {"ok": False, "message": why, "preview": pub, "results": _results(p["items"], why=why), "summary": "Not pushed"}
+    steps = p["steps"]
     progress.phase(acct(), "sending", "Sending to Meta" + (", one change at a time" if workers == 1 else ""))
     sent = [0]
     lock = threading.Lock()
+    ctx = {"__report": lambda item, label, status: _notify(progress_cb, sent[0], len(steps), label, item, status)}
 
     def on_step(i, rec_, ex):
         s = steps[i]
@@ -2426,6 +2638,7 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
     if odd:  # a refusal and an unexpected error in one phase: rolled back and logged above, now raised
         raise odd[0]
     results = _results(p["items"], kept, back, {steps[i]["item"]: f"{steps[i]['line']}: {ex}" for i, ex in fails.items()})
+    summary = _live_check(results, items, progress_cb) if kept else summarise_push(results, items)  # draft items: their changes
     uploaded = ctx.get("__uploaded")
     lib = " Uploaded images and videos stay in the ad account's media library (also after an undo)." if uploaded else ""
     if error and kept:
@@ -2435,15 +2648,16 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
             msg += f" Reversed: {len(back) - len(rolled)} of {len(back)} other change(s)" + \
                 (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + "."
         return {"ok": False, "partial": True, "push_id": rec["id"], "kept": len(kept), "message": msg + lib, "errors": None,
-                "results": results, "refreshed": refreshed}
+                "results": results, "refreshed": refreshed, "summary": summary}
     if error:
         msg = (f"Meta refused a change, so nothing was kept: {error}" if not rolled
                else f"Meta refused a change: {error}. Not everything made before it could be removed")
         if done:
             msg += f" ({len(done) - len(rolled)} change(s) already made were reversed" + (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + ")"
-        return {"ok": False, "push_id": rec["id"], "message": msg + lib, "errors": None, "results": results, "refreshed": refreshed}
-    return {"ok": True, "push_id": rec["id"], "applied": len(done), "message": f"Live on Meta: {len(done)} change(s).{lib}", "errors": None,
-            "results": results, "refreshed": refreshed}
+        return {"ok": False, "push_id": rec["id"], "message": msg + lib, "errors": None, "results": results, "refreshed": refreshed,
+                "summary": summary}
+    return {"ok": True, "push_id": rec["id"], "applied": len(done), "message": f"Pushed to Meta: {summary}.{lib}", "errors": None,
+            "results": results, "refreshed": refreshed, "summary": summary}
 
 
 def history(limit=20):
@@ -2714,16 +2928,28 @@ def list_media():
              "on_meta": act() in (v.get("uploads") or {})} for k, v in sorted(_media_index().items(), key=lambda kv: kv[1].get("stored", ""), reverse=True) if v.get("source") != "social"]
 
 
-def _post_file(edge, field, path, params=None, timeout=900):
-    """multipart/form-data POST of one file (Meta's advideos upload). Never retried: the upload may have gone through."""
+CHUNK_TRIES = 4  # tries per chunk of a resumable video upload (the first + 3 retries)
+CHUNK_BACKOFF = (2, 5, 15)  # seconds before each retry of a chunk
+CHUNK_TIMEOUT = 300  # seconds for one chunk to reach Meta
+POLL_EVERY = 10  # seconds between checks while Meta processes a video
+_upload_locks = {}  # (ad account, media id) -> lock: one upload of a file at a time (push and Prepare for Meta)
+
+
+def _upload_lock(a, media_id):
+    with _media_lock:
+        return _upload_locks.setdefault((a, media_id), threading.Lock())
+
+
+def _post_multipart(edge, params, field, filename, chunk, timeout=CHUNK_TIMEOUT):
+    """multipart/form-data POST of one chunk of a file (the transfer phase of Meta's resumable advideos upload).
+    Only this chunk is in memory. Not retried here: _upload_video retries a chunk."""
+    meta_api.pace(act())
     boundary = uuid.uuid4().hex
-    parts = []
-    for k, v in {**(params or {}), "access_token": meta_api.TOKEN}.items():
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
-    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{Path(path).name}"\r\n'
-                 f'Content-Type: application/octet-stream\r\n\r\n'.encode() + Path(path).read_bytes() + b"\r\n")
-    parts.append(f"--{boundary}--\r\n".encode())
-    req = urllib.request.Request(f"{meta_api.API}/{edge}", data=b"".join(parts), method="POST",
+    head = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+                    for k, v in {**(params or {}), "access_token": meta_api.TOKEN}.items())
+    head += (f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+             f'Content-Type: application/octet-stream\r\n\r\n').encode()
+    req = urllib.request.Request(f"{meta_api.API}/{edge}", data=head + chunk + f"\r\n--{boundary}--\r\n".encode(), method="POST",
                                  headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -2735,25 +2961,103 @@ def _post_file(edge, field, path, params=None, timeout=900):
             err = {"message": f"HTTP {e.code}"}
         raise MetaError(err, status=e.code) from None
     except (urllib.error.URLError, OSError) as e:
-        raise MetaError({"message": f"no answer from Meta ({getattr(e, 'reason', None) or e.__class__.__name__}); "
-                                    "the upload may or may not have gone through"}) from None
+        raise MetaError({"message": f"no answer from Meta ({getattr(e, 'reason', None) or e.__class__.__name__})",
+                         "is_transient": True}) from None
 
 
-def _wait_video(video_id, limit=None):
-    """Wait (bounded) until Meta has processed an uploaded video. -> a thumbnail URL for the creative."""
+def _resume_at(ex):
+    """(start, end) offsets Meta asks for in a refused chunk's error_data, else None."""
+    d = ex.err.get("error_data") if isinstance(getattr(ex, "err", None), dict) else None
+    if isinstance(d, str):
+        try:
+            d = json.loads(d)
+        except ValueError:
+            d = None
+    if isinstance(d, dict) and d.get("start_offset") is not None and d.get("end_offset") is not None:
+        try:
+            return int(d["start_offset"]), int(d["end_offset"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _say(report, label, status, pct=None):
+    if report:
+        try:
+            report(label, status, pct)
+        except Exception:  # noqa: BLE001 - a progress report never stops an upload
+            pass
+
+
+def _upload_video(path, name, report=None):
+    """Meta's resumable upload (act_<id>/advideos, upload_phase start / transfer / finish). The file is read from disk
+    one chunk at a time (Meta says which bytes it wants next); a chunk that fails is sent again (CHUNK_TRIES), from
+    where Meta says to resume. report(label, status, pct) gets "uploading" byte progress. -> video id."""
+    path = Path(path)
+    size = path.stat().st_size
+    edge = f"{act()}/advideos"
+    st = post(edge, {"upload_phase": "start", "file_size": size})
+    sid, vid = st.get("upload_session_id"), st.get("video_id")
+    if not sid or not vid:
+        raise MetaError({"message": "Meta did not start the video upload (no upload session)"})
+    start, end = int(st.get("start_offset") or 0), int(st.get("end_offset") or 0)
+    _say(report, "Uploading video 0%", "uploading", 0)
+    with open(path, "rb") as f:
+        while start < end:
+            tries = 0
+            while True:
+                f.seek(start)
+                chunk = f.read(end - start)
+                try:
+                    r = _post_multipart(edge, {"upload_phase": "transfer", "upload_session_id": sid, "start_offset": start},
+                                        "video_file_chunk", path.name, chunk)
+                    break
+                except MetaError as ex:
+                    tries += 1
+                    at = _resume_at(ex)
+                    if tries >= CHUNK_TRIES or not (at or ex.transient or ex.rate_limited):
+                        raise MetaError({"message": f"the video upload stopped at {start * 100 // max(size, 1)}%: {ex}"}) from None
+                    if at:
+                        start, end = at
+                    time.sleep(CHUNK_BACKOFF[min(tries, len(CHUNK_BACKOFF)) - 1])
+            del chunk
+            nxt, nend = int(r.get("start_offset", end)), int(r.get("end_offset", end))
+            if nxt <= start and nxt < nend:
+                raise MetaError({"message": "Meta did not move the video upload on; try again"})
+            start, end = nxt, nend
+            pct = min(100, start * 100 // max(size, 1))
+            _say(report, f"Uploading video {pct}%", "uploading", pct)
+    fin = post(edge, {"upload_phase": "finish", "upload_session_id": sid, "title": name, "name": name})
+    if fin.get("success") is False:
+        raise MetaError({"message": "Meta did not accept the finished video upload"})
+    return str(vid)
+
+
+def _wait_video(video_id, limit=None, report=None, first=None):
+    """Wait (bounded) until Meta has processed an uploaded video, reporting status.processing_progress as
+    "processing". first: a status already read (saves one GET). -> a thumbnail URL for the creative."""
     limit = VIDEO_WAIT if limit is None else limit
     t0 = time.time()
+    st = first
     while True:
-        st = (get(str(video_id), fields="status").get("status") or {})
+        if st is None:
+            st = (get(str(video_id), fields="status").get("status") or {})
         vs = st.get("video_status")
         if vs == "ready":
             break
         if vs == "error":
             raise MetaError({"message": f"Meta could not process the video ({(st.get('processing_progress') or '')})".replace(" ()", "")})
+        pp = (st.get("processing_phase") or {}).get("status") if isinstance(st.get("processing_phase"), dict) else None
+        pct = st.get("processing_progress")
+        if isinstance(pct, (int, float)):
+            _say(report, f"Meta is processing the video {int(pct)}%", "processing", int(pct))
+        else:
+            _say(report, "Meta is processing the video" + (f" ({pp})" if pp else ""), "processing")
         if time.time() - t0 > limit:
             raise MetaError({"message": f"the video was still processing after {limit // 60} minutes: nothing was kept, "
                                         "push again in a while (the upload is reused)"})
-        time.sleep(10)
+        time.sleep(POLL_EVERY)
+        st = None
     th = get(f"{video_id}/thumbnails", fields="uri,is_preferred").get("data") or []
     pick = next((x for x in th if x.get("is_preferred")), th[0] if th else None)
     if not pick:
@@ -2761,35 +3065,92 @@ def _wait_video(video_id, limit=None):
     return pick["uri"]
 
 
-def upload_media(media_id):
-    """Push-time only: put a stored file into the ad account's media library. -> {"hash"} or {"video_id", "image_url"}.
-    An earlier upload to the same ad account is reused. Library media are not deleted by undo."""
-    m = media_info(media_id)
-    ref = dict((m.get("uploads") or {}).get(act()) or {})
-    if ref.get("hash") or (ref.get("video_id") and ref.get("image_url")):
-        return ref
-    path = MEDIA_DIR / m["file"]
-    if m["kind"] == "image":
-        r = post(f"{act()}/adimages", {"bytes": base64.b64encode(path.read_bytes()).decode(), "name": m["name"]})
-        img = next(iter((r.get("images") or {}).values()), None)
-        if not img or not img.get("hash"):
-            raise MetaError({"message": "Meta did not return an image hash for the upload"})
-        ref = {"hash": img["hash"]}
-    else:
+def upload_media(media_id, report=None):
+    """Put a stored file into the ad account's media library (Push live, or Prepare for Meta).
+    -> {"hash"} or {"video_id", "image_url"}. An earlier upload to the same ad account is reused; a reused video is
+    checked once (one GET) and waited for if Meta is still processing it. Library media are not deleted by undo.
+    report(label, status, pct): "uploading" / "processing" progress."""
+    a = act()
+    with _upload_lock(a, media_id):
+        m = media_info(media_id)
+        ref = dict((m.get("uploads") or {}).get(a) or {})
+        path = MEDIA_DIR / m["file"]
+        if m["kind"] == "image":
+            if ref.get("hash"):
+                return ref
+            _say(report, "Uploading image", "uploading")
+            r = post(f"{a}/adimages", {"bytes": base64.b64encode(path.read_bytes()).decode(), "name": m["name"]})
+            img = next(iter((r.get("images") or {}).values()), None)
+            if not img or not img.get("hash"):
+                raise MetaError({"message": "Meta did not return an image hash for the upload"})
+            ref = {"hash": img["hash"]}
+            _remember_upload(media_id, ref)
+            return ref
+        first = None
+        if ref.get("video_id"):
+            try:
+                first = get(str(ref["video_id"]), fields="status").get("status") or {}
+            except MetaError as ex:
+                if ex.transient or ex.rate_limited:
+                    raise
+                ref, first = {}, None  # gone from the ad account's library: upload it again
+            if first and first.get("video_status") == "ready" and ref.get("image_url"):
+                return ref
         if not ref.get("video_id"):
-            ref = {"video_id": _post_file(f"{act()}/advideos", "source", path, {"name": m["name"]})["id"]}
+            ref = {"video_id": _upload_video(path, m["name"], report)}
             _remember_upload(media_id, ref)  # keep the id even if processing times out, so the next push reuses it
-        ref["image_url"] = _wait_video(ref["video_id"])
-    _remember_upload(media_id, ref)
-    return ref
+        ref["image_url"] = _wait_video(ref["video_id"], report=report, first=first)
+        _remember_upload(media_id, ref)
+        return ref
 
 
 def _remember_upload(media_id, ref):
     a = act()
 
     def upd(idx):
-        idx[media_id].setdefault("uploads", {})[a] = ref
+        idx[media_id].setdefault("uploads", {})[a] = {**ref, "at": dt.datetime.now().isoformat(timespec="seconds")}
     _media_save(upd)
+
+
+def resolve_media(path=None, media_id=None):
+    """A file in Studio's media library -> its media id. path: the media id, the stored file name, or a path to that
+    file inside the library folder. Anything else is refused (Prepare for Meta never reads other files)."""
+    v = str(media_id or path or "").strip()
+    if re.fullmatch(r"[0-9a-f]{64}", v):
+        media_info(v)
+        return v
+    if not v:
+        raise ValueError("path is missing: pick a file from the media library")
+    p = Path(v)
+    if p.is_absolute() or len(p.parts) > 1:
+        try:
+            p.resolve().relative_to(MEDIA_DIR.resolve())
+        except (ValueError, OSError):
+            raise ValueError("only files in Studio's media library can be prepared for Meta") from None
+    name = p.name
+    hit = next((k for k, e in _media_index().items() if e.get("file") == name), None)
+    if not hit:
+        raise ValueError("not a file in Studio's media library: add it there first")
+    media_info(hit)
+    return hit
+
+
+def prepare_media(media_id, progress=None):
+    """Prepare for Meta: upload a library file to the current ad account now (video: resumable upload + Meta's
+    processing), so a later Push live reuses it. Nothing is created on Meta besides the library media.
+    progress(done, total, label, item_key, status) as push's. -> {ok, media_id, kind, video_id | hash, image_url,
+    message, items}."""
+    m = media_info(media_id)
+
+    def report(label, status, pct=None):
+        _notify(progress, pct if pct is not None else 0, 100, label, media_id, status)
+    ref = upload_media(media_id, report)
+    _notify(progress, 100, 100, "Ready for Meta", media_id, "done")
+    ids = {k: ref[k] for k in ("video_id", "hash") if ref.get(k)}
+    what = "video is uploaded and processed" if m["kind"] == "video" else "image is uploaded"
+    return {"ok": True, "media_id": media_id, "kind": m["kind"], **ids, "image_url": ref.get("image_url"), "ready": True,
+            "message": f"Ready for Meta: the {what}; Push live reuses it", "summary": f"Ready for Meta: the {what}",
+            "items": [{"key": media_id, "label": m["name"], "status": "done", "ids": ids, "error": None}]}
 
 
 # ---------- preview of drafted copy (Meta renders it, nothing is created) ----------

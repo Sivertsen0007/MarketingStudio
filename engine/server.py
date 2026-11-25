@@ -305,6 +305,29 @@ def live_job(source, acct, path, body):
         return 500, {"error": f"could not start the job: {ex}"}
 
 
+def prepare_job(acct, body):
+    """POST /api/meta/media/prepare {"acct", "path"}: upload a media library file to the Meta ad account now, as a
+    background job (kind "upload"), so a later Push live reuses it. -> (status code, JSON)."""
+    if not meta.is_meta(acct):
+        return 400, {"error": "acct must be a Meta ad account"}
+    try:
+        meta.use(acct)
+        media_id = meta.resolve_media(body.get("path"), body.get("media_id"))
+    except ValueError as ex:
+        return 400, {"error": str(ex)}
+
+    def run(report):
+        meta.use(acct)  # Meta's account is per thread
+        return meta.prepare_media(media_id, progress=report)
+    try:
+        return 202, {"job": jobs.start("upload", "meta", acct, run, ref=media_id), "media_id": media_id}
+    except jobs.Busy as b:
+        return 409, {"error": str(b), "job": b.job_id}
+    except Exception as ex:  # noqa: BLE001
+        traceback.print_exc()
+        return 500, {"error": f"could not start the job: {ex}"}
+
+
 def _then(res, fn):
     fn()
     return res
@@ -459,6 +482,14 @@ class H(BaseHTTPRequestHandler):
             return self._run(scheduler.status)
         if u.path == "/api/health":
             return self._run(lambda: {"summary": health.summary(), **(health.cached() or {"checked_at": None, "results": []})})
+        if u.path == "/api/meta/status":  # read-only: live status / review of pushed Meta objects
+            if not meta.is_meta(q.get("acct") or meta.KEY):
+                return self._send(400, {"error": "acct must be a Meta ad account"})
+            try:
+                meta.use(q.get("acct") or meta.KEY)
+            except ValueError as ex:
+                return self._send(400, {"error": str(ex)})
+            return self._run(lambda: meta.status(q.get("ids", ""), q.get("level", "ad")))
         if meta.is_meta(q.get("acct")):
             try:
                 meta.use(q.get("acct"))
@@ -554,6 +585,8 @@ class H(BaseHTTPRequestHandler):
             return self._settings_post(body)
         if self.path.startswith("/api/area/"):
             return self._area("POST", self.path, body)
+        if self.path == "/api/meta/media/prepare":
+            return self._send(*prepare_job(str(body.get("acct") or meta.KEY), body))
         if meta.is_meta(body.get("acct")):
             return self._meta_post(body)
         acct = core.resolve(body.get("acct"))

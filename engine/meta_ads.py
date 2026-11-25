@@ -1931,31 +1931,46 @@ def ops_for(c, items=None):
     raise ValueError(f"'{t}' can't be pushed live")
 
 
+CHECK_BUSY_WAIT = 20  # seconds the whole ad account pauses when Meta answers a check with "too many calls"
+BUSY = "Meta is busy and could not check this change; try again in a few minutes"
+
+
+def _validate(s):
+    """Meta's own validate_only for one step. Returns an error string or '' (MetaError raised)."""
+    if s["kind"] in ("study", "study_end"):  # reads only: /ad_studies has no validate_only (meta_tests.py)
+        import meta_tests  # noqa: PLC0415
+        return meta_tests.check_step(s)
+    if s["kind"] in meta_audiences.STEP_KINDS:  # [audiences] no validate_only POST for audiences (not proven on Meta)
+        return meta_audiences.check_step(s)
+    if s["kind"] == "update":
+        post(s["id"], s["params"], validate=True, retry_rate=False)
+    elif s["kind"] == "create":
+        params = s.get("check_params") if s.get("refs") else s["params"]
+        if params:
+            post(f"{act()}/{s['edge']}", params, validate=True, retry_rate=False)
+    elif s["kind"] in ("copy", "new_ad"):
+        if s.get("check_creative", True):
+            post(f"{act()}/adcreatives", s["creative"], validate=True, retry_rate=False)
+        if s["kind"] == "new_ad" and s.get("adset") and s.get("source_creative"):
+            post(f"{act()}/ads", {"name": s["name"], "adset_id": s["adset"], "status": "PAUSED",
+                                "creative": {"creative_id": s["source_creative"]}}, validate=True, retry_rate=False)
+    return ""
+
+
 def _check_step(s):
-    """Meta's own validate_only for one step. Returns an error string or ''."""
-    try:
-        if s["kind"] in ("study", "study_end"):  # reads only: /ad_studies has no validate_only (meta_tests.py)
-            import meta_tests  # noqa: PLC0415
-            return meta_tests.check_step(s)
-        if s["kind"] in meta_audiences.STEP_KINDS:  # [audiences] no validate_only POST for audiences (not proven on Meta)
-            return meta_audiences.check_step(s)
-        if s["kind"] == "update":
-            post(s["id"], s["params"], validate=True, retry_rate=False)
-        elif s["kind"] == "create":
-            params = s.get("check_params") if s.get("refs") else s["params"]
-            if params:
-                post(f"{act()}/{s['edge']}", params, validate=True, retry_rate=False)
-        elif s["kind"] in ("copy", "new_ad"):
-            if s.get("check_creative", True):
-                post(f"{act()}/adcreatives", s["creative"], validate=True, retry_rate=False)
-            if s["kind"] == "new_ad" and s.get("adset") and s.get("source_creative"):
-                post(f"{act()}/ads", {"name": s["name"], "adset_id": s["adset"], "status": "PAUSED",
-                                    "creative": {"creative_id": s["source_creative"]}}, validate=True, retry_rate=False)
-        return ""
-    except MetaError as ex:
-        if ex.rate_limited:
-            return ""  # Meta allows few budget calls per ad set; a busy answer is not a no - the push waits and retries
-        return f"Meta: {ex}"
+    """Meta's own validate_only for one step. Returns an error string or ''. A rate-limited check pauses the whole
+    ad account (shared hold) and is tried once more; still rate-limited, it is a problem (BUSY): a push never sends
+    a change Meta did not check."""
+    for attempt in (1, 2):
+        try:
+            return _validate(s)
+        except MetaError as ex:
+            if not ex.rate_limited:
+                return f"Meta: {ex}"
+            if attempt == 2:
+                return BUSY
+            meta_api.limiter(str(act() or "_")).hold(CHECK_BUSY_WAIT)
+    return BUSY
 
 
 def _only(only):
@@ -2225,8 +2240,8 @@ def _lanes(phase_steps):
 def _execute(steps, ctx, workers=None, on_step=None):
     """Apply the (phase-sorted) steps: phases in order, lanes of one phase side by side (workers at a time, 1 = one
     step at a time as before). A refusal stops new steps; steps already sent finish. on_step(index, record or None,
-    error or None) may run on a worker thread. Returns ({index: record}, {index: error}) where the errors are refusals
-    (MetaError, KeyError, ValueError, OSError). Any other exception is raised once its phase has stopped."""
+    error or None) may run on a worker thread. Returns ({index: record}, {index: refusal}, [unexpected exceptions]).
+    Refusals are MetaError, KeyError, ValueError, OSError. Either kind stops the push once its phase has stopped."""
     recs, fails, odd = {}, {}, []
     lock = threading.Lock()
     stop = threading.Event()
@@ -2263,11 +2278,9 @@ def _execute(steps, ctx, workers=None, on_step=None):
     one = (WORKERS if workers is None else int(workers)) <= 1
     for rank in sorted(groups):
         _pmap(lane, [groups[rank]] if one else _lanes(groups[rank]), workers)
-        if odd:
-            raise odd[0]
         if stop.is_set():
             break
-    return recs, fails
+    return recs, fails, odd
 
 
 def _ids(rec):
@@ -2377,7 +2390,9 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
         else:
             progress.mark(acct(), s["item"], "failed")
         _notify(progress_cb, n, len(steps), s["line"], s["item"], "ok" if ex is None else "failed")
-    recs, fails = _execute(steps, ctx, workers, on_step)
+    recs, fails, odd = _execute(steps, ctx, workers, on_step)
+    if odd and not fails:
+        raise odd[0]  # an unexpected error alone: raised as before (nothing rolled back)
     done = [recs[i] for i in sorted(recs)]  # step order, as if sent one at a time
     first = min(fails) if fails else None
     error = f"{steps[first]['line']}: {fails[first]}" if fails else None
@@ -2408,6 +2423,8 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
             refreshed = True
         except MetaError:
             pass
+    if odd:  # a refusal and an unexpected error in one phase: rolled back and logged above, now raised
+        raise odd[0]
     results = _results(p["items"], kept, back, {steps[i]["item"]: f"{steps[i]['line']}: {ex}" for i, ex in fails.items()})
     uploaded = ctx.get("__uploaded")
     lib = " Uploaded images and videos stay in the ad account's media library (also after an undo)." if uploaded else ""

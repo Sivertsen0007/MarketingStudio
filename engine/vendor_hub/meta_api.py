@@ -185,7 +185,8 @@ def pressure():
 
 
 class Limiter:
-    """Token bucket for one ad account (thread-safe)."""
+    """Token bucket for one ad account (thread-safe). hold_until (time.monotonic()) is shared: while it lies ahead,
+    every thread waits, so one "regain access in N minutes" (or a refusal for too many calls) pauses the whole account."""
 
     def __init__(self, rate=None, burst=None):
         self.rate = float(rate or PACE_RATE)
@@ -193,27 +194,35 @@ class Limiter:
         self.tokens = self.burst
         self.t = time.monotonic()
         self.held_seq = 0
+        self.hold_until = 0.0
         self.lock = threading.Lock()
 
+    def hold(self, seconds):
+        """Pause every call on this account for `seconds` from now (never shortens a longer hold)."""
+        with self.lock:
+            self.hold_until = max(self.hold_until, time.monotonic() + max(0.0, float(seconds)))
+
     def acquire(self):
-        """Wait for a turn. Returns the seconds waited."""
+        """Wait for a turn. Returns the seconds waited. Sleeps outside the lock."""
         waited = 0.0
         while True:
             with self.lock:
                 pct, regain, seq = pressure()
-                hold = 0.0
-                if regain > 0 and seq != self.held_seq:
-                    self.held_seq = seq
-                    hold = min(regain, PACE_HOLD_MAX)
-                slow = next((f for lim, f in PACE_STEPS if pct >= lim), 1.0)
-                rate = self.rate / slow
                 now = time.monotonic()
-                self.tokens = min(self.burst if pct < PACE_SLOW else 1.0, self.tokens + (now - self.t) * rate)
-                self.t = now
-                if not hold and self.tokens >= 1:
-                    self.tokens -= 1
-                    return waited
-                wait = hold or (1 - self.tokens) / rate
+                if regain > 0 and seq != self.held_seq:  # a new usage report asking to back off: hold the account once
+                    self.held_seq = seq
+                    self.hold_until = max(self.hold_until, now + min(regain, PACE_HOLD_MAX))
+                if now < self.hold_until:
+                    wait = self.hold_until - now
+                else:
+                    slow = next((f for lim, f in PACE_STEPS if pct >= lim), 1.0)
+                    rate = self.rate / slow
+                    self.tokens = min(self.burst if pct < PACE_SLOW else 1.0, self.tokens + (now - self.t) * rate)
+                    self.t = now
+                    if self.tokens >= 1:
+                        self.tokens -= 1
+                        return waited
+                    wait = (1 - self.tokens) / rate
             time.sleep(wait)
             waited += wait
 

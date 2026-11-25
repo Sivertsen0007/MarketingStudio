@@ -57,11 +57,12 @@ class FakeGraph:
     """Enough of the Graph API for plan / push. Thread-safe. refuse: {(path, frozenset(param keys)) or path} that a
     real (non validate_only) POST refuses."""
 
-    def __init__(self, refuse=(), refuse_check=(), delay=0.0):
+    def __init__(self, refuse=(), refuse_check=(), delay=0.0, busy=None):
         self.objs = world()
         self.start = json.loads(json.dumps(self.objs))
         self.calls = []
         self.refuse, self.refuse_check, self.delay = set(refuse), set(refuse_check), delay
+        self.busy = dict(busy or {})  # path -> how many validate_only calls Meta answers "too many calls" (-1: always)
         self.lock = threading.Lock()
         self.n = 0
         self.inflight = self.peak = 0
@@ -98,6 +99,9 @@ class FakeGraph:
             return json.loads(json.dumps(self.objs[path]))
         self.calls.append(("VALIDATE" if validate else "POST", path, None))
         if validate:
+            if self.busy.get(path):
+                self.busy[path] -= 1
+                raise meta_api.MetaError({"message": "User request limit reached", "code": 17}, 400)
             if path in self.refuse_check:
                 raise meta_api.MetaError({"message": f"refused {path}", "code": 100}, 400)
             return {"success": True}
@@ -420,6 +424,62 @@ class JobLayer(Base):
         self.assertEqual({a[3] for a in cb}, {f"i{n}" for n in range(20)})
 
 
+class Safety(Base):
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(meta, "CHECK_BUSY_WAIT", 0)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_busy_check_is_retried_once(self):
+        g = self.graph(busy={"a3": 1})
+        p = meta.plan(workers=5)
+        self.assertTrue(p["ok"], [e["problems"] for e in p["items"] if e["problems"]])
+        self.assertEqual(len([c for c in g.calls if c[0] == "VALIDATE" and c[1] == "a3"]), 2)
+
+    def test_still_busy_check_refuses_the_push(self):
+        g = self.graph(busy={"a3": -1, ACT + "/adcreatives": -1})
+        with mock.patch.object(meta, "refresh_account", lambda: None):
+            r = meta.push(accept_spend=True, workers=5)
+        self.assertFalse(r["ok"])
+        self.assertEqual(g.count("POST"), 0)  # nothing unchecked is sent
+        bad = {e["id"]: e["problems"] for e in r["preview"]["items"] if e["problems"]}
+        self.assertEqual(bad["i2"], [meta.BUSY])
+        self.assertEqual(set(bad), {"i2", "i13", "i14", "i19"})
+        self.assertEqual({x["key"]: x["status"] for x in r["items"]}["i2"], "error")
+
+    def test_busy_check_holds_the_whole_account(self):
+        held = []
+        self.graph(busy={"a3": 1})
+        lim = meta_api.limiter(ACT)
+        with mock.patch.object(lim, "hold", lambda sec: held.append(sec)), mock.patch.object(meta, "CHECK_BUSY_WAIT", 7):
+            meta.plan(workers=5)
+        self.assertEqual(held, [7])
+
+    def test_refusal_and_crash_in_one_phase_roll_back_then_raise(self):
+        g = self.graph(refuse={"a3"})
+        gate = threading.Barrier(2, timeout=5)
+        real = meta._do
+
+        def do(s, ctx=None):
+            if s.get("id") in ("a3", "a5") and s.get("kind") == "update":
+                gate.wait()  # both lanes are running when one is refused and the other crashes
+                if s["id"] == "a5":
+                    raise RuntimeError("bug in a5")
+            return real(s, ctx)
+        with mock.patch.object(meta, "_do", do), mock.patch.object(meta, "refresh_account", lambda: None):
+            with self.assertRaises(RuntimeError):
+                meta.push(accept_spend=True, workers=5)
+        self.assertEqual(g.existing_state(), FakeGraph().existing_state())
+        self.assertTrue(g.made())
+        self.assertEqual({st for _e, _n, st in g.made()}, {"DELETED"})
+        log = [json.loads(x) for x in meta._log().read_text().splitlines()][-1]
+        self.assertFalse(log["ok"])
+        self.assertIn("refused a3", log["error"])
+        self.assertEqual(log["ops"], [])
+        self.assertTrue(log["rolled_back"])
+
+
 class Pacing(unittest.TestCase):
     def setUp(self):
         self.saved = (dict(meta_api._usage), meta_api._usage_seq, meta_api._usage_mono)
@@ -454,17 +514,43 @@ class Pacing(unittest.TestCase):
             lim.acquire()  # no bursts near the limit, and a tenth of the rate
         self.assertTrue(slept and slept[0] > 0.5, slept)
 
-    def test_business_usage_regain_is_waited_once(self):
+    def test_business_usage_regain_holds_every_thread(self):
         self.usage(x_business_use_case_usage={"123": [{"type": "ADS_MANAGEMENT", "call_count": 40, "total_cputime": 5,
                                                          "total_time": 5, "estimated_time_to_regain_access": 2}]})
         pct, regain, _ = meta_api.pressure()
         self.assertEqual((pct, regain), (40, 120))
-        slept = []
-        lim = meta_api.Limiter(rate=1000, burst=5)
-        with mock.patch.object(meta_api.time, "sleep", lambda s: slept.append(s)):
+        lim = meta_api.Limiter(rate=1000, burst=50)
+        t0, at = time.monotonic(), []
+        lock = threading.Lock()
+
+        def go():
             lim.acquire()
-            lim.acquire()
-        self.assertEqual(slept, [meta_api.PACE_HOLD_MAX])
+            with lock:
+                at.append(time.monotonic() - t0)
+        with mock.patch.object(meta_api, "PACE_HOLD_MAX", 0.3):
+            ts = [threading.Thread(target=go) for _ in range(5)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join(5)
+        self.assertEqual(len(at), 5)
+        self.assertTrue(all(x >= 0.28 for x in at), at)  # not only the first thread waited
+        t1 = time.monotonic()
+        lim.acquire()  # the same usage report is waited out once, not again
+        self.assertLess(time.monotonic() - t1, 0.1)
+
+    def test_hold_pauses_the_account(self):
+        meta_api._usage_seq = 0
+        lim = meta_api.Limiter(rate=1000, burst=50)
+        lim.hold(0.2)
+        lim.hold(0.05)  # never shortens a longer hold
+        t0 = time.monotonic()
+        ts = [threading.Thread(target=lim.acquire) for _ in range(4)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(5)
+        self.assertGreaterEqual(time.monotonic() - t0, 0.18)
 
     def test_stale_usage_is_ignored(self):
         self.usage(x_ad_account_usage={"acc_id_util_pct": 99})

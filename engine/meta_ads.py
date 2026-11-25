@@ -1298,7 +1298,7 @@ def _overlay(kind, out, campaign_id, adset_id):
 #   independent writes run WORKERS at a time. Steps on the same Meta object (e.g. two budget edits on one ad set) and
 #   media uploads stay in order, one at a time. A refusal stops new writes, waits for those already sent and rolls
 #   back everything made, as before.
-WORKERS = 5
+WORKERS = 8
 BATCH_IDS = 50
 LIVE_FIELDS = {"campaign": "name,status,objective,daily_budget,lifetime_budget",
                "adset": "name,status,daily_budget,lifetime_budget,end_time,targeting,campaign_id",
@@ -1312,6 +1312,13 @@ def _copy(o):
     return json.loads(json.dumps(o))
 
 
+def _seen(key, obj):
+    """Note a live read for the item being planned (what a reused check is compared against)."""
+    reads = getattr(_plan_tls, "reads", None)
+    if reads is not None:
+        reads[key] = json.dumps(obj, sort_keys=True, default=str)
+
+
 def _live(level, oid):
     cache = getattr(_plan_tls, "live", None)
     key = (level, str(oid))
@@ -1319,6 +1326,7 @@ def _live(level, oid):
         return get(str(oid), fields=LIVE_FIELDS[level])
     if key not in cache:
         cache[key] = get(str(oid), fields=LIVE_FIELDS[level])
+    _seen(key, cache[key])
     return _copy(cache[key])
 
 
@@ -1334,29 +1342,42 @@ def _live_reads(c):
     return []
 
 
-def _prefetch(changes):
-    """Fill this plan's live cache: one GET /?ids=... per level and BATCH_IDS ids. Returns the number of reads made."""
+def _batched_reads(jobs, workers=None):
+    """[(level, [ids], fields)] -> one GET /?ids=... per job, run side by side (WORKERS at a time; each still waits for
+    its turn on the account's pacing). -> [answer dict, or the MetaError / exception it raised], in job order."""
+    def one(job):
+        _lvl, chunk, fields = job
+        try:
+            return get("", ids=",".join(chunk), fields=fields) or {}
+        except Exception as ex:  # noqa: BLE001 - handed back to the caller, which decides
+            return ex
+    return _pmap(one, jobs, workers)
+
+
+def _prefetch(changes, workers=None, touched=False):
+    """Fill this plan's live cache: one GET /?ids=... per level and BATCH_IDS ids, the levels side by side.
+    touched: also the objects each step touches (_touches), for reusing a preview's checks. Returns the reads made."""
     cache = _plan_tls.live
     want = {}
     for c in changes:
-        for lvl, oid in _live_reads(c):
+        for lvl, oid in _live_reads(c) + ((_touches(c) or []) if touched else []):
             if (lvl, oid) not in cache and oid not in want.setdefault(lvl, []):
                 want[lvl].append(oid)
-    n = 0
+    jobs = []
     for lvl, ids in want.items():
         for i in range(0, len(ids), BATCH_IDS):
             chunk = ids[i:i + BATCH_IDS]
-            if len(chunk) < 2:
-                continue  # one id: its own GET costs the same, and keeps its own error
-            n += 1
-            try:
-                got = get("", ids=",".join(chunk), fields=LIVE_FIELDS[lvl])
-            except MetaError:
+            if len(chunk) >= 2:  # one id: its own GET costs the same, and keeps its own error
+                jobs.append((lvl, chunk, LIVE_FIELDS[lvl]))
+    for (lvl, chunk, _f), got in zip(jobs, _batched_reads(jobs, workers)):
+        if isinstance(got, BaseException):
+            if isinstance(got, MetaError):
                 continue  # Meta refuses the whole read when one id is gone: each item then reads on its own
-            for oid in chunk:
-                if isinstance((got or {}).get(oid), dict):
-                    cache[(lvl, oid)] = got[oid]
-    return n
+            raise got
+        for oid in chunk:
+            if isinstance(got, dict) and isinstance(got.get(oid), dict):
+                cache[(lvl, oid)] = got[oid]
+    return len(jobs)
 
 
 def _live_campaigns():
@@ -1364,11 +1385,13 @@ def _live_campaigns():
     cache = getattr(_plan_tls, "live", None)
     key = ("__campaigns", act())
     if cache is not None and key in cache:
+        _seen(key, cache[key])
         return _copy(cache[key])
     got = get_all(f"{act()}/campaigns", fields="id,name,objective,daily_budget,lifetime_budget,special_ad_categories",
                   effective_status=["ACTIVE", "PAUSED"])
     if cache is not None:
         cache[key] = got
+        _seen(key, got)
     return _copy(got)
 
 
@@ -2006,17 +2029,91 @@ def _checked(s):
         return ex
 
 
-def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None):
+# ---------- a push reuses the checks of the preview just before it ----------
+# A preview remembers which steps passed Meta's validate_only check. The push that follows (it plans again from scratch
+# and re-reads every object live, as always) skips the check of a step only when ALL hold: same Meta ad account, the
+# preview finished less than REUSE_MAX_AGE seconds ago, the step's exact params are identical (hash of the whole step),
+# and the live state of every object the step touches, read again by this push, is identical to what the preview read.
+# Anything else is checked again. Only passes are remembered (a check that found a problem, failed or was rate-limited is
+# never reused), only for change types whose touched objects are known (_touches), and the memory is per process,
+# bounded, thread-safe and emptied after every push. REUSE_CHECKS = False switches it off.
+REUSE_CHECKS = True
+REUSE_MAX_AGE = 120.0  # seconds since the preview finished
+REUSE_MAX = 5000       # remembered passes at most (oldest dropped first)
+REUSE_KINDS = ("update", "create", "copy", "new_ad")  # validate_only POSTs; reads-only checks always run
+_reuse = collections.OrderedDict()  # (act, step hash, live hash) -> (act, time.monotonic() the preview finished)
+_reuse_lock = threading.Lock()
+
+
+def _touches(c):
+    """(level, id) pairs of the existing Meta objects a change's steps touch, all read live by the plan, or None when
+    that is not known for this change type (its checks are then never reused)."""
+    t = c.get("type")
+    if t in EDIT_TYPES:
+        return [(c["level"], str(c["id"]))] if c.get("level") in LIVE_FIELDS and c.get("id") is not None else None
+    if t == "meta_new_campaign":
+        return []
+    if t == "meta_new_adset":
+        return [] if _ref(c.get("campaign_id")) else [("campaign", str(c["campaign_id"]))] if c.get("campaign_id") else None
+    if t == "meta_new_ad":
+        out = [] if _ref(c.get("adset_id")) else [("adset", str(c["adset_id"]))] if c.get("adset_id") else None
+        if out is not None and c.get("from_ad"):
+            out.append(("ad", str(c["from_ad"])))
+        return out
+    return None
+
+
+def _digest(o):
+    return hashlib.sha256(json.dumps(o, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+
+
+def _reuse_key(s, live):
+    """The memory key of one step's check: ad account, the whole step (its exact params), the live state it was planned on."""
+    return (str(act()), _digest({k: v for k, v in s.items() if k != "item"}), live)
+
+
+def _reused(key):
+    """True when a preview's pass for exactly this key can stand in for the check (see above)."""
+    if not REUSE_CHECKS or key is None:
+        return False
+    with _reuse_lock:
+        hit = _reuse.get(key)
+    return bool(hit and hit[0] == key[0] == str(act()) and 0 <= time.monotonic() - hit[1] < REUSE_MAX_AGE)
+
+
+def _remember(keys):
+    """Store the passes of a finished preview, stamped with the time it finished."""
+    if not REUSE_CHECKS or not keys:
+        return
+    now = time.monotonic()
+    with _reuse_lock:
+        for key in keys:
+            _reuse.pop(key, None)
+            _reuse[key] = (key[0], now)
+        while len(_reuse) > REUSE_MAX:
+            _reuse.popitem(last=False)
+
+
+def forget_checks():
+    """Empty the memory of preview checks (after every push)."""
+    with _reuse_lock:
+        _reuse.clear()
+
+
+def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, checks=None):
     """Every draft item -> steps, each checked by Meta (validate_only). Live values are read for this plan only:
     batched per level, then cached until the plan returns. on_check(done, total, line, item id) after each check.
-    workers: checks at a time (default WORKERS; 1 = one after the other, as before)."""
+    workers: checks at a time (default WORKERS; 1 = one after the other, as before).
+    checks: None (check every step), "store" (a preview: remember the passes) or "reuse" (a push: skip a step's check
+    when the preview just before passed exactly it on the same live state, see REUSE_CHECKS)."""
+    reuse = checks in ("store", "reuse") and REUSE_CHECKS
     items = _only(only)
     pool = {it["id"]: it for it in items}
     steps, per_item, touched = [], [], {}
     staged = []  # (item, entry, rechecked, steps that passed the local rules, error that stopped the item)
     _plan_tls.live = {}
     try:
-        _prefetch([it["change"] for it in items if not it["problems"]])
+        _prefetch([it["change"] for it in items if not it["problems"]], workers, touched=reuse)
         for it in items:
             entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
                      "problems": list(it["problems"])}
@@ -2028,10 +2125,12 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None):
                                           if p not in entry["problems"]]
                 except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
                     entry["problems"].append(f"invalid change: {ex}")
-            ok_steps, stop = [], None
+            ok_steps, stop, live = [], None, None
             if not entry["problems"]:
+                _plan_tls.reads = {} if reuse else None
                 try:
                     its = list(ops_for(it["change"], pool))
+                    live = _live_digest(it["change"], its) if reuse else None
                     if tick:
                         progress.totals(acct(), {it["id"]: len(its)})
                         progress.mark(acct(), it["id"], "checking")
@@ -2053,10 +2152,15 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None):
                     if not rechecked:
                         raise
                     stop = ex
-            staged.append((it, entry, rechecked, ok_steps, stop))
+                finally:
+                    _plan_tls.reads = None
+            staged.append((it, entry, rechecked, ok_steps, stop, live))
     finally:
         _plan_tls.live = None
-    jobs = [(it["id"], s) for it, _e, _r, ok_steps, _s in staged for s in ok_steps]
+        _plan_tls.reads = None
+    jobs = [(it["id"], s) for it, _e, _r, ok_steps, _s, _l in staged for s in ok_steps]
+    keys = [_reuse_key(s, live) if live and s.get("kind") in REUSE_KINDS else None
+            for _it, _e, _r, ok_steps, _s, live in staged for s in ok_steps]
     done = [0]
 
     def ticked(i, _res):
@@ -2068,9 +2172,15 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None):
                 on_check(done[0], len(jobs), jobs[i][1]["line"], jobs[i][0])
             except Exception:  # noqa: BLE001 - a progress report never stops a preview or push
                 pass
-    results = _pmap(_checked, [s for _i, s in jobs], workers, ticked)
+    reused = [checks == "reuse" and _reused(key) for key in keys]
+
+    def run_check(j):
+        return "" if reused[j] else _checked(jobs[j][1])
+    results = _pmap(run_check, range(len(jobs)), workers, ticked)
+    if checks == "store":
+        _remember([key for key, res in zip(keys, results) if key is not None and res == ""])
     k = 0
-    for it, entry, rechecked, ok_steps, stop in staged:
+    for it, entry, rechecked, ok_steps, stop, _live_h in staged:
         res, k = results[k:k + len(ok_steps)], k + len(ok_steps)
         for s, err in zip(ok_steps, res):
             if isinstance(err, BaseException):  # as before: the item stops at the step whose check broke
@@ -2092,12 +2202,33 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None):
         per_item.append(entry)
     steps.sort(key=lambda s: PHASE.get(s.get("phase"), 3))  # campaign -> ad set -> ad -> edits; stable within a phase
     return {"items": per_item, "steps": steps, "ok": bool(steps) and not any(e["problems"] for e in per_item),
-            "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item), "channel": "meta"}
+            "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item), "channel": "meta",
+            "checks_reused": sum(1 for r in reused if r)}
 
 
-def preview(enable_new=False, only=None, progress=None):
-    """progress(done, total, label, item_key, "checked") after each of Meta's checks (optional)."""
-    p = plan(only=only, enable_new=enable_new,
+def _live_digest(c, steps):
+    """Hash of the live state the item's steps were planned on (every object read for it, after reading each object its
+    steps touch), or None when that is not fully known: its checks are then never reused."""
+    want = _touches(c)
+    if want is None:
+        return None
+    for lvl, oid in want:
+        if (lvl, oid) not in _plan_tls.reads:
+            try:
+                _live(lvl, oid)
+            except MetaError:
+                return None
+    reads = _plan_tls.reads
+    for s in steps:
+        if s.get("kind") in ("update", "copy") and not any(k[1] == str(s.get("id")) for k in reads):
+            return None  # the object this step changes was not read live: check it
+    return _digest(sorted(reads.items()))
+
+
+def preview(enable_new=False, only=None, progress=None, workers=None):
+    """progress(done, total, label, item_key, "checked") after each of Meta's checks (optional). The steps that pass
+    are remembered for a push right after it (REUSE_CHECKS)."""
+    p = plan(only=only, enable_new=enable_new, workers=workers, checks="store",
              on_check=(lambda n, tot, line, key: _notify(progress, n, tot, line, key, "checked")) if progress else None)
     return {k: v for k, v in p.items() if k != "steps"}
 
@@ -2403,16 +2534,14 @@ def read_status(pairs):
     for level, oid in pairs:
         if level in STATUS_FIELDS and oid and str(oid) not in want.setdefault(level, []):
             want[level].append(str(oid))
+    jobs = [(level, ids[i:i + BATCH_IDS], STATUS_FIELDS[level]) for level, ids in want.items()
+            for i in range(0, len(ids), BATCH_IDS)]
     out = {}
-    for level, ids in want.items():
-        for i in range(0, len(ids), BATCH_IDS):
-            chunk = ids[i:i + BATCH_IDS]
-            try:
-                got = get("", ids=",".join(chunk), fields=STATUS_FIELDS[level]) or {}
-            except Exception:  # noqa: BLE001 - a failed read-back never fails a push
-                got = {}
-            for oid in chunk:
-                out[oid] = _status_row(level, oid, got.get(oid) if isinstance(got, dict) else None)
+    for (level, chunk, _f), got in zip(jobs, _batched_reads(jobs)):  # levels side by side
+        if not isinstance(got, dict):  # a failed read-back never fails a push
+            got = {}
+        for oid in chunk:
+            out[oid] = _status_row(level, oid, got.get(oid))
     return out
 
 
@@ -2562,6 +2691,7 @@ def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None
             res["items"] = _job_items(res["results"])
         return res
     finally:
+        forget_checks()  # a later push checks everything again (or reuses a newer preview)
         _progress.finish(a, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
 
 
@@ -2574,7 +2704,7 @@ def _notify(cb, *args):
 
 
 def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=None, progress_cb=None, refresh=True, workers=None):
-    p = plan(tick=True, only=only, enable_new=enable_new, workers=workers,
+    p = plan(tick=True, only=only, enable_new=enable_new, workers=workers, checks="reuse",
              on_check=lambda n, tot, line, key: _notify(progress_cb, n, tot, line, key, "checked"))
     for e in p["items"]:
         if e["problems"]:
@@ -2931,6 +3061,7 @@ def list_media():
 CHUNK_TRIES = 4  # tries per chunk of a resumable video upload (the first + 3 retries)
 CHUNK_BACKOFF = (2, 5, 15)  # seconds before each retry of a chunk
 CHUNK_TIMEOUT = 300  # seconds for one chunk to reach Meta
+CHUNK_READ_MAX = 8 * 1024 * 1024  # bytes read from disk at once; a larger chunk Meta asks for is streamed in pieces
 POLL_EVERY = 10  # seconds between checks while Meta processes a video
 _upload_locks = {}  # (ad account, media id) -> lock: one upload of a file at a time (push and Prepare for Meta)
 
@@ -2940,17 +3071,78 @@ def _upload_lock(a, media_id):
         return _upload_locks.setdefault((a, media_id), threading.Lock())
 
 
+class _FileSlice:
+    """Bytes start .. start+length of an open file, read on demand at most CHUNK_READ_MAX at a time (a chunk Meta asks
+    for that is too big to hold in memory is streamed from disk instead)."""
+
+    def __init__(self, f, start, length):
+        self.f, self.start, self.length, self.pos = f, int(start), int(length), 0
+
+    def __len__(self):
+        return self.length
+
+    def read(self, n=-1):
+        left = self.length - self.pos
+        n = left if n is None or n < 0 else min(n, left)
+        n = min(n, CHUNK_READ_MAX)
+        if n <= 0:
+            return b""
+        self.f.seek(self.start + self.pos)
+        b = self.f.read(n)
+        if not b:
+            raise OSError("the video file got shorter while it was uploading")
+        self.pos += len(b)
+        return b
+
+
+class _Body:
+    """A request body made of bytes and _FileSlice parts, read in pieces (http.client sends objects with read())."""
+
+    def __init__(self, parts):
+        self.parts = list(parts)
+
+    def __len__(self):
+        return sum(len(p) for p in self.parts)
+
+    def read(self, n=-1):
+        while self.parts:
+            p = self.parts[0]
+            if isinstance(p, (bytes, bytearray)):
+                if not p:
+                    self.parts.pop(0)
+                    continue
+                n2 = len(p) if n is None or n < 0 else n
+                out, rest = bytes(p[:n2]), p[n2:]
+                if rest:
+                    self.parts[0] = rest
+                else:
+                    self.parts.pop(0)
+                return out
+            b = p.read(n if n is not None and n >= 0 else CHUNK_READ_MAX)
+            if b:
+                return b
+            self.parts.pop(0)
+        return b""
+
+
 def _post_multipart(edge, params, field, filename, chunk, timeout=CHUNK_TIMEOUT):
     """multipart/form-data POST of one chunk of a file (the transfer phase of Meta's resumable advideos upload).
-    Only this chunk is in memory. Not retried here: _upload_video retries a chunk."""
+    chunk: bytes, or a _FileSlice streamed from disk (at most CHUNK_READ_MAX in memory). Not retried here:
+    _upload_video retries a chunk."""
     meta_api.pace(act())
     boundary = uuid.uuid4().hex
     head = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
                     for k, v in {**(params or {}), "access_token": meta_api.TOKEN}.items())
     head += (f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
              f'Content-Type: application/octet-stream\r\n\r\n').encode()
-    req = urllib.request.Request(f"{meta_api.API}/{edge}", data=head + chunk + f"\r\n--{boundary}--\r\n".encode(), method="POST",
-                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Accept": "application/json"})
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    hdrs = {"Content-Type": f"multipart/form-data; boundary={boundary}", "Accept": "application/json"}
+    if isinstance(chunk, (bytes, bytearray)):
+        data = head + bytes(chunk) + tail
+    else:
+        data = _Body([head, chunk, tail])
+        hdrs["Content-Length"] = str(len(data))
+    req = urllib.request.Request(f"{meta_api.API}/{edge}", data=data, method="POST", headers=hdrs)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read() or b"{}")
@@ -3007,7 +3199,8 @@ def _upload_video(path, name, report=None):
             tries = 0
             while True:
                 f.seek(start)
-                chunk = f.read(end - start)
+                # Meta says how many bytes it wants next; above CHUNK_READ_MAX they are streamed, never read at once
+                chunk = f.read(end - start) if end - start <= CHUNK_READ_MAX else _FileSlice(f, start, end - start)
                 try:
                     r = _post_multipart(edge, {"upload_phase": "transfer", "upload_session_id": sid, "start_offset": start},
                                         "video_file_chunk", path.name, chunk)
@@ -3094,6 +3287,8 @@ def upload_media(media_id, report=None):
                 if ex.transient or ex.rate_limited:
                     raise
                 ref, first = {}, None  # gone from the ad account's library: upload it again
+            if first and first.get("video_status") == "error":
+                ref, first = {}, None  # Meta could not process the saved upload: treat it as missing, upload it again
             if first and first.get("video_status") == "ready" and ref.get("image_url"):
                 return ref
         if not ref.get("video_id"):

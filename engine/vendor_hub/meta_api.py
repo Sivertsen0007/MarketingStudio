@@ -142,8 +142,8 @@ def usage():
 # (x-app-usage, x-ad-account-usage, x-business-use-case-usage: percent of the allowance used) slow it down early:
 # from PACE_SLOW the rate is divided by the factor in PACE_STEPS and bursts stop, and when Meta says how long until
 # access is regained (estimated_time_to_regain_access, minutes) the account waits that long once (at most PACE_HOLD_MAX s).
-PACE_RATE = 10.0
-PACE_BURST = 20
+PACE_RATE = 20.0
+PACE_BURST = 40
 PACE_STEPS = ((90, 10.0), (75, 4.0), (60, 2.0))  # (percent used at least, divide the rate by)
 PACE_SLOW = PACE_STEPS[-1][0]
 PACE_FRESH = 120     # usage older than this (seconds) no longer slows anything

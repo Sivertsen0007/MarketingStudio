@@ -313,8 +313,11 @@ def prepare_job(acct, body):
     try:
         meta.use(acct)
         media_id = meta.resolve_media(body.get("path"), body.get("media_id"))
-    except ValueError as ex:
+    except (ValueError, KeyError, TypeError) as ex:
         return 400, {"error": str(ex)}
+    except Exception as ex:  # noqa: BLE001 - e.g. an unreadable media index: an answer, never an escaped error
+        traceback.print_exc()
+        return 500, {"error": f"could not prepare the file: {ex}"}
 
     def run(report):
         meta.use(acct)  # Meta's account is per thread

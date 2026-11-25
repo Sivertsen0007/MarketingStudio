@@ -135,7 +135,8 @@ class FakeGraph:
     def __call__(self, method, path, params=None, validate=False, token=None):
         params = dict(params or {})
         if method == "GET":
-            kind = "GET ids" if path == "" else "GET edge" if path.endswith("/campaigns") else "GET one"
+            kind = ("GET status" if "effective_status" in str(params.get("fields")) else "GET ids") if path == "" \
+                else "GET edge" if path.endswith("/campaigns") else "GET one"
         elif method == "DELETE":
             kind = "DELETE"
         elif validate:
@@ -213,8 +214,9 @@ def _reset_meta_pacing():
         meta_api._usage_mono = 0.0
 
 
-def bench_meta(n, latency, workers=None, op="both"):
-    """Meta preview then push (refresh=False) of n mixed changes. workers=None: the default (meta_ads.WORKERS)."""
+def bench_meta(n, latency, workers=None, op="both", reuse=True):
+    """Meta preview then push (refresh=False) of n mixed changes. workers=None: the default (meta_ads.WORKERS).
+    reuse: the push may reuse the preview's checks (meta_ads.REUSE_CHECKS); False checks every step again."""
     out = {}
     for what in (("preview", "push") if op == "both" else (op,)):
         rec = Recorder(latency)
@@ -236,11 +238,12 @@ def bench_meta(n, latency, workers=None, op="both"):
                       mock.patch.object(meta, "act", lambda: ACT), mock.patch.object(meta, "_only", lambda only: items),
                       mock.patch.object(core, "draft", lambda a: {"items": items}),
                       mock.patch.object(core, "remove", lambda a, ids: None),
-                      mock.patch.object(meta, "refresh_account", lambda: None)):
+                      mock.patch.object(meta, "refresh_account", lambda: None),
+                      mock.patch.object(meta, "REUSE_CHECKS", bool(reuse))):
                 st.enter_context(p)
             t0 = time.monotonic()
             if what == "preview":
-                res = meta.plan(workers=workers)
+                res = meta.preview(workers=workers)
             else:
                 res = meta.push(accept_spend=True, refresh=False, workers=workers)
             wall = time.monotonic() - t0
@@ -248,6 +251,8 @@ def bench_meta(n, latency, workers=None, op="both"):
         out[what] = {"wall": wall, "ok": bool(res.get("ok")), "problems": bad[:3], "message": res.get("message"),
                      "calls": rec.counts(), "n_calls": len(rec.calls), "peak": rec.peak, "spans": rec.spans(t0),
                      "pace_wait": sum(waits), "pace_waits": sum(1 for w in waits if w > 0)}
+    if op == "both":
+        meta.forget_checks()
     return out
 
 
@@ -399,16 +404,22 @@ def bench_google(n, latency, op="both"):
 
 # ---------- run + report ----------
 
-def run(n, latency, baseline=True, workers=None):
-    """{"meta": {preview, push}, "meta_seq": {...} (workers=1, if baseline), "google": {...}} for n changes."""
+def run(n, latency, baseline=True, workers=None, no_reuse=False):
+    """{"meta": {preview, push}, "meta_noreuse": {...} (push checks everything again, if no_reuse), "meta_seq": {...}
+    (workers=1 and no reuse of checks, if baseline), "google": {...}} for n changes."""
     out = {"n": n, "latency": latency, "meta": bench_meta(n, latency, workers), "google": bench_google(n, latency)}
+    if no_reuse:
+        out["meta_noreuse"] = bench_meta(n, latency, workers, reuse=False)
     if baseline:
-        out["meta_seq"] = bench_meta(n, latency, workers=1)
+        out["meta_seq"] = bench_meta(n, latency, workers=1, reuse=False)
     return out
 
 
 def _calls_txt(calls):
     return ", ".join(f"{k} {v}" for k, v in sorted(calls.items()))
+
+
+RUNS = (("meta", "Meta"), ("meta_noreuse", "Meta, no reuse"), ("google", "Google"), ("meta_seq", "Meta, sequential"))
 
 
 def report(results, file=sys.stdout):
@@ -422,7 +433,7 @@ def report(results, file=sys.stdout):
     for r in results:
         n = r["n"]
         tgt = target_for(n)
-        for key, label in (("meta", "Meta"), ("google", "Google"), ("meta_seq", "Meta, sequential")):
+        for key, label in RUNS:
             if key not in r:
                 continue
             pv, pu = r[key]["preview"], r[key]["push"]
@@ -435,7 +446,7 @@ def report(results, file=sys.stdout):
                 missed.append((label, n, r[key]))
     p("\nCalls per type, peak calls in flight, Meta pacing wait (sum over threads), call-type time span [first start, last end]:")
     for r in results:
-        for key, label in (("meta", "Meta"), ("google", "Google"), ("meta_seq", "Meta, sequential")):
+        for key, label in RUNS:
             if key not in r:
                 continue
             for what in ("preview", "push"):
@@ -449,10 +460,10 @@ def report(results, file=sys.stdout):
             for what in ("preview", "push"):
                 y = x[what]
                 if y["wall"] > target_for(n):
-                    floor = y["n_calls"] / max(meta_api.PACE_RATE, 1e-9) if label == "Meta" else 0
+                    floor = y["n_calls"] / max(meta_api.PACE_RATE, 1e-9) if label.startswith("Meta") else 0
                     p(f"  {label} N={n} {what}: {y['wall']:.1f}s > {target_for(n):.0f}s. {y['n_calls']} calls, peak {y['peak']} "
                       f"in flight" + (f"; the pacing bucket alone needs about {max(0.0, floor - meta_api.PACE_BURST / meta_api.PACE_RATE):.1f}s "
-                                      f"for that many calls (pace wait summed over threads {y['pace_wait']:.1f}s)" if label == "Meta" else ""))
+                                      f"for that many calls (pace wait summed over threads {y['pace_wait']:.1f}s)" if label.startswith("Meta") else ""))
     return missed
 
 
@@ -461,12 +472,13 @@ def main(argv=None):
     ap.add_argument("--n", type=int, nargs="+", default=[20, 200])
     ap.add_argument("--latency", type=float, default=0.3)
     ap.add_argument("--no-baseline", action="store_true", help="skip the Meta workers=1 run (it is slow at N=200)")
+    ap.add_argument("--no-reuse", action="store_true", help="also run Meta with the push checking every step again")
     ap.add_argument("--json", help="also write the raw measurements to this file")
     a = ap.parse_args(argv)
     results = []
     for n in a.n:
         print(f"running N={n} ...", file=sys.stderr, flush=True)
-        results.append(run(n, a.latency, baseline=not a.no_baseline))
+        results.append(run(n, a.latency, baseline=not a.no_baseline, no_reuse=a.no_reuse))
     missed = report(results)
     if a.json:
         Path(a.json).write_text(json.dumps(results, indent=1, default=str))

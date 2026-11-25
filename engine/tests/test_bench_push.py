@@ -28,10 +28,18 @@ class SmallBench(unittest.TestCase):
                     self.assertTrue(x["ok"], (x["problems"], x["message"]))
 
     def test_meta_reads_are_batched(self):
-        for what in ("preview", "push"):
-            c = self.r["meta"][what]["calls"]
-            self.assertLessEqual(c.get("GET ids", 0) + c.get("GET one", 0) + c.get("GET edge", 0), 5, c)
-            self.assertEqual(c.get("CHECK"), 22, c)  # one per step; a copied ad makes two checks
+        for ch in ("meta", "meta_seq"):
+            for what in ("preview", "push"):
+                c = self.r[ch][what]["calls"]
+                with self.subTest(ch=ch, what=what):
+                    # the plan's live reads: one batched GET per level (campaign, ad set, ad)
+                    self.assertLessEqual(c.get("GET ids", 0) + c.get("GET one", 0) + c.get("GET edge", 0), 5, c)
+                    # after a push, the read-back: one batched GET per level of what was made or changed, never per item
+                    self.assertEqual(c.get("GET status", 0), 3 if what == "push" else 0, c)
+        self.assertEqual(self.r["meta"]["preview"]["calls"].get("CHECK"), 22)  # one per step; a copied ad makes two checks
+        self.assertEqual(self.r["meta_seq"]["push"]["calls"].get("CHECK"), 22)  # reuse off: the push checks every step again
+        # the push right after an unchanged preview reuses its passes (same account, params and live state, < 120 s)
+        self.assertNotIn("CHECK", self.r["meta"]["push"]["calls"])
         push = self.r["meta"]["push"]["calls"]
         self.assertEqual(push.get("CREATE", 0) + push.get("UPDATE", 0), 25, push)
         self.assertNotIn("CREATE", self.r["meta"]["preview"]["calls"])

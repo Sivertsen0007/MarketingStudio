@@ -115,21 +115,28 @@ def accounts():
 MetaError = meta_api.MetaError
 
 
+# Every call waits for a turn on the ad account's rate limiter (meta_api.pace: token bucket that slows down as
+# Meta's usage headers climb), so calls run side by side (WORKERS) never outrun what Meta allows.
+
 def get(path, **params):
+    meta_api.pace(act())
     return meta_api.get(path, **params)
 
 
 def post(path, params, validate=False, retry_rate=True):
     """POST with one patient retry when Meta rate-limits (a refused call changed nothing)."""
+    meta_api.pace(act())
     return meta_api.post(path, params, validate=validate, retry_rate=retry_rate)
 
 
 def get_all(path, **params):
+    meta_api.pace(act())
     return meta_api.get_all(path, **params)
 
 
 def delete(path):
     """DELETE one object (used only for audiences: undo of one Studio made, or a delete the user pushed)."""
+    meta_api.pace(act())
     return meta_api.call("DELETE", path)
 
 
@@ -1279,11 +1286,124 @@ def _overlay(kind, out, campaign_id, adset_id):
 
 # ---------- live: plan (validate_only) / push / undo ----------
 
+# Speed (preview / push of hundreds of changes), safety unchanged:
+# - live reads: one GET /?ids=a,b,c per level (campaign / ad set / ad, the ad's creative read inline with it) for the
+#   whole plan, BATCH_IDS ids at a time, cached for that one plan only. Push still plans from scratch, so every item is
+#   read live again right before it is sent. An id the batched read can't return falls back to its own GET (so a deleted
+#   object still gets its own error, on its own item).
+# - Meta's validate_only checks run WORKERS at a time on a thread pool. A pool rather than Graph batch requests
+#   (POST / batch=[...]): every check stays its own call with its own answer and error, execution_options=validate_only
+#   is passed exactly as before (not proven inside a batch), and a batch counts each request against the rate limit anyway.
+# - push: phases stay in order (audiences -> campaigns -> ad sets -> ads -> edits -> tests); inside a phase the
+#   independent writes run WORKERS at a time. Steps on the same Meta object (e.g. two budget edits on one ad set) and
+#   media uploads stay in order, one at a time. A refusal stops new writes, waits for those already sent and rolls
+#   back everything made, as before.
+WORKERS = 5
+BATCH_IDS = 50
+LIVE_FIELDS = {"campaign": "name,status,objective,daily_budget,lifetime_budget",
+               "adset": "name,status,daily_budget,lifetime_budget,end_time,targeting,campaign_id",
+               "ad": "name,status,adset_id,creative{id,object_story_spec,asset_feed_spec,object_story_id,url_tags,degrees_of_freedom_spec}"}
+EDIT_TYPES = ("meta_status", "meta_budget", "meta_end", "meta_rename", "meta_targeting", "meta_placements", "meta_copy",
+              "meta_carousel_copy", "meta_feed_copy")
+_plan_tls = threading.local()  # .live: {(level, id): live object} for the plan running on this thread, else None
+
+
+def _copy(o):
+    return json.loads(json.dumps(o))
+
+
 def _live(level, oid):
-    fields = {"campaign": "name,status,objective,daily_budget,lifetime_budget",
-              "adset": "name,status,daily_budget,lifetime_budget,end_time,targeting,campaign_id",
-              "ad": "name,status,adset_id,creative{id,object_story_spec,asset_feed_spec,object_story_id,url_tags,degrees_of_freedom_spec}"}[level]
-    return get(str(oid), fields=fields)
+    cache = getattr(_plan_tls, "live", None)
+    key = (level, str(oid))
+    if cache is None:
+        return get(str(oid), fields=LIVE_FIELDS[level])
+    if key not in cache:
+        cache[key] = get(str(oid), fields=LIVE_FIELDS[level])
+    return _copy(cache[key])
+
+
+def _live_reads(c):
+    """(level, id) pairs ops_for(c) reads live."""
+    t = c.get("type")
+    if t == "meta_new_adset" and c.get("campaign_id") and not _ref(c["campaign_id"]):
+        return [("campaign", str(c["campaign_id"]))]
+    if t == "meta_new_ad" and c.get("from_ad"):
+        return [("ad", str(c["from_ad"]))]
+    if t in EDIT_TYPES and c.get("level") in LIVE_FIELDS and c.get("id") is not None:
+        return [(c["level"], str(c["id"]))]
+    return []
+
+
+def _prefetch(changes):
+    """Fill this plan's live cache: one GET /?ids=... per level and BATCH_IDS ids. Returns the number of reads made."""
+    cache = _plan_tls.live
+    want = {}
+    for c in changes:
+        for lvl, oid in _live_reads(c):
+            if (lvl, oid) not in cache and oid not in want.setdefault(lvl, []):
+                want[lvl].append(oid)
+    n = 0
+    for lvl, ids in want.items():
+        for i in range(0, len(ids), BATCH_IDS):
+            chunk = ids[i:i + BATCH_IDS]
+            if len(chunk) < 2:
+                continue  # one id: its own GET costs the same, and keeps its own error
+            n += 1
+            try:
+                got = get("", ids=",".join(chunk), fields=LIVE_FIELDS[lvl])
+            except MetaError:
+                continue  # Meta refuses the whole read when one id is gone: each item then reads on its own
+            for oid in chunk:
+                if isinstance((got or {}).get(oid), dict):
+                    cache[(lvl, oid)] = got[oid]
+    return n
+
+
+def _live_campaigns():
+    """Active and paused campaigns (stand-ins for checking new ad sets in new campaigns), read once per plan."""
+    cache = getattr(_plan_tls, "live", None)
+    key = ("__campaigns", act())
+    if cache is not None and key in cache:
+        return _copy(cache[key])
+    got = get_all(f"{act()}/campaigns", fields="id,name,objective,daily_budget,lifetime_budget,special_ad_categories",
+                  effective_status=["ACTIVE", "PAUSED"])
+    if cache is not None:
+        cache[key] = got
+    return _copy(got)
+
+
+def _in_account(fn):
+    """fn for a worker thread: same ad account as the calling thread (use() is per thread)."""
+    a = getattr(_cur, "act", None)
+
+    def run(*args):
+        if a:
+            _cur.act = a
+        return fn(*args)
+    return run
+
+
+def _pmap(fn, seq, workers=None, on_done=None):
+    """[fn(x) for x in seq], `workers` at a time (1 = in order on this thread). on_done(i, result) runs on the calling
+    thread as each one finishes. fn must not raise (return the exception instead)."""
+    seq = list(seq)
+    n = WORKERS if workers is None else max(1, int(workers))
+    out = [None] * len(seq)
+    if n == 1 or len(seq) < 2:
+        for i, x in enumerate(seq):
+            out[i] = fn(x)
+            if on_done:
+                on_done(i, out[i])
+        return out
+    import concurrent.futures as cf  # noqa: PLC0415
+    run = _in_account(fn)
+    with cf.ThreadPoolExecutor(max_workers=min(n, len(seq))) as ex:
+        futs = {ex.submit(run, x): i for i, x in enumerate(seq)}
+        for f in cf.as_completed(futs):
+            out[futs[f]] = f.result()
+            if on_done:
+                on_done(futs[f], out[futs[f]])
+    return out
 
 
 def _money_txt(v):
@@ -1634,8 +1754,7 @@ def ops_for(c, items=None):
                 "line": line, "spend": spend}
         if cref:  # Meta can only check an ad set against a campaign that exists: borrow a similar one for the check
             cats = sorted(items[cref]["change"].get("special_ad_categories") or [])
-            live_camps = get_all(f"{act()}/campaigns", fields="id,name,objective,daily_budget,lifetime_budget,special_ad_categories",
-                                 effective_status=["ACTIVE", "PAUSED"])
+            live_camps = _live_campaigns()
             twin = next((x for x in live_camps if x.get("objective") == obj and sorted(x.get("special_ad_categories") or []) == cats
                          and bool(x.get("daily_budget") or x.get("lifetime_budget")) == camp["cbo"]), None)
             if twin:
@@ -1812,31 +1931,46 @@ def ops_for(c, items=None):
     raise ValueError(f"'{t}' can't be pushed live")
 
 
+CHECK_BUSY_WAIT = 20  # seconds the whole ad account pauses when Meta answers a check with "too many calls"
+BUSY = "Meta is busy and could not check this change; try again in a few minutes"
+
+
+def _validate(s):
+    """Meta's own validate_only for one step. Returns an error string or '' (MetaError raised)."""
+    if s["kind"] in ("study", "study_end"):  # reads only: /ad_studies has no validate_only (meta_tests.py)
+        import meta_tests  # noqa: PLC0415
+        return meta_tests.check_step(s)
+    if s["kind"] in meta_audiences.STEP_KINDS:  # [audiences] no validate_only POST for audiences (not proven on Meta)
+        return meta_audiences.check_step(s)
+    if s["kind"] == "update":
+        post(s["id"], s["params"], validate=True, retry_rate=False)
+    elif s["kind"] == "create":
+        params = s.get("check_params") if s.get("refs") else s["params"]
+        if params:
+            post(f"{act()}/{s['edge']}", params, validate=True, retry_rate=False)
+    elif s["kind"] in ("copy", "new_ad"):
+        if s.get("check_creative", True):
+            post(f"{act()}/adcreatives", s["creative"], validate=True, retry_rate=False)
+        if s["kind"] == "new_ad" and s.get("adset") and s.get("source_creative"):
+            post(f"{act()}/ads", {"name": s["name"], "adset_id": s["adset"], "status": "PAUSED",
+                                "creative": {"creative_id": s["source_creative"]}}, validate=True, retry_rate=False)
+    return ""
+
+
 def _check_step(s):
-    """Meta's own validate_only for one step. Returns an error string or ''."""
-    try:
-        if s["kind"] in ("study", "study_end"):  # reads only: /ad_studies has no validate_only (meta_tests.py)
-            import meta_tests  # noqa: PLC0415
-            return meta_tests.check_step(s)
-        if s["kind"] in meta_audiences.STEP_KINDS:  # [audiences] no validate_only POST for audiences (not proven on Meta)
-            return meta_audiences.check_step(s)
-        if s["kind"] == "update":
-            post(s["id"], s["params"], validate=True, retry_rate=False)
-        elif s["kind"] == "create":
-            params = s.get("check_params") if s.get("refs") else s["params"]
-            if params:
-                post(f"{act()}/{s['edge']}", params, validate=True, retry_rate=False)
-        elif s["kind"] in ("copy", "new_ad"):
-            if s.get("check_creative", True):
-                post(f"{act()}/adcreatives", s["creative"], validate=True, retry_rate=False)
-            if s["kind"] == "new_ad" and s.get("adset") and s.get("source_creative"):
-                post(f"{act()}/ads", {"name": s["name"], "adset_id": s["adset"], "status": "PAUSED",
-                                    "creative": {"creative_id": s["source_creative"]}}, validate=True, retry_rate=False)
-        return ""
-    except MetaError as ex:
-        if ex.rate_limited:
-            return ""  # Meta allows few budget calls per ad set; a busy answer is not a no - the push waits and retries
-        return f"Meta: {ex}"
+    """Meta's own validate_only for one step. Returns an error string or ''. A rate-limited check pauses the whole
+    ad account (shared hold) and is tried once more; still rate-limited, it is a problem (BUSY): a push never sends
+    a change Meta did not check."""
+    for attempt in (1, 2):
+        try:
+            return _validate(s)
+        except MetaError as ex:
+            if not ex.rate_limited:
+                return f"Meta: {ex}"
+            if attempt == 2:
+                return BUSY
+            meta_api.limiter(str(act() or "_")).hold(CHECK_BUSY_WAIT)
+    return BUSY
 
 
 def _only(only):
@@ -1854,65 +1988,117 @@ def _activate(s):
     s["spend"] = f'new ad "{s["name"]}" is created Active and starts delivering once Meta approves it'
 
 
-def plan(tick=False, only=None, enable_new=False):
+def _refusal(entry, ex, rechecked):
+    """A change that could not be planned: a problem on its item (as before), or a crash for an unexpected error."""
+    if isinstance(ex, (MetaError, ValueError, KeyError)):
+        entry["problems"].append(str(ex))
+    elif rechecked:
+        entry["problems"].append(f"invalid change: {ex}")
+    else:
+        raise ex
+
+
+def _checked(s):
+    """_check_step for the pool: never raises, returns the exception instead."""
+    try:
+        return _check_step(s)
+    except Exception as ex:  # noqa: BLE001 - handed back to plan(), which treats it as before
+        return ex
+
+
+def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None):
+    """Every draft item -> steps, each checked by Meta (validate_only). Live values are read for this plan only:
+    batched per level, then cached until the plan returns. on_check(done, total, line, item id) after each check.
+    workers: checks at a time (default WORKERS; 1 = one after the other, as before)."""
     items = _only(only)
     pool = {it["id"]: it for it in items}
     steps, per_item, touched = [], [], {}
-    for it in items:
-        entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [], "problems": list(it["problems"])}
-        rechecked = it["change"].get("type") in RECHECK
-        if rechecked:  # [audiences] never trust stored problems: a synced or merged draft never went through add()
-            try:
-                c0 = _normalise(it["change"])
-                entry["problems"] += [p for p in check(c0, load(), pool)[0] + meta_audiences.refusals([c0], load())
-                                      if p not in entry["problems"]]
-            except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
-                entry["problems"].append(f"invalid change: {ex}")
-        if not entry["problems"]:
-            try:
-                its = list(ops_for(it["change"], pool))
-                if tick:
-                    progress.totals(acct(), {it["id"]: len(its)})
-                    progress.mark(acct(), it["id"], "checking")
-                for s in its:
-                    if enable_new and s.get("kind") == "new_ad":
-                        _activate(s)
-                    key = (s.get("id"), tuple(sorted(s.get("params", {}))))
-                    if s["kind"] == "update" and key in touched:
-                        raise ValueError(f"the same field is changed twice in this draft (also in: {touched[key]})")
-                    if s["kind"] == "update":
-                        touched[key] = it["summary"]
-                    for ref in list((s.get("refs") or {}).values()) + ([s["adset_ref"]] if s.get("adset_ref") else []) + list(s.get("needs") or []):
-                        if ref not in pool:
-                            raise ValueError("it belongs to a new campaign / ad set that is no longer in the draft (or not in this push)")
-                    err = _check_step(s)
-                    if err:
-                        entry["problems"].append(err)
+    staged = []  # (item, entry, rechecked, steps that passed the local rules, error that stopped the item)
+    _plan_tls.live = {}
+    try:
+        _prefetch([it["change"] for it in items if not it["problems"]])
+        for it in items:
+            entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
+                     "problems": list(it["problems"])}
+            rechecked = it["change"].get("type") in RECHECK
+            if rechecked:  # [audiences] never trust stored problems: a synced or merged draft never went through add()
+                try:
+                    c0 = _normalise(it["change"])
+                    entry["problems"] += [p for p in check(c0, load(), pool)[0] + meta_audiences.refusals([c0], load())
+                                          if p not in entry["problems"]]
+                except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
+                    entry["problems"].append(f"invalid change: {ex}")
+            ok_steps, stop = [], None
+            if not entry["problems"]:
+                try:
+                    its = list(ops_for(it["change"], pool))
                     if tick:
-                        progress.checked(acct(), it["id"])
-                    s["item"] = it["id"]
-                    steps.append(s)
-                    entry["lines"].append(s["line"])
-                    if s.get("spend"):
-                        entry["spend"].append(s["spend"])
-                    if s.get("undo_spend"):  # its undo, or a rollback after a failed push, can widen targeting again
-                        entry["spend"].append(f"undo or rollback: {s['undo_spend']}")
-                    if s.get("permanent"):
-                        entry["permanent"].append(s["line"])
-            except (MetaError, ValueError, KeyError) as ex:
-                entry["problems"].append(str(ex))
-            except Exception as ex:  # noqa: BLE001
-                if not rechecked:
-                    raise
-                entry["problems"].append(f"invalid change: {ex}")
+                        progress.totals(acct(), {it["id"]: len(its)})
+                        progress.mark(acct(), it["id"], "checking")
+                    for s in its:
+                        if enable_new and s.get("kind") == "new_ad":
+                            _activate(s)
+                        key = (s.get("id"), tuple(sorted(s.get("params", {}))))
+                        if s["kind"] == "update" and key in touched:
+                            raise ValueError(f"the same field is changed twice in this draft (also in: {touched[key]})")
+                        if s["kind"] == "update":
+                            touched[key] = it["summary"]
+                        for ref in list((s.get("refs") or {}).values()) + ([s["adset_ref"]] if s.get("adset_ref") else []) + list(s.get("needs") or []):
+                            if ref not in pool:
+                                raise ValueError("it belongs to a new campaign / ad set that is no longer in the draft (or not in this push)")
+                        ok_steps.append(s)
+                except (MetaError, ValueError, KeyError) as ex:
+                    stop = ex
+                except Exception as ex:  # noqa: BLE001
+                    if not rechecked:
+                        raise
+                    stop = ex
+            staged.append((it, entry, rechecked, ok_steps, stop))
+    finally:
+        _plan_tls.live = None
+    jobs = [(it["id"], s) for it, _e, _r, ok_steps, _s in staged for s in ok_steps]
+    done = [0]
+
+    def ticked(i, _res):
+        done[0] += 1
+        if tick:
+            progress.checked(acct(), jobs[i][0])
+        if on_check:
+            try:
+                on_check(done[0], len(jobs), jobs[i][1]["line"], jobs[i][0])
+            except Exception:  # noqa: BLE001 - a progress report never stops a preview or push
+                pass
+    results = _pmap(_checked, [s for _i, s in jobs], workers, ticked)
+    k = 0
+    for it, entry, rechecked, ok_steps, stop in staged:
+        res, k = results[k:k + len(ok_steps)], k + len(ok_steps)
+        for s, err in zip(ok_steps, res):
+            if isinstance(err, BaseException):  # as before: the item stops at the step whose check broke
+                stop = err
+                break
+            if err:
+                entry["problems"].append(err)
+            s["item"] = it["id"]
+            steps.append(s)
+            entry["lines"].append(s["line"])
+            if s.get("spend"):
+                entry["spend"].append(s["spend"])
+            if s.get("undo_spend"):  # its undo, or a rollback after a failed push, can widen targeting again
+                entry["spend"].append(f"undo or rollback: {s['undo_spend']}")
+            if s.get("permanent"):
+                entry["permanent"].append(s["line"])
+        if stop is not None:
+            _refusal(entry, stop, rechecked)
         per_item.append(entry)
     steps.sort(key=lambda s: PHASE.get(s.get("phase"), 3))  # campaign -> ad set -> ad -> edits; stable within a phase
     return {"items": per_item, "steps": steps, "ok": bool(steps) and not any(e["problems"] for e in per_item),
             "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item), "channel": "meta"}
 
 
-def preview(enable_new=False, only=None):
-    p = plan(only=only, enable_new=enable_new)
+def preview(enable_new=False, only=None, progress=None):
+    """progress(done, total, label, item_key, "checked") after each of Meta's checks (optional)."""
+    p = plan(only=only, enable_new=enable_new,
+             on_check=(lambda n, tot, line, key: _notify(progress, n, tot, line, key, "checked")) if progress else None)
     return {k: v for k, v in p.items() if k != "steps"}
 
 
@@ -2030,50 +2216,196 @@ def _reverse(done, tick=None):
     return errors
 
 
-def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None):
+PARALLEL_KINDS = ("create", "new_ad", "update", "copy")  # other steps (tests, audiences) keep one lane per phase
+
+
+def _lanes(phase_steps):
+    """[(index, step)] of one phase -> lanes that may run side by side; each lane runs in order. Steps on the same
+    Meta object share a lane (so budget edits on one ad set stay one after the other), and so do all media uploads
+    (they share the local media index)."""
+    lanes = collections.OrderedDict()
+    for i, s in phase_steps:
+        if s.get("kind") not in PARALLEL_KINDS:
+            key = "serial"
+        elif s.get("media_id") or s.get("card_media"):
+            key = "media"
+        elif s.get("kind") in ("update", "copy"):
+            key = ("object", str(s.get("id")))
+        else:
+            key = ("step", i)
+        lanes.setdefault(key, []).append((i, s))
+    return list(lanes.values())
+
+
+def _execute(steps, ctx, workers=None, on_step=None):
+    """Apply the (phase-sorted) steps: phases in order, lanes of one phase side by side (workers at a time, 1 = one
+    step at a time as before). A refusal stops new steps; steps already sent finish. on_step(index, record or None,
+    error or None) may run on a worker thread. Returns ({index: record}, {index: refusal}, [unexpected exceptions]).
+    Refusals are MetaError, KeyError, ValueError, OSError. Either kind stops the push once its phase has stopped."""
+    recs, fails, odd = {}, {}, []
+    lock = threading.Lock()
+    stop = threading.Event()
+
+    def lane(steps_):
+        for i, s in steps_:
+            if stop.is_set():
+                return None
+            if s.get("media_id") or s.get("card_media"):
+                progress.phase(acct(), "sending", "Uploading to Meta. A video can take several minutes while Meta processes it")
+            try:
+                rec_ = _do(s, ctx)
+                rec_["item"] = s["item"]
+            except (MetaError, KeyError, ValueError, OSError) as ex:
+                with lock:
+                    fails[i] = ex
+                stop.set()
+                if on_step:
+                    on_step(i, None, ex)
+                return None
+            except Exception as ex:  # noqa: BLE001 - raised after the phase, as before (nothing is rolled back)
+                with lock:
+                    odd.append(ex)
+                stop.set()
+                return None
+            with lock:
+                recs[i] = rec_
+            if on_step:
+                on_step(i, rec_, None)
+        return None
+    groups = collections.OrderedDict()
+    for i, s in enumerate(steps):
+        groups.setdefault(PHASE.get(s.get("phase"), 3), []).append((i, s))
+    one = (WORKERS if workers is None else int(workers)) <= 1
+    for rank in sorted(groups):
+        _pmap(lane, [groups[rank]] if one else _lanes(groups[rank]), workers)
+        if stop.is_set():
+            break
+    return recs, fails, odd
+
+
+def _ids(rec):
+    """Meta ids a push record made or changed: campaign_id / adset_id / ad_id / creative_id / study_id ..., object_id."""
+    out = {}
+    if rec.get("created"):
+        out[f'{rec["created"]}_id'] = rec["id"]
+    elif rec.get("id") is not None:
+        out["object_id"] = rec["id"]
+    if rec.get("created_ad"):
+        out["ad_id"] = rec["created_ad"]
+    if rec.get("created_creative"):
+        out["creative_id"] = rec["created_creative"]
+    return out
+
+
+def _results(entries, kept=(), back=(), failed=None, why=""):
+    """Per draft item: {key, label, status: ok|failed|skipped, ids, error, rolled_back}.
+    failed: {item id: error}. why: the reason for items that were not sent."""
+    failed = failed or {}
+    live, reversed_ = collections.defaultdict(dict), set()
+    for r in kept:
+        live[r.get("item")].update(_ids(r))
+    for r in back:
+        reversed_.add(r.get("item"))
+    out = []
+    for e in entries:
+        k = e["id"]
+        if e.get("problems"):
+            st, err = "failed", "; ".join(e["problems"])
+        elif k in failed:
+            st, err = "failed", failed[k]
+        elif k in live and k not in reversed_:
+            st, err = "ok", None
+        else:
+            st, err = "skipped", ("reversed: another change in this push was refused" if k in reversed_ else why or "not sent")
+        out.append({"key": k, "label": e.get("summary", ""), "status": st, "ids": dict(live.get(k, {})) if st == "ok" else {},
+                    "error": err, "rolled_back": k in reversed_})
+    return out
+
+
+_progress = progress  # the progress module (push's `progress` argument is the caller's callback)
+ITEM_STATUS = {"ok": "done", "failed": "error"}  # results status -> items status (background jobs, jobs.py)
+
+
+def _job_items(results):
+    """results -> the background-job shape: {key, label, status: done|error|reversed|skipped, ids, error}."""
+    return [{"key": r["key"], "label": r["label"], "ids": r["ids"], "error": r["error"],
+             "status": ITEM_STATUS.get(r["status"]) or ("reversed" if r.get("rolled_back") else "skipped")} for r in results]
+
+
+def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None, progress=None, refresh=True, workers=None,
+         progress_cb=None):
+    """Push the draft live. progress(done, total, label, item_key, status) is called per step: status "checked" while
+    Meta checks (done/total over steps), then "ok" / "failed" while sending (done/total over steps), then "reversed" /
+    "not_reversed" for each rollback. progress_cb: deprecated name for progress. refresh=False skips the trailing
+    refresh_account() (the caller runs it later). workers: Meta calls at a time (default WORKERS; 1 = strictly one
+    after the other). Returns the same keys as before plus "refreshed", and the per-item list twice:
+    "results" ({key, label, status: ok|failed|skipped, ids, error, rolled_back}) and "items" (same, status
+    done|error|reversed|skipped, for the background-job layer)."""
+    cb = progress or progress_cb
     a = acct()
-    progress.start(a, "push", [(i["id"], i["summary"], 1) for i in _only(only)], "checking", "Meta is checking each change")
+    _progress.start(a, "push", [(i["id"], i["summary"], 1) for i in _only(only)], "checking", "Meta is checking each change")
     res = None
     try:
-        res = _push(enable_new, accept_spend, accept_permanent, only)
+        res = _push(enable_new, accept_spend, accept_permanent, only, cb, refresh, workers)
+        if "results" in res:
+            res["items"] = _job_items(res["results"])
         return res
     finally:
-        progress.finish(a, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
+        _progress.finish(a, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
 
 
-def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=None):
-    p = plan(tick=True, only=only, enable_new=enable_new)
+def _notify(cb, *args):
+    if cb:
+        try:
+            cb(*args)
+        except Exception:  # noqa: BLE001 - a progress report never stops a push
+            pass
+
+
+def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=None, progress_cb=None, refresh=True, workers=None):
+    p = plan(tick=True, only=only, enable_new=enable_new, workers=workers,
+             on_check=lambda n, tot, line, key: _notify(progress_cb, n, tot, line, key, "checked"))
     for e in p["items"]:
         if e["problems"]:
             progress.mark(acct(), e["id"], "failed")
     pub = {k: v for k, v in p.items() if k != "steps"}
-    if not p["ok"]:
-        return {"ok": False, "message": "Not pushed - fix the problems in the preview first.", "preview": pub}
-    if p["spend"] and not accept_spend:
-        return {"ok": False, "message": "Not pushed - this push can raise spend; tick the box to accept.", "preview": pub}
-    if p["permanent"] and not accept_permanent:
-        return {"ok": False, "message": "Not pushed - this push has changes that can't be undone (tests); tick the box to accept.",
-                "preview": pub}
-    done, error, ctx = [], None, {}
-    progress.phase(acct(), "sending", "Sending to Meta, one change at a time")
-    for s in p["steps"]:
-        if s.get("media_id") or s.get("card_media"):
-            progress.phase(acct(), "sending", "Uploading to Meta. A video can take several minutes while Meta processes it")
-        try:
-            rec_ = _do(s, ctx)
-            rec_["item"] = s["item"]
-            done.append(rec_)
+    for why, cond in (("Not pushed - fix the problems in the preview first.", not p["ok"]),
+                      ("Not pushed - this push can raise spend; tick the box to accept.", p["spend"] and not accept_spend),
+                      ("Not pushed - this push has changes that can't be undone (tests); tick the box to accept.",
+                       p["permanent"] and not accept_permanent)):
+        if cond:
+            return {"ok": False, "message": why, "preview": pub, "results": _results(p["items"], why=why)}
+    steps, ctx = p["steps"], {}
+    progress.phase(acct(), "sending", "Sending to Meta" + (", one change at a time" if workers == 1 else ""))
+    sent = [0]
+    lock = threading.Lock()
+
+    def on_step(i, rec_, ex):
+        s = steps[i]
+        with lock:
+            sent[0] += 1
+            n = sent[0]
+        if ex is None:
             progress.sent(acct(), s["item"])
-        except (MetaError, KeyError, ValueError, OSError) as ex:
-            error = f"{s['line']}: {ex}"
+        else:
             progress.mark(acct(), s["item"], "failed")
-            break
+        _notify(progress_cb, n, len(steps), s["line"], s["item"], "ok" if ex is None else "failed")
+    recs, fails, odd = _execute(steps, ctx, workers, on_step)
+    if odd and not fails:
+        raise odd[0]  # an unexpected error alone: raised as before (nothing rolled back)
+    done = [recs[i] for i in sorted(recs)]  # step order, as if sent one at a time
+    first = min(fails) if fails else None
+    error = f"{steps[first]['line']}: {fails[first]}" if fails else None
     stamp = dt.datetime.now()
-    items = [i for i in core.draft(acct())["items"] if i["id"] in {s["item"] for s in p["steps"]}]
+    items = [i for i in core.draft(acct())["items"] if i["id"] in {s["item"] for s in steps}]
     kept, back = _keep(done) if error else (done, [])
     if error and back:
         progress.phase(acct(), "reversing", "Meta refused a change: reversing the ones already made")
-    rolled = _reverse(back, lambda r, ok: progress.mark(acct(), r.get("item"), "reversed")) if error else []
+
+    def on_reverse(r, ok):
+        progress.mark(acct(), r.get("item"), "reversed")
+        _notify(progress_cb, sent[0], len(steps), r["line"], r.get("item"), "reversed" if ok else "not_reversed")
+    rolled = _reverse(back, on_reverse) if error else []
     kept_items = {r.get("item") for r in kept}
     rec = {"id": f"{stamp:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4]}", "ts": stamp.isoformat(timespec="seconds"), "ok": not error,
            "partial": bool(error and kept), "items": [i for i in items if i["id"] in kept_items] if error else items,
@@ -2084,10 +2416,16 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
         core.remove(acct(), [i["id"] for i in items])
     elif kept:  # what is live now is no longer a draft (pushing it again would make it twice)
         core.remove(acct(), [i for i in kept_items if i])
-    try:
-        refresh_account()  # only this ad account
-    except MetaError:
-        pass
+    refreshed = False
+    if refresh:
+        try:
+            refresh_account()  # only this ad account
+            refreshed = True
+        except MetaError:
+            pass
+    if odd:  # a refusal and an unexpected error in one phase: rolled back and logged above, now raised
+        raise odd[0]
+    results = _results(p["items"], kept, back, {steps[i]["item"]: f"{steps[i]['line']}: {ex}" for i, ex in fails.items()})
     uploaded = ctx.get("__uploaded")
     lib = " Uploaded images and videos stay in the ad account's media library (also after an undo)." if uploaded else ""
     if error and kept:
@@ -2096,14 +2434,16 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
         if back:
             msg += f" Reversed: {len(back) - len(rolled)} of {len(back)} other change(s)" + \
                 (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + "."
-        return {"ok": False, "partial": True, "push_id": rec["id"], "kept": len(kept), "message": msg + lib, "errors": None}
+        return {"ok": False, "partial": True, "push_id": rec["id"], "kept": len(kept), "message": msg + lib, "errors": None,
+                "results": results, "refreshed": refreshed}
     if error:
         msg = (f"Meta refused a change, so nothing was kept: {error}" if not rolled
                else f"Meta refused a change: {error}. Not everything made before it could be removed")
         if done:
             msg += f" ({len(done) - len(rolled)} change(s) already made were reversed" + (f"; these could not be reversed: {'; '.join(rolled)}" if rolled else "") + ")"
-        return {"ok": False, "push_id": rec["id"], "message": msg + lib, "errors": None}
-    return {"ok": True, "push_id": rec["id"], "applied": len(done), "message": f"Live on Meta: {len(done)} change(s).{lib}", "errors": None}
+        return {"ok": False, "push_id": rec["id"], "message": msg + lib, "errors": None, "results": results, "refreshed": refreshed}
+    return {"ok": True, "push_id": rec["id"], "applied": len(done), "message": f"Live on Meta: {len(done)} change(s).{lib}", "errors": None,
+            "results": results, "refreshed": refreshed}
 
 
 def history(limit=20):

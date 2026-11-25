@@ -10,6 +10,7 @@ Bump GRAPH_VERSION here and every user follows.
     meta_api.usage()          # latest rate-usage headers (incl. X-FB-Ads-Insights-Throttle)
     meta_api.get_once(path)   # one GET without retries (callers with their own back-off)
     meta_api.debug_token()    # token type, validity, expiry, scopes (never the token itself)
+    meta_api.pace("act_123")  # wait for a turn on that ad account's rate limiter (token bucket, usage-aware)
 
 Token: META_ACCESS_TOKEN from appconfig (Keychain, or the environment). Never print or log it.
 
@@ -79,6 +80,8 @@ appconfig.on_change(_refresh)
 
 _usage = {}
 _usage_lock = threading.Lock()
+_usage_seq = 0          # bumped on every usage update (so one "regain access in N minutes" is waited out only once)
+_usage_mono = 0.0       # time.monotonic() of the last usage update
 
 
 class MetaError(Exception):
@@ -119,15 +122,125 @@ def _record_usage(headers):
             except ValueError:
                 got[h] = v
     if got:
+        global _usage_seq, _usage_mono
         with _usage_lock:
             _usage.update(got)
             _usage["at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            _usage_seq += 1
+            _usage_mono = time.monotonic()
 
 
 def usage():
     """Latest usage headers seen from Meta, plus "at" (local time of the last update). Empty until a call is made."""
     with _usage_lock:
         return json.loads(json.dumps(_usage))
+
+
+# ---------- pacing: a per-account token bucket that slows down before Meta throttles ----------
+# Studio runs independent Meta calls side by side (meta_ads.WORKERS). Every call through meta_ads waits for a turn here.
+# The bucket refills at PACE_RATE calls per second (bursts up to PACE_BURST). The usage headers Meta sends back
+# (x-app-usage, x-ad-account-usage, x-business-use-case-usage: percent of the allowance used) slow it down early:
+# from PACE_SLOW the rate is divided by the factor in PACE_STEPS and bursts stop, and when Meta says how long until
+# access is regained (estimated_time_to_regain_access, minutes) the account waits that long once (at most PACE_HOLD_MAX s).
+PACE_RATE = 10.0
+PACE_BURST = 20
+PACE_STEPS = ((90, 10.0), (75, 4.0), (60, 2.0))  # (percent used at least, divide the rate by)
+PACE_SLOW = PACE_STEPS[-1][0]
+PACE_FRESH = 120     # usage older than this (seconds) no longer slows anything
+PACE_HOLD_MAX = 60
+
+
+def _pcts(v):
+    """Every percentage-of-allowance number in one usage header value."""
+    out = []
+    if isinstance(v, dict):
+        for k, x in v.items():
+            if k in ("call_count", "total_cputime", "total_time", "acc_id_util_pct") and isinstance(x, (int, float)):
+                out.append(float(x))
+            elif isinstance(x, (dict, list)):
+                out += _pcts(x)
+    elif isinstance(v, list):
+        for x in v:
+            out += _pcts(x)
+    return out
+
+
+def _regain(v):
+    """Largest estimated_time_to_regain_access (minutes) in x-business-use-case-usage."""
+    best = 0
+    for rows in (v.values() if isinstance(v, dict) else []):
+        for r in rows if isinstance(rows, list) else []:
+            if isinstance(r, dict) and isinstance(r.get("estimated_time_to_regain_access"), (int, float)):
+                best = max(best, r["estimated_time_to_regain_access"])
+    return best
+
+
+def pressure():
+    """(highest percent used, seconds until access is regained, usage seq) from the latest usage headers, if fresh."""
+    with _usage_lock:
+        if not _usage_seq or time.monotonic() - _usage_mono > PACE_FRESH:
+            return 0.0, 0.0, _usage_seq
+        pct = max(_pcts({k: v for k, v in _usage.items() if k in USAGE_HEADERS[:3]}) or [0.0])
+        return pct, float(_regain(_usage.get("x-business-use-case-usage"))) * 60, _usage_seq
+
+
+class Limiter:
+    """Token bucket for one ad account (thread-safe). hold_until (time.monotonic()) is shared: while it lies ahead,
+    every thread waits, so one "regain access in N minutes" (or a refusal for too many calls) pauses the whole account."""
+
+    def __init__(self, rate=None, burst=None):
+        self.rate = float(rate or PACE_RATE)
+        self.burst = float(burst or PACE_BURST)
+        self.tokens = self.burst
+        self.t = time.monotonic()
+        self.held_seq = 0
+        self.hold_until = 0.0
+        self.lock = threading.Lock()
+
+    def hold(self, seconds):
+        """Pause every call on this account for `seconds` from now (never shortens a longer hold)."""
+        with self.lock:
+            self.hold_until = max(self.hold_until, time.monotonic() + max(0.0, float(seconds)))
+
+    def acquire(self):
+        """Wait for a turn. Returns the seconds waited. Sleeps outside the lock."""
+        waited = 0.0
+        while True:
+            with self.lock:
+                pct, regain, seq = pressure()
+                now = time.monotonic()
+                if regain > 0 and seq != self.held_seq:  # a new usage report asking to back off: hold the account once
+                    self.held_seq = seq
+                    self.hold_until = max(self.hold_until, now + min(regain, PACE_HOLD_MAX))
+                if now < self.hold_until:
+                    wait = self.hold_until - now
+                else:
+                    slow = next((f for lim, f in PACE_STEPS if pct >= lim), 1.0)
+                    rate = self.rate / slow
+                    self.tokens = min(self.burst if pct < PACE_SLOW else 1.0, self.tokens + (now - self.t) * rate)
+                    self.t = now
+                    if self.tokens >= 1:
+                        self.tokens -= 1
+                        return waited
+                    wait = (1 - self.tokens) / rate
+            time.sleep(wait)
+            waited += wait
+
+
+_limiters = {}
+_limiters_lock = threading.Lock()
+
+
+def limiter(key):
+    with _limiters_lock:
+        if key not in _limiters:
+            _limiters[key] = Limiter()
+        return _limiters[key]
+
+
+def pace(key):
+    """Wait for a turn on the rate limiter of `key` (an ad account id). Returns the seconds waited."""
+    return limiter(str(key or "_")).acquire()
 
 
 def _once(method, path, params=None, validate=False, token=None):

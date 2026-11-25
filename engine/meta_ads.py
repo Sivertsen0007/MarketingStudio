@@ -2080,8 +2080,10 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None):
             "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item), "channel": "meta"}
 
 
-def preview(enable_new=False, only=None):
-    p = plan(only=only, enable_new=enable_new)
+def preview(enable_new=False, only=None, progress=None):
+    """progress(done, total, label, item_key, "checked") after each of Meta's checks (optional)."""
+    p = plan(only=only, enable_new=enable_new,
+             on_check=(lambda n, tot, line, key: _notify(progress, n, tot, line, key, "checked")) if progress else None)
     return {k: v for k, v in p.items() if k != "steps"}
 
 
@@ -2307,20 +2309,36 @@ def _results(entries, kept=(), back=(), failed=None, why=""):
     return out
 
 
-def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None, progress_cb=None, refresh=True, workers=None):
-    """Push the draft live. progress_cb(done, total, label, item_key, status) is called per step: status "checked" while
-    Meta checks (done/total over checks), then "ok" / "failed" while sending (done/total over steps), then "reversed" /
-    "not_reversed" for each rollback. refresh=False skips the trailing refresh_account() (the caller runs it later).
-    workers: Meta calls at a time (default WORKERS; 1 = strictly one after the other).
-    Returns the same keys as before plus "results": one per draft item (see _results) and "refreshed"."""
+_progress = progress  # the progress module (push's `progress` argument is the caller's callback)
+ITEM_STATUS = {"ok": "done", "failed": "error"}  # results status -> items status (background jobs, jobs.py)
+
+
+def _job_items(results):
+    """results -> the background-job shape: {key, label, status: done|error|reversed|skipped, ids, error}."""
+    return [{"key": r["key"], "label": r["label"], "ids": r["ids"], "error": r["error"],
+             "status": ITEM_STATUS.get(r["status"]) or ("reversed" if r.get("rolled_back") else "skipped")} for r in results]
+
+
+def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None, progress=None, refresh=True, workers=None,
+         progress_cb=None):
+    """Push the draft live. progress(done, total, label, item_key, status) is called per step: status "checked" while
+    Meta checks (done/total over steps), then "ok" / "failed" while sending (done/total over steps), then "reversed" /
+    "not_reversed" for each rollback. progress_cb: deprecated name for progress. refresh=False skips the trailing
+    refresh_account() (the caller runs it later). workers: Meta calls at a time (default WORKERS; 1 = strictly one
+    after the other). Returns the same keys as before plus "refreshed", and the per-item list twice:
+    "results" ({key, label, status: ok|failed|skipped, ids, error, rolled_back}) and "items" (same, status
+    done|error|reversed|skipped, for the background-job layer)."""
+    cb = progress or progress_cb
     a = acct()
-    progress.start(a, "push", [(i["id"], i["summary"], 1) for i in _only(only)], "checking", "Meta is checking each change")
+    _progress.start(a, "push", [(i["id"], i["summary"], 1) for i in _only(only)], "checking", "Meta is checking each change")
     res = None
     try:
-        res = _push(enable_new, accept_spend, accept_permanent, only, progress_cb, refresh, workers)
+        res = _push(enable_new, accept_spend, accept_permanent, only, cb, refresh, workers)
+        if "results" in res:
+            res["items"] = _job_items(res["results"])
         return res
     finally:
-        progress.finish(a, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
+        _progress.finish(a, bool(res and res.get("ok")), (res or {}).get("message", "Stopped with an error"))
 
 
 def _notify(cb, *args):

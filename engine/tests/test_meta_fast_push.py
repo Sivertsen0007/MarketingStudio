@@ -248,7 +248,7 @@ class Push(Base):
     def push(self, g, workers, **kw):
         cb = []
         with mock.patch.object(meta, "refresh_account", lambda: None):
-            res = meta.push(accept_spend=True, workers=workers, progress_cb=lambda *a: cb.append(a), **kw)
+            res = meta.push(accept_spend=True, workers=workers, progress=lambda *a: cb.append(a), **kw)
         return res, cb
 
     def test_parallel_push_same_result_as_sequential(self):
@@ -365,8 +365,59 @@ class Push(Base):
         def boom(*a):
             raise RuntimeError("ui gone")
         with mock.patch.object(meta, "refresh_account", lambda: None):
-            r = meta.push(accept_spend=True, progress_cb=boom)
+            r = meta.push(accept_spend=True, progress=boom)
         self.assertTrue(r["ok"])
+
+
+class JobLayer(Base):
+    """engine/jobs.py passes progress= (found by parameter name) and reads result["items"]."""
+
+    def test_push_takes_progress_by_name_and_old_alias(self):
+        import inspect
+        self.assertIn("progress", inspect.signature(meta.push).parameters)
+        self.assertIn("progress", inspect.signature(meta.preview).parameters)
+        for kw in ("progress", "progress_cb"):
+            with self.subTest(kw=kw):
+                self.items[:] = items()
+                self.graph()
+                cb = []
+                with mock.patch.object(meta, "refresh_account", lambda: None):
+                    r = meta.push(accept_spend=True, **{kw: lambda *a: cb.append(a)})
+                self.assertTrue(r["ok"])
+                self.assertEqual(len([a for a in cb if a[4] == "ok"]), 20)
+
+    def test_items_mirror_results_with_job_statuses(self):
+        self.graph()
+        with mock.patch.object(meta, "refresh_account", lambda: None):
+            r = meta.push(accept_spend=True)
+        self.assertEqual([x["status"] for x in r["items"]], ["done"] * 20)
+        self.assertEqual([x["key"] for x in r["items"]], [x["key"] for x in r["results"]])
+        self.assertEqual(r["items"][0], {"key": "i0", "label": "change 0", "status": "done", "ids": {"object_id": "a1"}, "error": None})
+        self.items[:] = items()
+        self.graph(refuse={"a3"})
+        with mock.patch.object(meta, "refresh_account", lambda: None):
+            r = meta.push(accept_spend=True, workers=1)
+        st = {x["key"]: x["status"] for x in r["items"]}
+        self.assertEqual(st["i2"], "error")
+        self.assertEqual(st["i0"], "reversed")  # applied, then rolled back
+        self.assertEqual(st["i3"], "skipped")   # never sent (after the refusal, one at a time)
+        self.assertEqual(set(st.values()), {"error", "reversed", "skipped"})
+
+    def test_refused_up_front_has_items(self):
+        self.graph()
+        with mock.patch.object(meta, "refresh_account", lambda: None):
+            r = meta.push(accept_spend=False)
+        self.assertFalse(r["ok"])
+        self.assertEqual({x["status"] for x in r["items"]}, {"skipped"})
+
+    def test_preview_reports_checks(self):
+        self.graph()
+        cb = []
+        p = meta.preview(progress=lambda *a: cb.append(a))
+        self.assertTrue(p["ok"])
+        self.assertEqual([a[0] for a in cb], list(range(1, 21)))
+        self.assertTrue(all(a[1] == 20 and a[4] == "checked" for a in cb))
+        self.assertEqual({a[3] for a in cb}, {f"i{n}" for n in range(20)})
 
 
 class Pacing(unittest.TestCase):

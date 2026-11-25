@@ -185,7 +185,9 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .node.path{background:var(--accent-bg);color:var(--text);font-weight:600}  /* the campaign that holds the selected ad group / ad set */
 .node .tw{width:14px;color:var(--faint);flex:none;text-align:center;font-size:10px}
 .node .nm{overflow:hidden;text-overflow:ellipsis}
-.node.ag{padding-left:34px;font-weight:500;color:var(--muted)}
+.node.ag{margin-left:26px;padding-left:24px;position:relative;font-weight:500;color:var(--text2);font-size:12.5px}  /* ad groups / ad sets sit indented under their campaign */
+.node.ag::before{content:"";position:absolute;left:9px;top:-2px;bottom:-2px;width:1px;background:var(--line-strong)}  /* tree guide: which campaign they belong to */
+.node.ag::after{content:"";position:absolute;left:9px;top:50%;width:8px;height:1px;background:var(--line-strong)}
 .node.ag.sel{color:var(--accent);font-weight:700}
 .node .ed,.node .chip{margin-left:auto}
 .dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--ok)}

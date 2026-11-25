@@ -15,7 +15,7 @@ IDs come from Editor's database (remoteId = the Google Ads id, verified against 
 from the API (see Ids: the account's read source goes first, the other is the fallback). Rows Editor has never
 posted (remoteId 0) can't be referenced - post them first or create them in the draft.
 """
-import datetime as dt, json, os, re, sys, urllib.error, urllib.request, uuid
+import concurrent.futures, copy, datetime as dt, json, os, re, sys, threading, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 import appconfig  # noqa: E402,F401  (vendor_hub on sys.path)
@@ -37,6 +37,71 @@ RESULT_KEY = {"campaignBudgetOperation": "campaignBudgetResult", "campaignOperat
               "campaignAssetOperation": "campaignAssetResult", "customerAssetOperation": "customerAssetResult",
               "campaignSharedSetOperation": "campaignSharedSetResult", "assetGroupAssetOperation": "assetGroupAssetResult",
               "userListOperation": "userListResult"}
+
+
+# ---------- batched live reads (one plan = one read cache) ----------
+# The preview / push plan reads live values for every item. Instead of one query per item, _prefetch reads them up
+# front with one GAQL query per resource type (an IN list, CHUNK ids per query) and puts each row in the plan's cache
+# under the exact per-item query; ops_for then asks the per-item query and gets the cached row. A batch only ever adds
+# rows it got back: anything it did not return (or a batch that fails) is read per item, as before.
+BATCH_READS = True
+CHUNK = 500  # ids per IN list
+POOL = 4  # parallel queries at most
+
+# kind -> (FROM resource, fields): the per-item "before" reads of ops_for
+_LIVE = {
+    "campaign": ("campaign", "campaign.status, campaign.campaign_budget, campaign.bidding_strategy_type, "
+                             "campaign_budget.amount_micros, campaign_budget.explicitly_shared"),
+    "campaign_aud": ("campaign", "campaign.targeting_setting.target_restrictions"),
+    "ad_group": ("ad_group", "ad_group.status, ad_group.cpc_bid_micros"),
+    "keyword": ("ad_group_criterion", "ad_group_criterion.status, ad_group_criterion.cpc_bid_micros"),
+    "rsa": ("ad_group_ad", "ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, "
+                           "ad_group_ad.ad.responsive_search_ad.descriptions"),
+    "sitelink": ("asset", "asset.final_urls, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, "
+                          "asset.sitelink_asset.description2"),
+}
+# kind -> (fields, FROM resource, parent id field, rest of the WHERE, extra fields a batch also reads, live kind they fill):
+# the per-parent id lists Ids resolves names from (cache key = kind + parent id)
+_LISTS = {
+    "kw": ("ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type", "ad_group_criterion",
+           "ad_group.id", "ad_group_criterion.type = KEYWORD AND ad_group_criterion.negative = FALSE AND ad_group_criterion.status != 'REMOVED'",
+           "ad_group_criterion.resource_name, ad_group_criterion.status, ad_group_criterion.cpc_bid_micros", "keyword"),
+    "neg_g": ("ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type", "ad_group_criterion",
+              "ad_group.id", "ad_group_criterion.type = KEYWORD AND ad_group_criterion.negative = TRUE AND ad_group_criterion.status != 'REMOVED'",
+              "", None),
+    "neg_c": ("campaign_criterion.criterion_id, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type", "campaign_criterion",
+              "campaign.id", "campaign_criterion.type = KEYWORD AND campaign_criterion.negative = TRUE AND campaign_criterion.status != 'REMOVED'",
+              "", None),
+    "rsa": ("ad_group_ad.ad.id", "ad_group_ad", "ad_group.id",
+            "ad_group_ad.ad.type = RESPONSIVE_SEARCH_AD AND ad_group_ad.status != 'REMOVED'",
+            "ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, "
+            "ad_group_ad.ad.responsive_search_ad.descriptions", "rsa"),
+    "loc": ("campaign_criterion.location.geo_target_constant", "campaign_criterion", "campaign.id",
+            "campaign_criterion.type = LOCATION AND campaign_criterion.negative = FALSE AND campaign_criterion.status != 'REMOVED'", "", None),
+}
+_ROW = {"campaign": "campaign", "ad_group": "adGroup", "ad_group_criterion": "adGroupCriterion", "ad_group_ad": "adGroupAd", "asset": "asset",
+        "campaign_criterion": "campaignCriterion"}
+CAMPAIGNS_GAQL = "SELECT campaign.id, campaign.name FROM campaign WHERE campaign.status != 'REMOVED'"
+AD_GROUPS_GAQL = ("SELECT ad_group.id, ad_group.name, campaign.id FROM ad_group "
+                  "WHERE ad_group.status != 'REMOVED' AND campaign.status != 'REMOVED'")
+
+
+def _live_gaql(kind, res):
+    frm, sel = _LIVE[kind]
+    return f"SELECT {sel} FROM {frm} WHERE {frm}.resource_name = '{res}'"
+
+
+def _list_gaql(kind, pid):
+    sel, frm, par, tail = _LISTS[kind][:4]
+    return f"SELECT {sel} FROM {frm} WHERE {par} = {pid} AND {tail}"
+
+
+def _chunks(xs):
+    xs = sorted(xs)
+    return [xs[i:i + CHUNK] for i in range(0, len(xs), CHUNK)]
+
+
+_tls = threading.local()  # the plan's Ids while plan() asks for experiments, so those reads land in its cache
 
 
 def _log(acct):
@@ -116,6 +181,7 @@ class Ids:
         self.new = {}  # names created earlier in this same push -> temporary resource names
         self._tmp = 0
         self._cache = {}
+        self._reads = {}  # GAQL -> ("ok", rows) or ("err", exception): each distinct read happens once per plan
 
     def tmp(self, kind):
         self._tmp -= 1
@@ -135,8 +201,102 @@ class Ids:
 
     def _q(self, key, gaql):
         if key not in self._cache:
-            self._cache[key] = query(self.acct, gaql)
+            self._cache[key] = self._read(gaql)
         return self._cache[key]
+
+    # -- the plan's read cache --
+    def _read(self, gaql):
+        hit = self._reads.get(gaql)
+        if hit is None:
+            try:
+                hit = ("ok", query(self.acct, gaql))
+            except Exception as ex:  # noqa: BLE001 - kept, so the same read fails the same way without asking again
+                hit = ("err", ex)
+            self._reads[gaql] = hit
+        if hit[0] == "err":
+            raise hit[1]
+        return hit[1]
+
+    def read(self, gaql):
+        """query(acct, gaql), once per plan; a copy, so callers can't change what the next caller gets."""
+        return copy.deepcopy(self._read(gaql))
+
+    def prime(self, gaql, rows):
+        """Rows a batch got for a per-item read (never replaces what was read already)."""
+        self._reads.setdefault(gaql, ("ok", rows))
+
+    def ok(self, gaql):
+        hit = self._reads.get(gaql)
+        return hit[1] if hit and hit[0] == "ok" else None
+
+    def warm(self, gaqls):
+        """Run the reads not cached yet: the first on its own (it also fetches the access token), the rest in a small pool."""
+        todo = [g for g in dict.fromkeys(gaqls) if g not in self._reads]
+        if not todo:
+            return
+
+        def run(g):
+            try:
+                return g, ("ok", query(self.acct, g))
+            except Exception as ex:  # noqa: BLE001 - kept per read; a failed batch just means per-item reads
+                return g, ("err", ex)
+        got = [run(todo[0])]
+        if len(todo) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(POOL, len(todo) - 1)) as pool:
+                got += list(pool.map(run, todo[1:]))
+        for g, hit in got:
+            self._reads.setdefault(g, hit)
+
+    def _live_batches(self, kind, ress):
+        frm, sel = _LIVE[kind]
+        ress = {r for r in ress if _live_gaql(kind, r) not in self._reads}
+        return [(f"SELECT {frm}.resource_name, {sel} FROM {frm} WHERE {frm}.resource_name IN ({', '.join(repr(r) for r in part)})",
+                 kind, set(part)) for part in _chunks(ress)]
+
+    def _list_batches(self, kind, pids):
+        sel, frm, par, tail, extra, _ = _LISTS[kind]
+        pids = {str(p) for p in pids if f"{kind}{p}" not in self._cache}
+        fields = ", ".join(x for x in (par, sel, extra) if x)
+        return [(f"SELECT {fields} FROM {frm} WHERE {par} IN ({', '.join(part)}) AND {tail}", kind, set(part)) for part in _chunks(pids)]
+
+    def _spread(self, batches, lists=False):
+        """Batched rows -> the per-item cache entries (only what came back; the rest is read per item)."""
+        for gaql, kind, want in batches:
+            rows = self.ok(gaql)
+            if not rows:
+                continue
+            if not lists:
+                key = _ROW[_LIVE[kind][0]]
+                for r in rows:
+                    rn = (r.get(key) or {}).get("resourceName")
+                    if rn in want:
+                        self.prime(_live_gaql(kind, rn), [r])
+                continue
+            _, frm, par, _, _, fills = _LISTS[kind]
+            pkey = _ROW[par.split(".")[0]]
+            by = {}
+            for r in rows:
+                pid = str((r.get(pkey) or {}).get("id", ""))
+                if pid in want:
+                    by.setdefault(pid, []).append(r)
+            for pid, rs in by.items():
+                self._cache.setdefault(f"{kind}{pid}", rs)
+                if fills:
+                    for r in rs:
+                        rn = (r.get(_ROW[frm]) or {}).get("resourceName")
+                        if rn:
+                            self.prime(_live_gaql(fills, rn), [{_ROW[frm]: r[_ROW[frm]]}])
+
+    def batch(self, live=None, lists=None):
+        """Read many per-item values at once. live: {kind: resource names}, lists: {kind: parent ids}."""
+        lb = [b for k, v in (live or {}).items() for b in self._live_batches(k, v)]
+        sb = [b for k, v in (lists or {}).items() for b in self._list_batches(k, v)]
+        self.warm([b[0] for b in lb + sb])
+        self._spread(sb, lists=True)
+        self._spread(lb)
+
+    def batch_live(self, kind, ress):
+        self.batch(live={kind: ress})
 
     def _one(self, rows, what):
         """Editor rows -> the one row (old name kept: callers outside may use it)."""
@@ -165,13 +325,12 @@ class Ids:
                                          (name, (gae.PARENT_CAMPAIGN << 32) | c["localId"])).fetchall(), f'ad group "{name}"')
 
     def _api_campaign(self, name):
-        rows = self._q("campaigns", "SELECT campaign.id, campaign.name FROM campaign WHERE campaign.status != 'REMOVED'")
+        rows = self._q("campaigns", CAMPAIGNS_GAQL)
         return self._api_one([r["campaign"]["id"] for r in rows if r["campaign"]["name"] == name], f'campaign "{name}"')
 
     def _api_ad_group(self, camp, name):
         cid = self._api_campaign(camp)
-        rows = self._q("ad_groups", "SELECT ad_group.id, ad_group.name, campaign.id FROM ad_group "
-                                    "WHERE ad_group.status != 'REMOVED' AND campaign.status != 'REMOVED'")
+        rows = self._q("ad_groups", AD_GROUPS_GAQL)
         return self._api_one([r["adGroup"]["id"] for r in rows if r["campaign"]["id"] == cid and r["adGroup"]["name"] == name],
                              f'ad group "{name}"')
 
@@ -204,9 +363,7 @@ class Ids:
 
         def api():
             gid = self._api_ad_group(camp, ad_group)
-            rows = self._q(f"kw{gid}", "SELECT ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type "
-                                       f"FROM ad_group_criterion WHERE ad_group.id = {gid} AND ad_group_criterion.type = KEYWORD "
-                                       "AND ad_group_criterion.negative = FALSE AND ad_group_criterion.status != 'REMOVED'")
+            rows = self._q(f"kw{gid}", _list_gaql("kw", gid))
             return self._api_one([r["adGroupCriterion"]["criterionId"] for r in rows if r["adGroupCriterion"]["keyword"]["text"] == text
                                   and r["adGroupCriterion"]["keyword"]["matchType"] == MATCH[match.lower()]], what)
         return self._first(what, editor=ed, api=api)
@@ -224,14 +381,10 @@ class Ids:
         def api():
             if ad_group:
                 gid = self._api_ad_group(camp, ad_group)
-                rows = [r["adGroupCriterion"] for r in self._q(f"neg_g{gid}", "SELECT ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, "
-                        f"ad_group_criterion.keyword.match_type FROM ad_group_criterion WHERE ad_group.id = {gid} AND "
-                        "ad_group_criterion.type = KEYWORD AND ad_group_criterion.negative = TRUE AND ad_group_criterion.status != 'REMOVED'")]
+                rows = [r["adGroupCriterion"] for r in self._q(f"neg_g{gid}", _list_gaql("neg_g", gid))]
             else:
                 cid = self._api_campaign(camp)
-                rows = [r["campaignCriterion"] for r in self._q(f"neg_c{cid}", "SELECT campaign_criterion.criterion_id, campaign_criterion.keyword.text, "
-                        f"campaign_criterion.keyword.match_type FROM campaign_criterion WHERE campaign.id = {cid} AND "
-                        "campaign_criterion.type = KEYWORD AND campaign_criterion.negative = TRUE AND campaign_criterion.status != 'REMOVED'")]
+                rows = [r["campaignCriterion"] for r in self._q(f"neg_c{cid}", _list_gaql("neg_c", cid))]
             return self._api_one([r["criterionId"] for r in rows if r["keyword"]["text"] == text and r["keyword"]["matchType"] == MATCH[match.lower()]], what)
         return self._first(what, editor=ed, api=api)
 
@@ -257,8 +410,7 @@ class Ids:
 
         def api():
             gid = self._api_ad_group(camp, ad_group)
-            rows = self._q(f"rsa{gid}", "SELECT ad_group_ad.ad.id FROM ad_group_ad WHERE ad_group.id = "
-                                        f"{gid} AND ad_group_ad.ad.type = RESPONSIVE_SEARCH_AD AND ad_group_ad.status != 'REMOVED'")
+            rows = self._q(f"rsa{gid}", _list_gaql("rsa", gid))
             got = [r["adGroupAd"]["ad"]["id"] for r in rows]
             if local_id not in (None, ""):
                 got = [x for x in got if x == str(local_id)]
@@ -303,9 +455,7 @@ class Ids:
                 cid = self._api_campaign(camp)
             except NotFound:
                 return False
-            rows = self._q(f"loc{cid}", "SELECT campaign_criterion.location.geo_target_constant FROM campaign_criterion WHERE campaign.id = "
-                                        f"{cid} AND campaign_criterion.type = LOCATION AND campaign_criterion.negative = FALSE "
-                                        "AND campaign_criterion.status != 'REMOVED'")
+            rows = self._q(f"loc{cid}", _list_gaql("loc", cid))
             hit = any(_id(r["campaignCriterion"]["location"]["geoTargetConstant"]) == str(loc_id) for r in rows)
         return hit
 
@@ -370,8 +520,13 @@ def _id(res):
 
 # ---------- live "before" values ----------
 
-def _live(acct, gaql, what):
-    rows = query(acct, gaql)
+def _read(src, gaql):
+    """A live read: through the plan's cache when src is an Ids, straight from the API when it is an account id."""
+    return src.read(gaql) if hasattr(src, "read") else query(getattr(src, "acct", src), gaql)
+
+
+def _live(src, gaql, what):
+    rows = _read(src, gaql)
     if not rows:
         raise ValueError(f"{what} not found live in Google Ads (removed there?) - Get recent changes in Editor")
     return rows[0]
@@ -433,9 +588,7 @@ def ops_for(ids, c, enable_new):
 
     if t == "campaign":
         camp, row = ids.campaign(c["campaign"])
-        live = _live(a, f"SELECT campaign.status, campaign.campaign_budget, campaign.bidding_strategy_type, "
-                        f"campaign_budget.amount_micros, campaign_budget.explicitly_shared FROM campaign WHERE campaign.resource_name = '{camp}'",
-                     f'campaign "{c["campaign"]}"')
+        live = _live(ids, _live_gaql("campaign", camp), f'campaign "{c["campaign"]}"')
         lc, lb = live["campaign"], live.get("campaignBudget", {})
         if c.get("status"):
             new = STATUS[c["status"].lower()]
@@ -472,7 +625,7 @@ def ops_for(ids, c, enable_new):
 
     if t == "ad_group":
         g, _ = ids.ad_group(c["campaign"], c["ad_group"])
-        live = _live(a, f"SELECT ad_group.status, ad_group.cpc_bid_micros FROM ad_group WHERE ad_group.resource_name = '{g}'", f'ad group "{c["ad_group"]}"')["adGroup"]
+        live = _live(ids, _live_gaql("ad_group", g), f'ad group "{c["ad_group"]}"')["adGroup"]
         if str(c.get("status", "")).lower() == "removed":
             return [_remove("adGroupOperation", g, f'remove ad group "{c["ad_group"]}"')]
         fields, before, mask, spend = {}, {}, [], []
@@ -503,8 +656,7 @@ def ops_for(ids, c, enable_new):
             if grow is None:
                 raise ValueError("can't edit keywords of an ad group created in the same push")
             res = f"customers/{a}/adGroupCriteria/{_id(g)}~{ids.keyword(c['campaign'], c['ad_group'], kw, c['match'])}"
-            live = _live(a, f"SELECT ad_group_criterion.status, ad_group_criterion.cpc_bid_micros FROM ad_group_criterion "
-                            f"WHERE ad_group_criterion.resource_name = '{res}'", f'keyword "{kw}"')["adGroupCriterion"]
+            live = _live(ids, _live_gaql("keyword", res), f'keyword "{kw}"')["adGroupCriterion"]
             if str(c.get("status", "")).lower() == "removed":
                 out.append(_remove("adGroupCriterionOperation", res, f'remove keyword "{kw}"'))
                 continue
@@ -566,8 +718,7 @@ def ops_for(ids, c, enable_new):
         for rid in ad_ids:
             ad = {"remoteId": rid}
             res = f"customers/{a}/adGroupAds/{_id(g)}~{rid}"
-            live = _live(a, f"SELECT ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, "
-                            f"ad_group_ad.ad.responsive_search_ad.descriptions FROM ad_group_ad WHERE ad_group_ad.resource_name = '{res}'", "ad")["adGroupAd"]
+            live = _live(ids, _live_gaql("rsa", res), "ad")["adGroupAd"]
             if c.get("status"):
                 if c["status"].lower() == "removed":
                     out.append(_remove("adGroupAdOperation", res, f'remove RSA {ad["remoteId"]}'))
@@ -618,8 +769,7 @@ def ops_for(ids, c, enable_new):
 
     if t == "sitelink":
         res = f"customers/{a}/assets/{ids.sitelink(c.get('level'), c.get('campaign'), c['text'])}"
-        live = _live(a, f"SELECT asset.final_urls, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, "
-                        f"asset.sitelink_asset.description2 FROM asset WHERE asset.resource_name = '{res}'", "sitelink")["asset"]
+        live = _live(ids, _live_gaql("sitelink", res), "sitelink")["asset"]
         ls = live.get("sitelinkAsset", {})
         fields, before, mask = {"sitelinkAsset": {}}, {"sitelinkAsset": {}}, []
         for k, api in (("new_text", "linkText"), ("line1", "description1"), ("line2", "description2")):
@@ -665,9 +815,9 @@ def ops_for(ids, c, enable_new):
 
 
 def _audience_mode(a, camp, c):
-    """Switch the campaign's audience setting: observation (bid only) or targeting (narrows reach)."""
-    lc = _live(a, f"SELECT campaign.targeting_setting.target_restrictions FROM campaign WHERE campaign.resource_name = '{camp}'",
-               f'campaign "{c["campaign"]}"')["campaign"]
+    """Switch the campaign's audience setting: observation (bid only) or targeting (narrows reach). a: the plan's Ids
+    (or an account id)."""
+    lc = _live(a, _live_gaql("campaign_aud", camp), f'campaign "{c["campaign"]}"')["campaign"]
     restr = lc.get("targetingSetting", {}).get("targetRestrictions", [])
     cur = next((r for r in restr if r.get("targetingDimension") == "AUDIENCE"), None)
     old = ("observation" if cur.get("bidOnly") else "targeting") if cur else "observation"
@@ -687,15 +837,14 @@ def _audience_ops(ids, c):
     if c.get("mode"):
         if cref is None:
             raise ValueError("set the audience mode once the campaign exists (next push)")
-        out.append(_audience_mode(a, camp, c))
+        out.append(_audience_mode(ids, camp, c))
     lists = c.get("lists") or []
     if not lists:
         return out
     on = ids.campaign_user_lists(camp) if cref is not None else {}
     targeting = False
     if c.get("remove") and cref is not None:
-        restr = _live(a, f"SELECT campaign.targeting_setting.target_restrictions FROM campaign WHERE campaign.resource_name = '{camp}'",
-                      "campaign")["campaign"].get("targetingSetting", {}).get("targetRestrictions", [])
+        restr = _live(ids, _live_gaql("campaign_aud", camp), "campaign")["campaign"].get("targetingSetting", {}).get("targetRestrictions", [])
         targeting = any(r.get("targetingDimension") == "AUDIENCE" and not r.get("bidOnly") for r in restr)
     for name in lists:
         ul = ids.user_list(name)
@@ -734,7 +883,7 @@ def _pmax_asset_ops(ids, c, enable_new):
     if cref is None:
         raise ValueError("asset groups of a campaign created in the same push can't be edited")
     ag = ids.asset_group(c["campaign"], c["asset_group"])
-    cur = query(a, "SELECT asset_group_asset.status, asset_group_asset.source, asset.id, asset.text_asset.text FROM asset_group_asset "
+    cur = _read(ids, "SELECT asset_group_asset.status, asset_group_asset.source, asset.id, asset.text_asset.text FROM asset_group_asset "
                    f"WHERE asset_group.resource_name = '{ag}' AND asset_group_asset.field_type = {ftype} "
                    "AND asset_group_asset.status != 'REMOVED'")
     have = {}
@@ -804,7 +953,7 @@ def plan(acct, enable_new=False, items=None, source=None):
     items = [i for i in items if i["change"].get("type") != "video_upload"]  # uploads run from their own button only
     ids = Ids(acct, source)
     ops, per_item = [], []
-    exps = _experiments(acct) if items else experiments.empty()
+    exps = _plan_experiments(acct, ids, items) if items else experiments.empty()
     for it in items:
         xp, xw = experiments.check(exps, it["change"])
         entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
@@ -814,6 +963,13 @@ def plan(acct, enable_new=False, items=None, source=None):
         except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
             again = [f"invalid change: {ex}"]
         entry["problems"] += [p for p in again if p not in entry["problems"]]
+        per_item.append(entry)
+    if BATCH_READS:
+        try:  # only fills the read cache: what it misses is read per item below, exactly as without it
+            _prefetch(ids, [it["change"] for it, e in zip(items, per_item) if not e["problems"]])
+        except Exception:  # noqa: BLE001
+            pass
+    for it, entry in zip(items, per_item):
         if not entry["problems"]:
             try:
                 for o in ops_for(ids, it["change"], enable_new):
@@ -827,7 +983,6 @@ def plan(acct, enable_new=False, items=None, source=None):
                         entry["permanent"].append(o["line"])
             except Exception as ex:  # noqa: BLE001 - shown per item in the preview
                 entry["problems"].append(str(ex))
-        per_item.append(entry)
     if ops and not any(e["problems"] for e in per_item):
         ok, res = mutate(acct, [o["op"] for o in ops], apply=False)
         if not ok:
@@ -843,11 +998,104 @@ def plan(acct, enable_new=False, items=None, source=None):
             "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item)}
 
 
+def _plan_experiments(acct, ids, items):
+    """Experiments for a plan, read once through the plan's cache, together (in parallel) with the name lists the plan
+    will need. The campaign list experiments reads has the same filter as Ids' campaign name list, so it serves both."""
+    if BATCH_READS:
+        api_first = ids.order[:1] == ["api"]
+        ids.warm([experiments.CAMPAIGNS_GAQL, experiments.ARMS_GAQL]
+                 + ([AD_GROUPS_GAQL] if api_first and any(it["change"].get("ad_group") for it in items) else []))
+    _tls.ids = ids
+    try:
+        exps = _experiments(acct)
+    finally:
+        _tls.ids = None
+    if BATCH_READS:
+        rows = ids.ok(experiments.CAMPAIGNS_GAQL)
+        if rows is not None:
+            ids._cache.setdefault("campaigns", rows)
+        if ids.ok(AD_GROUPS_GAQL) is not None:
+            ids._cache.setdefault("ad_groups", ids.ok(AD_GROUPS_GAQL))
+    return exps
+
+
+def _exp_query(acct, gaql):
+    ids = getattr(_tls, "ids", None)
+    return ids.read(gaql) if BATCH_READS and ids is not None and ids.acct == acct else query(acct, gaql)
+
+
+def _prefetch(ids, changes):
+    """Read the live values the changes need, a few batched queries instead of one per item (see BATCH_READS)."""
+    a = ids.acct
+    made_c = {c.get("campaign") for c in changes if c.get("type") == "campaign" and c.get("new")}
+    made_g = {(c.get("campaign"), c.get("ad_group")) for c in changes if c.get("type") == "ad_group" and c.get("new")}
+    changes = [c for c in changes if c.get("campaign") not in made_c and (c.get("campaign"), c.get("ad_group")) not in made_g]
+    api_first = ids.order[:1] == ["api"]
+
+    def safe(fn):
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 - the item itself reports it
+            return None
+
+    def group(c):
+        return safe(lambda: ids.ad_group(c["campaign"], c["ad_group"])[0])
+
+    live, lists, later = {k: set() for k in _LIVE}, {k: set() for k in _LISTS}, []
+    for c in changes:
+        t = c.get("type")
+        if t == "campaign" and not c.get("new"):
+            r = safe(lambda: ids.campaign(c["campaign"])[0])
+            r and live["campaign"].add(r)
+        elif t == "ad_group" and not c.get("new") and c.get("ad_group"):
+            g = group(c)
+            g and live["ad_group"].add(g)
+        elif t == "keyword" and c.get("edit"):
+            g = group(c)
+            if g:
+                api_first and lists["kw"].add(_id(g))
+                later.append((t, c, g))
+        elif t == "rsa" and c.get("edit"):
+            g = group(c)
+            if g:
+                if c.get("ad_id") in (None, "") and api_first:
+                    lists["rsa"].add(_id(g))
+                later.append((t, c, g))
+        elif t == "negative" and c.get("remove") and api_first:
+            if c.get("ad_group"):
+                g = group(c)
+                g and lists["neg_g"].add(_id(g))
+            else:
+                r = safe(lambda: ids.campaign(c["campaign"])[0])
+                r and lists["neg_c"].add(_id(r))
+        elif t == "excluded_location" and ids.db is None:
+            r = safe(lambda: ids.campaign(c["campaign"])[0])
+            r and lists["loc"].add(_id(r))
+        elif t == "sitelink" and c.get("edit"):
+            aid = safe(lambda: ids.sitelink(c.get("level"), c.get("campaign"), c["text"]))
+            aid and live["sitelink"].add(f"customers/{a}/assets/{aid}")
+        elif t == "audience" and (c.get("mode") or (c.get("remove") and c.get("lists"))):
+            r = safe(lambda: ids.campaign(c["campaign"])[0])
+            r and live["campaign_aud"].add(r)
+    ids.batch(live=live, lists=lists)
+    # keywords and ads named by text / ad group: their ids are known now (the lists above), so read them in one go too
+    live = {"keyword": set(), "rsa": set()}
+    for t, c, g in later:
+        if t == "keyword":
+            for kw in c.get("keywords", [c.get("keyword")]):
+                k = safe(lambda: ids.keyword(c["campaign"], c["ad_group"], kw, c["match"]))
+                k and live["keyword"].add(f"customers/{a}/adGroupCriteria/{_id(g)}~{k}")
+        else:
+            for rid in safe(lambda: ids.rsa_ads(c["campaign"], c["ad_group"], c.get("local_id"), c.get("ad_id"))) or []:
+                live["rsa"].add(f"customers/{a}/adGroupAds/{_id(g)}~{rid}")
+    ids.batch(live=live)
+
+
 def _experiments(acct):
     """Trial campaigns (refused) and bases with a running experiment (warned): asked from Google at push time, plus what
     Editor / the cache know. If Google can't be asked, the cached facts still apply (and the push itself needs Google)."""
     try:
-        fresh = experiments.fetch(acct, query)
+        fresh = experiments.fetch(acct, _exp_query)
     except Exception:  # noqa: BLE001
         fresh = experiments.empty()
     return experiments.merge(fresh, experiments.known(acct))

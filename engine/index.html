@@ -110,7 +110,25 @@ body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 @media (max-width:1240px){#ovBtn,.atabs button{padding:0 9px;font-size:12.5px} .atabs{gap:2px} #setupBtn,#setBtn{padding:0 9px}}
 
 /* ---- push dialog bits ---- */
-.pushok{font-size:16px;margin:4px 0 12px} .pushok b{color:var(--ok)}
+.pushok{font-size:16px;margin:4px 0 12px} .pushok b{color:var(--ok)} .pushok.plain b{color:var(--text)}
+/* background job: overall bar, per-item rows with a status chip, the top-bar pill */
+.jbar{height:8px;background:var(--accent-soft);border-radius:var(--r-pill);overflow:hidden;position:relative;margin:2px 0 4px}
+.jbar i{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent);transition:width .4s var(--ease)}
+.jbar.indet i{animation:indet 1.3s var(--ease) infinite} @keyframes indet{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
+.jbar.ok{background:var(--ok-bg)} .jbar.ok i{background:var(--ok)} .jbar.bad{background:var(--bad-bg)} .jbar.bad i{background:var(--bad)}
+.jlist{margin-top:10px}
+.jrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;padding:9px 0;border-bottom:1px solid var(--line2);font-size:13px}
+.jrow .jd{font-size:12px;color:var(--muted);margin-top:2px} .jrow .jd.bad{color:var(--bad)} .jrow .jd.warn{color:var(--warn)}
+.jrow .jr{display:flex;gap:10px;align-items:center;justify-content:flex-end;white-space:nowrap}
+.jrow .jr a{font-size:12px;font-weight:600;color:var(--accent);text-decoration:none} .jrow .jr a:hover{text-decoration:underline}
+.jrow .chip .spin{width:10px;height:10px;border-width:2px}
+.jobpill{background:var(--accent-bg);color:var(--accent);box-shadow:none;flex:none} .jobpill:hover{background:var(--accent-soft)}
+.jobpill.ok{background:var(--ok-bg);color:var(--ok)} .jobpill.ok:hover{background:var(--ok-bg)} .jobpill.bad{background:var(--bad-bg);color:var(--bad)} .jobpill.bad:hover{background:var(--bad-bg)}
+/* media library (new Meta ad): pick a stored file, Prepare for Meta uploads it ahead of the push */
+.medlib{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);padding:2px 10px}
+.medrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2);font-size:13px}
+.medrow:last-child{border-bottom:0} .medrow .hint{font-size:11.5px}
+.medrow .mp{grid-column:2 / 4;font-size:12px;color:var(--muted)} .medrow .mp:empty{display:none}
 .dlg-f .link{margin-right:auto}
 .tally{border-collapse:collapse;width:100%;min-width:0;margin:2px 0 14px;font-size:13.5px} .tally td{padding:9px 4px;height:auto;border:0;border-bottom:1px solid var(--line2)} .tally td:last-child{text-align:right;font-weight:600;width:60px;font-variant-numeric:tabular-nums}
 .tally tr:hover td{background:none}
@@ -492,6 +510,7 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
   <select id="acct" title="Ad account: switch between your Google Ads and Meta accounts"></select>
   <span id="fresh" class="chip"></span>
   <span id="pend" class="chip"></span>
+  <button id="jobPill" class="tb jobpill" style="display:none" aria-live="polite"></button>
   <span id="behind" class="chip warn" style="display:none" title="You pushed live after Editor's last download">Editor is behind live: Get recent changes in Editor</span>
   <span class="spacer"></span>
   <span class="legend"><span class="lg-live">Live</span><span class="lg-draft">In draft</span><span class="lg-bad">Problem</span><span class="lg-warn">Warning</span></span>
@@ -1064,41 +1083,220 @@ function pushCounts(items){
   }
   return Object.values(out).sort((a, b) => b.n - a.n).map(x => [`${x.n === 1 ? x.one : x.many} ${x.verb}`, x.n]);
 }
+// ---- background jobs: preview, push and Prepare for Meta run on the server (jobs.py); the page polls GET /api/jobs/<id>.
+// The push dialog can be closed while a job runs: the pill in the data bar shows how far it is and opens it again.
+// Every job is bound to the account it was started for (JOB.acct): its view, titles and Push live use that account, never
+// whichever account happens to be open. ----
+const JOB = {id:null, kind:null, acct:null, src:null, job:null, byId:{}, timer:null, seen:true, fails:0};
+const JOB_MAX_FAILS = 10;  // consecutive failed polls before Studio gives up on a job
+// the UI account key for a key or a resolved Google account id (jobs file Google pushes under the resolved id)
+const acctKey = x => { const a = (S.accts || []).find(a => a.key === String(x) || String(a.id) === String(x)); return a ? a.key : String(x || "") };
+const acctName = x => { const a = (S.accts || []).find(a => a.key === acctKey(x)); return a ? a.name : String(x || "this account") };
+const metaKey = x => String(acctKey(x)).startsWith("meta");
+const jobMeta = j => j && j.source ? j.source === "meta" : JOB.acct ? metaKey(JOB.acct) : JOB.src === "meta";
+const jobWhere = j => jobMeta(j) ? "Meta" : "Google Ads";
+function jobErr(msg, detail){ const e = new Error(msg); e.detail = detail || ""; return e }
+const errHTML = e => `<div class="prob">${esc(e.message)}</div>${e.detail ? `<details class="pdet"><summary>Details</summary><pre class="out">${esc(e.detail)}</pre></details>` : ""}`;
+// POST a job route with "background": true for `acct` -> {id, acct} (202, or 409 = attach to that account's running job)
+// or {sync: result} (an older server). A 409 for a push of ANOTHER account is refused, never attached.
+async function startJob(path, body, acct = S.acct){
+  let r, j = {};
+  try {
+    r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json", "X-Studio-Press":PRESS}, body:JSON.stringify({...body, acct, background:true})});
+    try { j = await r.json() } catch(e) {}
+  } catch(e) { throw jobErr("Studio is not answering. Check that it is still running, then try again.", String(e.message || e)) }
+  if (r.status === 202 || (r.ok && j.job)) return {id:j.job, acct};
+  if (r.ok) return {sync:j, acct};
+  if (r.status === 409 && j.job){
+    let other = null;
+    try { const x = await fetch("/api/jobs/" + encodeURIComponent(j.job)); if (x.ok) other = await x.json() } catch(e) {}
+    if (other && other.acct && acctKey(other.acct) !== acctKey(acct)) throw jobErr(`A push for ${acctName(other.acct)} is running; wait for it to finish, then try again.`, j.error);
+    if (!other) throw jobErr("Another push is running; wait for it to finish, then try again.", j.error);
+    return {id:j.job, acct, attached:true};
+  }
+  if (r.status === 409) throw jobErr("Another push is running; wait for it to finish, then try again.", j.error);
+  if (r.status === 403) throw jobErr("Studio did not accept this from this window. Reload Studio and try again.", j.error);
+  if (r.status >= 500) throw jobErr("Studio could not start this. Try again in a moment; if it keeps happening, restart Studio.", j.error);
+  throw jobErr(j.error || r.statusText || "Something went wrong");
+}
+// A synchronous answer dressed as a finished job, so one renderer serves both
+const syncJob = (kind, res, acct) => ({id:null, kind, source:metaKey(acct) ? "meta" : "google", acct, state:kind === "push" && res.ok === false ? "failed" : "done",
+  ok:res.ok !== false, started:Date.now() / 1000, finished:Date.now() / 1000, progress:{done:1, total:1, label:res.message || "Done"}, items:res.items || [], result:res, error:null});
+const jobViewing = () => !!JOB.id && $("#dlg").open && $("#dlg").dataset.job === JOB.id;
+function trackJob(id, kind, byId, acct = S.acct){
+  clearTimeout(JOB.timer);
+  Object.assign(JOB, {id, kind, acct, src:metaKey(acct) ? "meta" : "google", job:null, byId:byId || {}, seen:false, fails:0});
+  jobPill(); pollJob();
+}
+const lostJob = (id, why) => ({...(JOB.job || {}), id, kind:JOB.kind, source:JOB.src, acct:JOB.acct, state:"error", ok:false, lost:true,
+  started:(JOB.job || {}).started || Date.now() / 1000, finished:Date.now() / 1000, items:(JOB.job || {}).items || [],
+  progress:{...((JOB.job || {}).progress || {done:0, total:0}), label:"Lost contact"}, result:(JOB.job || {}).result || null, error:why});
+async function pollJob(){
+  const id = JOB.id; if (!id) return;
+  clearTimeout(JOB.timer);
+  let j = null, why = "";
+  try {
+    const r = await fetch("/api/jobs/" + encodeURIComponent(id));
+    if (r.status === 404) j = lostJob(id, "Studio no longer knows this job (it was probably restarted).");
+    else if (r.ok) j = await r.json();
+    else why = `Studio answered ${r.status}`;
+  } catch(e) { why = String(e.message || e) }
+  if (id !== JOB.id) return;  // another job took over meanwhile
+  if (!j){  // 5xx or no answer: back off, give up after JOB_MAX_FAILS in a row
+    if (++JOB.fails < JOB_MAX_FAILS){ JOB.timer = setTimeout(pollJob, Math.min(8000, 500 * 2 ** JOB.fails)); return }
+    j = lostJob(id, "Last answer: " + why);
+  } else JOB.fails = 0;
+  JOB.job = j; JOB.kind = j.kind || JOB.kind; JOB.src = j.source || JOB.src;
+  if (j.state === "running"){ jobPill(); if (jobViewing()) $("#dlgB").innerHTML = jobBody(j); JOB.timer = setTimeout(pollJob, 500); return }
+  jobEnded();
+}
+function jobEnded(){
+  const j = JOB.job;
+  if (jobViewing()) openJob(); else jobPill();
+  if (j && j.kind === "push"){ poll(true); if (!jobViewing()) toast(j.lost ? "Lost contact with Studio's push job; check Activity" : j.state === "done" ? (j.result && j.result.summary) || "Push finished" : j.state === "failed" ? "Not pushed: " + ((j.progress || {}).label || "") : "The push stopped with an error") }
+}
+function jobPill(){
+  const b = $("#jobPill"), j = JOB.job, run = !!JOB.id && (!j || j.state === "running");
+  if (!JOB.id || (!run && JOB.seen)) { b.style.display = "none"; return }
+  const p = (j && j.progress) || {}, push = JOB.kind === "push", other = acctKey(JOB.acct) !== S.acct ? ` (${acctName(JOB.acct)})` : "";
+  let txt, cls = "";
+  if (run) txt = `<span class="spin"></span>${push ? "Pushing" : "Checking"} ${p.total ? `${Math.min(p.done || 0, p.total)}/${p.total}` : "..."}${esc(other)}`;
+  else if (!push) txt = "Ready to review" + esc(other);
+  else if (j.state === "done"){ txt = "Pushed: see result" + esc(other); cls = "ok" }
+  else { txt = (j.lost ? "Lost contact: see why" : j.state === "failed" ? "Not pushed: see why" : "Push stopped: see why") + esc(other); cls = "bad" }
+  b.innerHTML = txt; b.className = "tb jobpill " + cls; b.style.display = "";
+  b.title = (run ? (push ? "A push to " : "A check with ") + jobWhere(j) + ` (${acctName(JOB.acct)}) is running. ` : "") + "Click to open it.";
+}
+// item state for the chip: waiting, checking, uploading, processing, sending, sent, reversed, skipped, error ...
+const JCHIP = {waiting:["Waiting", ""], checking:["Checking", "info"], checked:["Checked", "ok"], uploading:["Uploading", "info"], processing:["Processing", "info"],
+  sending:["Sending", "info"], sent:["Sent", "ok"], ready:["On Meta", "ok"], reversed:["Reversed", "warn"], not_reversed:["Not reversed", "bad"], skipped:["Skipped", ""], error:["Error", "bad"]};
+function itemState(x, j){
+  let s = String(x.status || "waiting").toLowerCase();
+  const L = (j.progress || {}).label || "";
+  if (s === "running") s = /upload/i.test(L) ? "uploading" : /process/i.test(L) ? "processing" : j.kind === "preview" || /check/i.test(L) ? "checking" : "sending";
+  if (s === "done" || s === "ok") s = j.kind === "preview" ? "checked" : j.kind === "upload" ? "ready" : "sent";
+  if (s === "failed") s = "error";
+  return s;
+}
+function stateChip(x, j){
+  const s = itemState(x, j), [t, c] = JCHIP[s] || [s.replace(/_/g, " "), ""];
+  const m = ["uploading", "processing"].includes(s) && /(\d+)\s*%/.exec((j.progress || {}).label || "");
+  return `<span class="chip ${c}">${j.state === "running" && ["checking", "uploading", "processing", "sending"].includes(s) ? `<span class="spin"></span>` : ""}${esc(t)}${m ? " " + m[1] + "%" : ""}</span>`;
+}
+const jobLabel = x => (JOB.byId[x.key] || {}).summary || x.label || x.key;
+const jobRow = (x, j, right) => `<div class="jrow ${esc(itemState(x, j))}"><div><div>${esc(jobLabel(x))}</div>${x.detail || x.error ? `<div class="jd ${itemState(x, j) === "error" ? "bad" : ""}">${esc(x.detail || x.error)}</div>` : ""}</div>
+  <div class="jr">${right || stateChip(x, j)}</div></div>`;
+function jobBar(j){
+  const p = j.progress || {}, tot = p.total || 0, pct = tot ? Math.round(100 * Math.min(p.done || 0, tot) / tot) : 0;
+  const cls = j.state === "running" ? (tot ? "" : "indet") : j.state === "done" ? "ok" : "bad";
+  return `<div class="jbar ${cls}"><i style="width:${j.state === "running" && !tot ? 30 : j.state === "running" ? pct : 100}%"></i></div>`;
+}
+function jobBody(j){
+  const p = j.progress || {}, tot = p.total || 0, push = j.kind === "push";
+  const secs = Math.max(0, Math.round((j.finished || Date.now() / 1000) - (j.started || Date.now() / 1000)));
+  return `<div class="prog-h"><span class="spin"></span>${esc(p.label || (push ? "Pushing" : "Checking"))}</div>${jobBar(j)}
+    <p class="hint" style="margin:6px 0 10px">${tot ? `${Math.min(p.done || 0, tot)} of ${tot}` : "Starting"} · ${secs}s · You can close this window: the ${push ? "push" : "check"} carries on, and the pill above the grid opens it again.</p>
+    ${(j.items || []).map(x => jobRow(x, j)).join("")}`;
+}
+const jobTitle = (pre, acct) => `${pre} ${metaKey(acct) ? "Meta" : "Google Ads"}: ${acctName(acct)}`;
+function openJob(){
+  const j = JOB.job;
+  if (!j || j.state === "running"){
+    showDialog(jobTitle(JOB.kind === "push" ? "Pushing live to" : "Push to", JOB.acct), j ? jobBody(j) : `<div class="prog-h"><span class="spin"></span>Starting ...</div>`, [["Hide", () => dlg.close()]]);
+  } else {
+    JOB.seen = true;
+    if (JOB.kind === "push") pushResult(j);
+    else if (j.state !== "done") showDialog(jobTitle("Push to", JOB.acct), errHTML(jobErr(j.lost ? "Lost contact with Studio's check; try again." : `Studio could not finish checking the draft with ${jobMeta(j) ? "Meta" : "Google"}. Try again in a moment.`, j.error || (j.progress || {}).label)), [histLink(), ["Try again", livePreview]]);
+    else renderPreview(j.result || {}, JOB.acct);
+  }
+  if (JOB.id) $("#dlg").dataset.job = JOB.id;
+  jobPill();
+}
+$("#jobPill").onclick = openJob;
+function dropOtherPreview(){  // account switch: a preview of another account can no longer be pushed from here
+  if (JOB.kind === "preview" && JOB.id && acctKey(JOB.acct) !== S.acct){ clearTimeout(JOB.timer); Object.assign(JOB, {id:null, job:null, seen:true}); jobPill() }
+}
+async function resumeJobs(){  // after a reload: show a preview or push that is still running for this account
+  if (JOB.id && (!JOB.job || JOB.job.state === "running")) return;
+  try {
+    const js = (await api("/api/jobs?" + qs({acct:S.acct, limit:10}))).jobs || [];
+    const j = js.find(x => x.state === "running" && x.kind === "push") || js.find(x => x.state === "running" && x.kind === "preview");
+    if (j) trackJob(j.id, j.kind, Object.fromEntries((S.draftItems || []).map(i => [i.id, i])), S.acct);
+  } catch(e) {}
+}
+
+// ---- push preview: ticking "new as Active / Enabled" only rewords the rows and the spend tick; the push re-checks live anyway ----
+const ACTIVE_SPEND = /is created Active and starts delivering/;
+const metaNewAd = l => /^new (carousel )?ad "/.test(l);
+const newOn = meta => meta ? LIVE.meta_new : LIVE.enable_new;
+function newWord(l, meta){
+  if (meta) return metaNewAd(l) ? l.replace(newOn(true) ? "(Paused)" : "(Active)", newOn(true) ? "(Active)" : "(Paused)") : l;
+  return /^new (ad group|keyword|RSA)\b/.test(l) ? l.replace(/\b(PAUSED|ENABLED)\)/, (newOn(false) ? "ENABLED" : "PAUSED") + ")") : l;
+}
+function summaryWord(s, meta){ return meta && /^Meta new ad "/.test(s) ? s.replace(newOn(true) ? /Paused\)$/ : /Active\)$/, newOn(true) ? "Active)" : "Paused)") : s }
+function previewSpend(i, meta){
+  if (!meta) return i.spend;
+  const out = i.spend.filter(f => !ACTIVE_SPEND.test(f));
+  if (newOn(true)) i.lines.filter(metaNewAd).forEach(l => out.push(`new ad "${(/^new (?:carousel )?ad "([^"]*)"/.exec(l) || [])[1]}" is created Active and starts delivering once Meta approves it`));
+  return out;
+}
 async function livePreview(){
-  const where = isMeta() ? "Meta" : "Google Ads", who = isMeta() ? "Meta" : "Google";
+  if (JOB.kind === "push" && JOB.id && (!JOB.job || JOB.job.state === "running")) return openJob();  // a push is running: show it
+  const acct = S.acct, where = isMeta() ? "Meta" : "Google Ads", who = isMeta() ? "Meta" : "Google";
   if (!(S.draftItems || []).length){
-    showDialog("Push to " + where, `<div class="empty">Nothing in the draft.<br><br>Every change you make lands in the draft on its own. Come back here to push it all live in one go.</div>`, [histLink()]);
+    showDialog(jobTitle("Push to", acct), `<div class="empty">Nothing in the draft.<br><br>Every change you make lands in the draft on its own. Come back here to push it all live in one go.</div>`, [histLink()]);
     return;
   }
-  showDialog("Push to " + where, `<div class="empty">Asking ${who} to check the ${S.draftItems.length} change${S.draftItems.length > 1 ? "s" : ""} in the draft ...</div>`, [histLink()]);
-  let p;
+  showDialog(jobTitle("Push to", acct), `<div class="prog-h"><span class="spin"></span>Starting the check with ${who} ...</div>`, [histLink(), ["Hide", () => dlg.close()]]);
   const TR = window.TeamReviews; // [team reviews] approvals, only mine / all approved, why note
-  try { p = await api("/api/live/preview", {enable_new:liveNew(), ...(TR ? TR.extra() : {})}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
   const byId = Object.fromEntries((S.draftItems || []).map(i => [i.id, i]));
-  const counts = pushCounts(p.items.map(i => byId[i.id] || {}));
-  const bad = p.items.filter(i => i.problems.length), nSpend = p.items.filter(i => i.spend.length).length, nPerm = p.items.filter(i => i.permanent.length).length;
-  const details = p.items.map(i => `<div class="pv"><div><b>${i.by === "claude" ? "Claude" : "You"}:</b> ${esc(i.summary)}</div>
-    ${i.lines.map(l => `<div class="ln2">${esc(l)}</div>`).join("")}
-    ${i.spend.map(f => `<span class="flag spend">raises spend: ${esc(f)}</span> `).join("")}
+  let s;
+  try { s = await startJob("/api/live/preview", {enable_new:newOn(metaKey(acct)), ...(TR ? TR.extra() : {})}, acct) } catch(e) { $("#dlgB").innerHTML = errHTML(e); return }
+  if (s.sync) return renderPreview(s.sync, acct);
+  trackJob(s.id, "preview", byId, acct); $("#dlg").dataset.job = s.id;
+}
+function renderPreview(p, acct){
+  if (acctKey(acct) !== S.acct) return wrongAcct(acct);
+  const meta = metaKey(acct);
+  const byId = Object.fromEntries((S.draftItems || []).map(i => [i.id, i]));
+  const counts = pushCounts((p.items || []).map(i => byId[i.id] || {}));
+  const TR = window.TeamReviews;
+  const bad = p.items.filter(i => i.problems.length), nPerm = p.items.filter(i => i.permanent.length).length;
+  const spendN = () => p.items.filter(i => previewSpend(i, meta).length).length;
+  let spendShown = spendN();
+  const details = () => p.items.map(i => `<div class="pv"><div><b>${i.by === "claude" ? "Claude" : "You"}:</b> ${esc(summaryWord(i.summary, meta))}</div>
+    ${i.lines.map(l => `<div class="ln2">${esc(newWord(l, meta))}</div>`).join("")}
+    ${previewSpend(i, meta).map(f => `<span class="flag spend">raises spend: ${esc(f)}</span> `).join("")}
     ${i.permanent.length ? `<span class="flag perm">permanent, can't be undone</span>` : ""}
     ${i.problems.map(x => `<div class="prob">${esc(x)}</div>`).join("")}
     ${(i.warnings || []).map(x => `<div class="warnl">${esc(x)}</div>`).join("")}</div>`).join("");
+  const spendTick = was => { const n = spendN(); return n ? `<label class="tick"><input type="checkbox" id="lv_spend" ${was ? "checked" : ""}> <span>${n} change${n > 1 ? "s" : ""} can raise spend. I know.</span></label>` : "" };
   const body = `<table class="tally">${counts.map(([l, n]) => `<tr><td>${esc(l)}</td><td>${n}</td></tr>`).join("")}</table>
     ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then Undo or fix ${bad.length > 1 ? "them" : "it"} in the Draft tab.</div>` : ""}
-    ${isMeta() ? `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.meta_new ? "checked" : ""}> <span>Create new ads as <b>Active</b> (they deliver once Meta approves them; new campaigns and ad sets stay Paused)</span></label>`
+    ${meta ? `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.meta_new ? "checked" : ""}> <span>Create new ads as <b>Active</b> (they deliver once Meta approves them; new campaigns and ad sets stay Paused)</span></label>`
       : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
-    ${p.spend ? `<label class="tick"><input type="checkbox" id="lv_spend"> <span>${nSpend} change${nSpend > 1 ? "s" : ""} can raise spend. I know.</span></label>` : ""}
+    <div id="lv_spendBox">${spendTick(false)}</div>
     ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (${isMeta() ? "permanent changes" : "removals"}). I know.</span></label>` : ""}
-    <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary>${details}</details>${TR ? TR.section(p.team) : ""}`;
-  showDialog("Push to " + where, body, [histLink(), ...(isMeta() ? [] : [["Send to Editor instead", sendToEditor]]), ["Push live", livePush, "live"]]);
+    <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary><div id="lv_det">${details()}</div></details>${TR ? TR.section(p.team) : ""}`;
+  showDialog(jobTitle("Push to", acct), body, [histLink(), ...(meta ? [] : [["Send to Editor instead", sendToEditor]]), ["Push live", () => livePush(acct), "live"]]);
   const btn = $("#dlgF .live");
-  const upd = () => { btn.disabled = !p.ok || (p.spend && !$("#lv_spend").checked) || (p.permanent && !$("#lv_perm").checked) || (TR && !TR.ready(p.team)) };
-  ["#lv_spend", "#lv_perm"].forEach(id => $(id) && ($(id).onchange = upd)); upd();
+  const upd = () => { btn.disabled = !p.ok || (spendN() && !($("#lv_spend") && $("#lv_spend").checked)) || (p.permanent && !$("#lv_perm").checked) || (TR && !TR.ready(p.team)) };
+  const wireSpend = () => { if ($("#lv_spend")) $("#lv_spend").onchange = upd };
+  wireSpend(); if ($("#lv_perm")) $("#lv_perm").onchange = upd; upd();
   if (TR) TR.wire($("#dlgB"), livePreview, upd);
-  if ($("#lv_new")) $("#lv_new").onchange = e => {
-    if (isMeta()) { LIVE.meta_new = e.target.checked; localStorage.setItem("studio.metaNewActive", e.target.checked ? "1" : "0") }
+  $("#lv_new").onchange = e => {
+    if (meta) { LIVE.meta_new = e.target.checked; try { localStorage.setItem("studio.metaNewActive", e.target.checked ? "1" : "0") } catch(err) {} }
     else LIVE.enable_new = e.target.checked;
-    livePreview() };
+    // more changes can raise spend now: the earlier "I know" no longer covers them, so it is unticked
+    const n = spendN(), was = n <= spendShown && !!($("#lv_spend") && $("#lv_spend").checked);
+    spendShown = n;
+    $("#lv_det").innerHTML = details(); $("#lv_spendBox").innerHTML = spendTick(was); wireSpend(); upd();
+  };
+}
+// the open account is not the one this push belongs to: never push it from here
+function wrongAcct(acct){
+  showDialog(jobTitle("Push to", acct), `<div class="prob">This check is for ${esc(acctName(acct))}, but ${esc(acctName(S.acct))} is open now. Switch back to ${esc(acctName(acct))} to check and push its draft.</div>`,
+    [histLink(), [`Switch back to ${acctName(acct)}`, async () => { await switchAcct(acctKey(acct)); livePreview() }, "primary"]]);
 }
 // ---- progress list while a push or undo runs (like Editor's Post window) ----
 const PST = {waiting:"Waiting", checking:"Checking", sending:"Sending", done:"Done", failed:"Failed", reversed:"Reversed"};
@@ -1125,18 +1323,86 @@ async function withProgress(title, path, body, progUrl){
   try { return await api(path, body) } finally { stop = true }
 }
 async function lastProgress(progUrl){ try { return progressHTML(await api(progUrl || "/api/live/progress?" + qs({acct:S.acct})), "") } catch(e) { return "" } }
-async function livePush(){
-  const btn = $("#dlgF .live"); btn.disabled = true; btn.textContent = "Pushing ...";
-  const body = {enable_new:liveNew(), accept_spend:!!($("#lv_spend") && $("#lv_spend").checked), accept_permanent:!!($("#lv_perm") && $("#lv_perm").checked),
+async function livePush(acct){
+  if (!acct || acctKey(acct) !== S.acct) return wrongAcct(acct || S.acct);  // only ever the account that was previewed, and only while it is open
+  const meta = metaKey(acct);
+  const btn = $("#dlgF .live"); btn.disabled = true; btn.textContent = "Starting ...";
+  const body = {enable_new:newOn(meta), accept_spend:!!($("#lv_spend") && $("#lv_spend").checked), accept_permanent:!!($("#lv_perm") && $("#lv_perm").checked),
                 ...(window.TeamReviews ? TeamReviews.extra() : {})};
+  const byId = Object.fromEntries((S.draftItems || []).map(i => [i.id, i]));
+  let s;
+  try { s = await startJob("/api/live/push", body, acct) }
+  catch(e) { btn.disabled = false; btn.textContent = "Push live"; $("#dlgB").insertAdjacentHTML("afterbegin", errHTML(e)); $("#dlgB").scrollTop = 0; return }
+  if (s.sync){ clearTimeout(JOB.timer); Object.assign(JOB, {id:null, kind:"push", acct, src:meta ? "meta" : "google", job:syncJob("push", s.sync, acct), byId, seen:true}); jobPill(); pushResult(JOB.job); poll(true); return }
+  if (s.attached) toast("A push is already running for this account: showing it");
+  trackJob(s.id, "push", byId, acct); openJob();
+}
+// ---- push result: done + ok = pushed; failed = not pushed (the reason is in progress.label); error = something broke ----
+const LIVE_ST = {ACTIVE:["Active", "ok"], PAUSED:["Paused", ""], CAMPAIGN_PAUSED:["Paused (campaign)", ""], ADSET_PAUSED:["Paused (ad set)", ""],
+  PENDING_REVIEW:["In review", "warn"], IN_PROCESS:["In review", "warn"], PREAPPROVED:["In review", "warn"], DISAPPROVED:["Disapproved", "bad"], WITH_ISSUES:["With issues", "bad"]};
+function liveChip(st){
+  if (st == null) return "";
+  const [t, c] = LIVE_ST[String(st).toUpperCase()] || (String(st).toLowerCase() === "unknown" ? ["Status unknown", ""] : [String(st).replace(/_/g, " ").toLowerCase().replace(/^./, m => m.toUpperCase()), ""]);
+  return `<span class="chip ${c}" title="Meta: ${esc(st)}">${esc(t)}</span>`;
+}
+// Ads Manager links come from the server / Meta: only Meta's own https pages are ever rendered as a link
+const safeMetaLink = u => typeof u === "string" && /^https:\/\/(adsmanager\.facebook\.com|www\.facebook\.com)\//.test(u) ? u : null;
+function primaryId(x){  // (level, Meta id) a pushed item is about, as meta_ads._primary
+  const ids = x.ids || {};
+  for (const [k, lv] of [["ad_id", "ad"], ["adset_id", "adset"], ["campaign_id", "campaign"]]) if (ids[k]) return [lv, String(ids[k])];
+  return ids.object_id && x.level ? [x.level, String(ids.object_id)] : [null, null];
+}
+const jobItems = j => (j.items && j.items.length ? j.items : (j.result && (j.result.items || j.result.results)) || []);
+function metaRow(x, j){
+  const live = x.live_status != null, link = safeMetaLink(x.link);
+  // the live status wins over the draft's wording ("..., Paused)") so the row never contradicts its chip
+  const label = live ? String(jobLabel(x)).replace(/,\s*(Paused|Active)\)$/, ")").replace(/\s*\((Paused|Active)\)/, "") : jobLabel(x);
+  const right = (live ? liveChip(x.live_status) : stateChip(x, j)) + (link ? ` <a href="${esc(link)}" target="_blank" rel="noopener">Open in Ads Manager</a>` : "");
+  const sub = [x.review ? `<div class="jd warn">${esc(x.review)}</div>` : "", x.error || x.detail ? `<div class="jd bad">${esc(x.error || x.detail)}</div>` : ""].join("");
+  return `<div class="jrow"><div><div>${esc(label)}</div>${sub}</div><div class="jr">${right}</div></div>`;
+}
+function pushResult(j){
+  const r = j.result || {}, meta = jobMeta(j), where = jobWhere(j), its = jobItems(j), acct = JOB.acct || j.acct;
+  const list = its.length ? `<div class="jlist">${its.map(x => meta ? metaRow(x, j) : jobRow(x, j)).join("")}</div>` : "";
+  const errs = r.errors ? `<details class="pdet"><summary>What ${meta ? "Meta" : "Google"} said</summary><pre class="out">${esc(JSON.stringify(r.errors, null, 1))}</pre></details>` : "";
+  const sameAcct = acctKey(acct) === S.acct;
+  const close = ["Done", () => dlg.close(), "primary"];
+  if (j.state === "error"){
+    const msg = j.lost ? `Lost contact with Studio's push job; check Activity to see what reached ${where} (${acctName(acct)}).`
+      : `The push to ${where} stopped with an error. Some changes may already be live: open Push history to see what reached ${where}, and undo it there if needed.`;
+    showDialog(jobTitle(j.lost ? "Lost contact:" : "Push stopped:", acct), `${jobBar(j)}${errHTML(jobErr(msg, j.error))}${list}`, [...(sameAcct ? [histLink()] : []), close]);
+    return;
+  }
+  const ok = j.state === "done" && j.ok === true;
+  const canRefresh = meta && its.some(x => primaryId(x)[1]);
+  if (ok){
+    const sum = meta ? r.summary || r.message || "Pushed to Meta" : "Everything is live.";
+    const allLive = !meta || /^Everything is live/.test(sum);
+    showDialog(meta ? `Pushed to Meta: ${acctName(acct)}` : `Live in Google Ads: ${acctName(acct)}`, `<p class="pushok ${allLive ? "" : "plain"}"><b>${esc(sum)}</b></p>${jobBar(j)}${list}
+      ${!meta && r.message ? `<p>${esc(r.message)}</p>` : ""}${meta && r.message && r.message !== `Pushed to Meta: ${sum}.` ? `<p class="hint">${esc(r.message)}</p>` : ""}${errs}
+      ${meta ? `<p class="hint">New ads deliver only once Meta has reviewed them. Refresh status to see where they are now.</p>` : `<p class="hint">Editor doesn't know about this yet: press Get recent changes in Editor so Studio and Editor show the live values.</p>`}`,
+      [...(sameAcct ? [histLink()] : []), ...(canRefresh ? [["Refresh status", () => refreshMetaStatus(j)]] : []), ...(r.push_id && sameAcct ? [["Undo this push", () => liveUndo(r.push_id), "danger"]] : []), close]);
+    return;
+  }
+  const why = (j.progress || {}).label || r.message || "Not pushed";
+  showDialog(jobTitle(r.partial ? "Partly pushed to" : "Not pushed to", acct), `<div class="prob">${esc(why)}</div>${r.summary && r.summary !== "Not pushed" ? `<p class="hint">${esc(r.summary)}</p>` : ""}${list}${errs}`,
+    [...(sameAcct ? [histLink()] : []), ...(canRefresh ? [["Refresh status", () => refreshMetaStatus(j)]] : []), ...(r.partial && r.push_id && sameAcct ? [["Undo what was kept", () => liveUndo(r.push_id), "danger"]] : []), close]);
+}
+async function refreshMetaStatus(j){
+  const btn = [...document.querySelectorAll("#dlgF button")].find(b => b.textContent === "Refresh status");
+  if (btn){ btn.disabled = true; btn.textContent = "Checking ..." }
+  const by = {}, its = jobItems(j);
+  for (const x of its){ const [lv, id] = primaryId(x); if (id) (by[lv] = by[lv] || []).push(id) }
   try {
-    const r = await withProgress("Pushing live to " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/push", body);
-    const list = await lastProgress();
-    showDialog(r.ok ? (isMeta() ? "Live on Meta" : "Live in Google Ads") : "Not pushed", `${r.ok ? `<p class="pushok"><b>Everything is live.</b></p>` : ""}${list}<p>${esc(r.message)}</p>${r.errors ? `<pre class="out">${esc(JSON.stringify(r.errors, null, 1))}</pre>` : ""}
-      ${r.ok && !isMeta() ? `<p class="hint">Editor doesn't know about this yet: press Get recent changes in Editor so Studio and Editor show the live values.</p>` : ""}`,
-      r.ok ? [histLink(), ["Undo this push", () => liveUndo(r.push_id), "danger"], ["Done", () => dlg.close(), "primary"]] : [histLink()]);
-  } catch(e) { toast(e.message) }
-  poll(true);
+    for (const [lv, ids] of Object.entries(by)){
+      const st = (await api("/api/meta/status?" + qs({acct:acctKey(JOB.acct || j.acct), ids:ids.join(","), level:lv}))).statuses || [];
+      const got = Object.fromEntries(st.map(s => [String(s.id), s]));
+      for (const x of its){ const [l2, id] = primaryId(x); const s = l2 === lv && got[id];
+        if (s) Object.assign(x, {live_status:s.live_status, configured_status:s.configured_status, review:s.review, link:safeMetaLink(s.link) || safeMetaLink(x.link)}) }
+    }
+    pushResult(j); if (JOB.id && JOB.job === j) $("#dlg").dataset.job = JOB.id;
+    toast("Status refreshed from Meta");
+  } catch(e) { toast(e.message); if (btn){ btn.disabled = false; btn.textContent = "Refresh status" } }
 }
 async function liveUndo(id, spend){
   if (!spend && !confirm(`Reverse this push in ${isMeta() ? "Meta" : "Google Ads"} now?`)) return;
@@ -1158,7 +1424,7 @@ async function liveHistory(){
     ${r.can_undo ? `<button class="danger" data-undo="${r.id}" style="margin-top:6px">Undo</button>` : ""}</div>`).join("") : `<div class="empty">No live pushes yet.</div>`, [["Back to push", livePreview]]);
   document.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => liveUndo(b.dataset.undo));
 }
-$("#pushHdr").onclick = async () => { await asFlush(); await poll(true); livePreview() };
+$("#pushHdr").onclick = async () => { await asFlush(); await poll(true); livePreview() };  // a running push opens its progress instead
 
 // ---- live sync: picks up Claude's MCP edits and Editor changes ----
 async function poll(force){
@@ -1201,6 +1467,7 @@ async function poll(force){
 
 // ---- add dialogs ----
 function showDialog(title, body, buttons){
+  delete $("#dlg").dataset.job;  // a background job's view (openJob) sets this again
   $("#dlgT").textContent = title; $("#dlgB").innerHTML = body;
   $("#dlgF").innerHTML = ""; for (const [label, fn, cls] of buttons){ const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; $("#dlgF").appendChild(b) }
   $("#dlg").showModal();
@@ -1213,6 +1480,32 @@ function needScope(level){
   if (level === "ad_group" && !sc.ad_group){ toast("Pick an ad group in the tree first"); return null }
   if (level === "campaign" && !sc.campaign){ toast("Pick a campaign in the tree first"); return null }
   return sc;
+}
+// Prepare for Meta: upload a media library file to the Meta ad account now (a background job), so Push live reuses it
+async function prepareForMeta(mediaId, out, onReady, onFail){
+  const show = h => { if (out && out.isConnected) out.innerHTML = h };
+  show(`<span class="spin"></span> Starting ...`);
+  let s;
+  try { s = await startJob("/api/meta/media/prepare", {media_id:mediaId}) } catch(e) { show(errHTML(e)); if (onFail) onFail(); return }
+  if (s.sync){ if (s.sync.ok !== false){ show(""); onReady() } else { show(`<div class="prob">${esc(s.sync.message || "Not prepared")}</div>`); if (onFail) onFail() } return }
+  let fails = 0;
+  const tick = async () => {
+    let j = null;
+    let why = "";
+    try { const r = await fetch("/api/jobs/" + encodeURIComponent(s.id));
+      if (r.status === 404) j = {state:"error", error:"Studio no longer knows this upload (it was probably restarted)."}; else if (r.ok) j = await r.json(); else why = `Studio answered ${r.status}` }
+    catch(e) { why = String(e.message || e) }
+    if (!j){ if (++fails < JOB_MAX_FAILS) return setTimeout(tick, Math.min(8000, 500 * 2 ** fails)); j = {state:"error", lost:true, error:"Last answer: " + why} }
+    fails = 0;
+    if (j.state === "running"){
+      const p = j.progress || {}, m = /(\d+)\s*%/.exec(p.label || "");
+      show(`${jobBar(j)}<span>${esc(p.label || "Uploading")}${m || !p.total ? "" : ` ${Math.round(100 * (p.done || 0) / p.total)}%`}</span>`);
+      return setTimeout(tick, 500);
+    }
+    if (j.state === "done" && j.ok !== false){ show(`<span style="color:var(--ok)">${esc((j.result && (j.result.summary || j.result.message)) || "Ready for Meta")}</span>`); onReady(); toast("Ready for Meta: Push live reuses it") }
+    else { show(errHTML(jobErr(j.state === "failed" ? (j.progress || {}).label || "Not prepared" : j.lost ? "Lost contact with Studio's upload job; check Activity, or try again." : "The upload to Meta stopped with an error. Try again; Push live also uploads it.", j.error))); if (onFail) onFail() }
+  };
+  tick();
 }
 async function submit(changes, note){ try { await addChanges(changes, note); dlg.close() } catch(e) { toast(e.message) } }
 const noteRow = `<div class="row"><label>Why (optional)</label><input id="f_note" placeholder="Shown in the draft and the changelog"></div>`;
@@ -1454,15 +1747,17 @@ const META_ADD = {
     showDialog("New ad in " + sc.ad_group, `<p class="hint">New ads are created <b>Paused</b>. Nothing changes on Meta until you push live.</p>
       <div class="row"><label>Image or video</label><span>
         <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="copy" ${ads.length ? "checked" : "disabled"}> Copy the image/video of an existing ad${ads.length ? "" : " (none to copy)"}</label>
-        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="upload" ${ads.length ? "" : "checked"}> Upload a new image or video</label></span></div>
+        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="upload" ${ads.length ? "" : "checked"}> Upload a new image or video</label>
+        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="library"> Use a file from the media library</label></span></div>
+      <div id="srcLib"><div class="row" style="align-items:start"><label>Media library</label><div id="libList" class="medlib"><div class="hint" style="padding:8px 0">Loading ...</div></div></div></div>
       <div id="srcCopy"><div class="row"><label>Copy from</label><select id="f_from">${ads.map(a => `<option value="${a.id}">${esc(a.ad)} (${esc(a.format)}${where === "the account" ? ", " + esc(a.ad_set) : ""})</option>`).join("")}</select></div></div>
       <div id="srcUp"><div class="row"><label>File</label><span><input type="file" id="f_file" accept=".jpg,.jpeg,.png,.mp4,.mov,image/jpeg,image/png,video/mp4,video/quicktime"><div id="upOut" class="hint">JPG or PNG up to 30 MB, MP4 or MOV up to 250 MB. Kept on this Mac; uploaded to Meta only when you push live.</div></span></div><div id="upPrev"></div></div>
       <div class="row"><label>New ad name</label><input id="f_name"></div><div id="copyBox"></div>${noteRow}`,
       [["Add to draft", () => {
         const name = val("f_name"); if (!name) return toast("Give the ad a name");
         const pt = $("#f_pt").value.trim();
-        if (src() === "upload"){
-          if (!media) return toast("Upload an image or video first");
+        if (src() === "upload" || src() === "library"){
+          if (!media) return toast(src() === "library" ? "Pick a file from the media library first" : "Upload an image or video first");
           if (!pt || !val("f_hl") || !val("f_ln")) return toast("An uploaded image or video needs primary text, a headline and a link");
           return submit([{type:"meta_new_ad", adset_id:S.ag, media_id:media.media_id, name, primary_text:pt, headline:val("f_hl"),
             ...(val("f_ds") ? {description:val("f_ds")} : {}), link:val("f_ln"), cta:val("f_cta")}], val("f_note"));
@@ -1477,11 +1772,27 @@ const META_ADD = {
       }, "primary"]]);
     const src = () => (document.querySelector("[name=f_src]:checked") || {}).value;
     const fill = () => {
-      const up = src() === "upload";
-      $("#srcCopy").style.display = up ? "none" : ""; $("#srcUp").style.display = up ? "" : "none";
+      const up = src() === "upload" || src() === "library";
+      if (src() !== srcWas){ media = null; srcWas = src(); document.querySelectorAll("[name=f_lib]").forEach(r => r.checked = false) }
+      $("#srcCopy").style.display = up ? "none" : ""; $("#srcUp").style.display = src() === "upload" ? "" : "none"; $("#srcLib").style.display = src() === "library" ? "" : "none";
+      if (src() === "library" && !libLoaded){ libLoaded = true; loadLib() }
       const a = up ? {primary_text:"", headline:"", description:"", link:"", cta:"LEARN_MORE"} : ads.find(a => a.id === val("f_from"));
       $("#copyBox").innerHTML = (up ? `<p class="hint">Primary text, headline and link are needed for an uploaded file.</p>` : "") + copyFields(a); counter($("#f_hl"), 40);
     };
+    let srcWas = src(), libLoaded = false, lib = [];
+    const loadLib = async () => {
+      try { lib = await api("/api/meta/media/list?" + qs({acct:S.acct})) } catch(err) { $("#libList").innerHTML = `<div class="prob">${esc(err.message)}</div>`; return }
+      $("#libList").innerHTML = lib.length ? lib.map(m => `<div class="medrow"><input type="radio" name="f_lib" value="${esc(m.media_id)}" aria-label="${esc(m.name)}">
+        <span>${esc(m.name)} <span class="hint">· ${esc(m.kind)} · ${(m.size / 1048576).toFixed(1)} MB${m.stored ? " · " + esc(studioFmt.date(m.stored)) : ""}</span></span>
+        <span data-mst="${esc(m.media_id)}">${m.on_meta ? `<span class="chip ok">On Meta</span>` : `<button data-prep="${esc(m.media_id)}">Prepare for Meta</button>`}</span>
+        <div class="mp" id="mp_${esc(m.media_id)}"></div></div>`).join("")
+        : `<div class="hint" style="padding:8px 0">Nothing in the media library yet. Upload a file first: it is kept here for the next ad.</div>`;
+    };
+    $("#libList").onchange = e => { if (e.target.name !== "f_lib") return; const m = lib.find(x => x.media_id === e.target.value); media = m || null;
+      if (m && !val("f_name")) $("#f_name").value = m.name.replace(/\.[^.]+$/, "") };
+    $("#libList").onclick = e => { const b = e.target.closest("[data-prep]"); if (!b) return; const id = b.dataset.prep;
+      b.disabled = true; prepareForMeta(id, $("#mp_" + id), () => { const m = lib.find(x => x.media_id === id); if (m) m.on_meta = true;
+        const st = document.querySelector(`[data-mst="${id}"]`); if (st) st.innerHTML = `<span class="chip ok">On Meta</span>` }, () => { b.disabled = false }) };
     document.querySelectorAll("[name=f_src]").forEach(b => b.onchange = fill);
     if (ads.length) $("#f_from").onchange = fill;
     $("#f_file").onchange = async e => {
@@ -1491,7 +1802,9 @@ const META_ADD = {
         const data = await readFile(f);
         $("#upOut").textContent = `Storing ${f.name} on this Mac ...`;
         media = await api("/api/meta/media", {filename:f.name, data});
-        $("#upOut").textContent = `${media.name} · ${media.kind} · ${(media.size / 1048576).toFixed(1)} MB · stored, uploaded to Meta when you push live`;
+        $("#upOut").innerHTML = `${esc(media.name)} · ${esc(media.kind)} · ${(media.size / 1048576).toFixed(1)} MB · stored, uploaded to Meta when you push live, or now: <button class="link" id="upPrep">Prepare for Meta</button><div id="upPrepOut" class="hint"></div>`;
+        const mid = media.media_id; libLoaded = false;
+        $("#upPrep").onclick = () => { $("#upPrep").disabled = true; prepareForMeta(mid, $("#upPrepOut"), () => { $("#upPrep").outerHTML = `<span class="chip ok">On Meta</span>` }, () => { $("#upPrep").disabled = false }) };
         const mu = mediaUrl(media.media_id);
         $("#upPrev").innerHTML = `<div class="row"><label></label>${media.kind === "video" ? `<video src="${esc(mu)}" controls muted style="max-width:240px;max-height:180px;border-radius:6px"></video>` : `<img id="upThumb" src="${esc(mu)}" alt="" style="max-width:240px;max-height:180px;border-radius:6px;object-fit:contain">`}</div>`;
         if (!val("f_name")) $("#f_name").value = media.name.replace(/\.[^.]+$/, "");
@@ -2069,7 +2382,8 @@ $("#hlBtn").onclick = () => healthDialog(false);
 async function switchAcct(key){
   S.acct = key; localSet("acct", key); $("#acct").value = key; S.camp = S.ag = null; S.open.clear(); S.draftV = -1; S.sort = null; S.focus = null;
   $("#editBody").innerHTML = `<div class="empty">Click a row to see and edit it here.</div>`; editFoot([]);
-  renderTabs(); renderViews(); noteFetch(); loadTree(); loadGrid(); poll(true);
+  dropOtherPreview(); jobPill();
+  renderTabs(); renderViews(); noteFetch(); loadTree(); loadGrid(); await poll(true); resumeJobs();
 }
 async function reloadAccounts(){
   const accts = await api("/api/accounts");
@@ -2161,7 +2475,7 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
   $("#acct").onchange = e => switchAcct(e.target.value);
   if (!accts.some(a => a.key === S.acct) && accts.length){ S.acct = accts[0].key; $("#acct").value = S.acct }
   S.accts = accts; await loadFx(); await loadViews(); healthDot(); loadDataStatus();
-  renderRange(); renderTabs(); noteFetch(); await loadTree(); await loadGrid(); poll(true);
+  renderRange(); renderTabs(); noteFetch(); await loadTree(); await loadGrid(); await poll(true); resumeJobs();
   setInterval(poll, 2500);  // local state only (draft, Editor pending, cache times): never asks Google or Meta
 })();
 </script>

@@ -25,6 +25,7 @@ import core
 import datapolicy
 import datasources
 import fx
+import geo_countries  # country list + quick groups for the Meta ad set location picker
 import live
 import meta_ads as meta
 import meta_tests
@@ -485,6 +486,8 @@ class H(BaseHTTPRequestHandler):
             return self._run(scheduler.status)
         if u.path == "/api/health":
             return self._run(lambda: {"summary": health.summary(), **(health.cached() or {"checked_at": None, "results": []})})
+        if u.path == "/api/meta/countries":  # the country list + quick groups for the ad set location picker (no network)
+            return self._run(geo_countries.for_ui)
         if u.path == "/api/meta/status":  # read-only: live status / review of pushed Meta objects
             if not meta.is_meta(q.get("acct") or meta.KEY):
                 return self._send(400, {"error": "acct must be a Meta ad account"})

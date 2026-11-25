@@ -321,6 +321,33 @@ dialog::backdrop{background:var(--scrim);-webkit-backdrop-filter:blur(2px);backd
 .dlg-b{padding:6px 24px 18px;overflow:auto;max-height:calc(90vh - 140px)}
 .dlg-f{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:14px 24px 20px;border-top:1px solid var(--line2)}
 .dlg-f:empty{display:none}
+/* country picker for Meta ad sets (static/geo_picker.js): a summary + button in the form, a second dialog over it */
+.gp-sum{display:flex;align-items:center;gap:10px}
+.gp-sumtxt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--text)}
+.gp-sum button{flex:none;padding:5px 12px;font-size:12.5px}
+.gp-also{margin:5px 0 0;font-size:12px}
+.gp-prob{margin:6px 0 0}
+dialog.gp{width:min(580px,94vw)}
+.gp .dlg-h .chip{font-size:12px}
+.gp-sel{display:flex;flex-wrap:wrap;gap:6px;min-height:26px;margin:0 0 12px;max-height:96px;overflow:auto}
+.gp-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:2px 4px 2px 10px;border-radius:var(--r-pill);background:var(--accent-bg);color:var(--text)}
+.gp-chip code{font:11px var(--mono);color:var(--muted)}
+.gp-x{padding:0;width:20px;height:20px;line-height:18px;border-radius:var(--r-pill);background:transparent;box-shadow:none;color:var(--muted);font-size:15px}
+.gp-x:hover{background:var(--accent-soft);color:var(--text)}
+#gpQ{width:100%}
+.gp-groups{display:flex;flex-wrap:wrap;gap:4px;margin:10px 0}
+.gp-groups button{padding:4px 10px;font-size:12px;color:var(--accent)}
+.gp-list{max-height:min(330px,42vh);overflow:auto;border-radius:var(--r);box-shadow:var(--sh-card);background:var(--panel)}
+.gp-row{display:flex;gap:10px;align-items:center;padding:6px 12px;border-bottom:1px solid var(--line2);cursor:pointer}
+.gp-row:last-child{border-bottom:0}
+.gp-row:hover{background:var(--hover)}
+.gp-row.on{background:var(--sel)}
+.gp-row.off{color:var(--faint);cursor:default}
+.gp-row.off:hover{background:none}
+.gp-nm{flex:1;min-width:0}
+.gp-why{display:block;font-size:11.5px;color:var(--warn)}
+.gp-row code{font:12px var(--mono);color:var(--muted)}
+.gp .prob{margin:10px 0 0}
 .row{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:center;margin-bottom:12px}
 .row label{color:var(--muted);font-size:12.5px;font-weight:600}
 .row input:not([type=checkbox]):not([type=radio]),.row select,.row textarea{min-height:34px}
@@ -703,7 +730,7 @@ const META_VIEWS = {
     {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money}, {key:"budget_level",label:"Budget on"}, {key:"bidding",label:"Bid strategy"},
     {key:"ad_sets",label:"Ad sets",num:1}, {key:"ads",label:"Ads",num:1}, ...STATS, UPD, IDC], bulk:1},
   adsets:{label:"Ad sets", cols:[MST, CA, AS, DL, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money",when:r => r.budget != null},
-    {key:"optimisation",label:"Optimisation"}, {key:"countries",label:"Countries"}, {key:"age",label:"Age"}, {key:"audiences",label:"Audiences"},
+    {key:"optimisation",label:"Optimisation"}, {key:"countries",label:"Countries"}, {key:"locations",label:"Locations",hide:1}, {key:"age",label:"Age"}, {key:"audiences",label:"Audiences"},
     {key:"excluded",label:"Excluded"}, {key:"end",label:"End",fmt:DATEF}, {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money,hide:1},
     ...STATS, UPD, IDC], bulk:1, open:r => adsetDialog(r)},
   ads:{label:"Ads", cols:[MST, THUMB, {key:"ad",label:"Ad"}, CA, AS, DL, {key:"format",label:"Format"}, {key:"headline",label:"Headline"},
@@ -953,7 +980,7 @@ $("#grid").onclick = e => {
 document.addEventListener("keydown", e => {
   const keys = {ArrowDown:1, ArrowUp:-1, PageDown:10, PageUp:-10, Home:-1e9, End:1e9};
   if (!(e.key in keys) || e.altKey || e.ctrlKey || e.metaKey) return;
-  if ($("#dlg").open || document.body.classList.contains("area") || document.body.classList.contains("ov")) return;
+  if ($("#dlg").open || (document.getElementById("geoDlg") || {}).open || document.body.classList.contains("area") || document.body.classList.contains("ov")) return;
   const t = e.target; if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   const trs = [...document.querySelectorAll("#grid tr[data-i]")]; if (!trs.length) return;
   e.preventDefault();
@@ -1725,21 +1752,25 @@ function adsetDialog(r){
   const [amin, amax] = (r.age || "-").split("-");
   showDialog("Meta ad set · " + r.ad_set, `<p class="hint">${esc(r.campaign)} · ${esc(r.delivery)} · ${esc(r.optimisation)}</p>
     <div class="row"><label>Ad set name</label><input id="f_name" value="${esc(r.ad_set)}"></div>
-    <div class="row"><label>Countries</label><input id="f_ctry" value="${esc(r.countries)}" placeholder="GB, DE, US (2-letter codes)"></div>
+    <div class="row"><label>Countries</label>${GeoPicker.field("f_ctry", (r.geo || {}).countries || [], {geo:r.geo, title:"Countries for " + r.ad_set})}</div>
     <div class="row"><label>Age</label><span><input id="f_amin" type="number" min="18" max="65" value="${esc(amin)}" style="width:80px"> to <input id="f_amax" type="number" min="18" max="65" value="${esc(amax)}" style="width:80px"></span></div>
     <div class="row"><label>End date</label><input id="f_end" type="date" value="${esc(r.end)}"></div>
     <p class="hint">Audiences: ${esc(r.audiences || "none")} · Excluded: ${esc(r.excluded || "none")}${r.advantage_audience ? " · Advantage+ audience on" : ""}</p>${noteRow}`,
     [["Save to draft", () => {
       const ch = [];
       if (val("f_name") !== r.ad_set) ch.push({type:"meta_rename", level:"adset", id:r.id, new_name:val("f_name")});
-      const ctry = val("f_ctry").toUpperCase().split(/[ ,]+/).filter(Boolean), t = {type:"meta_targeting", level:"adset", id:r.id};
-      if (ctry.join(",") !== (r.countries || "").replace(/ /g, "")) t.countries = ctry;
+      const ctry = GeoPicker.read("f_ctry"), t = {type:"meta_targeting", level:"adset", id:r.id};
+      if (ctry.join(",") !== ((r.geo || {}).countries || []).join(",")){
+        const bad = GeoPicker.problems(ctry, r.geo); if (bad.length) return toast(bad[0]);
+        t.countries = ctry;
+      }
       if (val("f_amin") !== amin) t.age_min = +val("f_amin");
       if (val("f_amax") !== amax) t.age_max = +val("f_amax");
       if (Object.keys(t).length > 3) ch.push(t);
       if (val("f_end") !== r.end) ch.push({type:"meta_end", level:"adset", id:r.id, end_date:val("f_end") || null});
       ch.length ? submit(ch, val("f_note")) : dlg.close();
     }, "primary"]]);
+  GeoPicker.wire("f_ctry");
 }
 const META_OBJ = [["traffic", "Traffic"], ["awareness", "Awareness"], ["engagement", "Engagement"], ["leads", "Leads"], ["sales", "Sales"]];
 // objective -> optimisation goals Studio allows (first = the default), as in meta_ads.GOALS
@@ -1775,7 +1806,7 @@ const META_ADD = {
     showDialog("New ad set in " + sc.campaign, `<p class="hint">New ad sets are created <b>Paused</b>. Objective: ${esc(camp.objective)}${camp._new ? " (new campaign in the draft)" : ""}.</p>
       <div class="row"><label>Name</label><input id="f_name"></div>
       ${cbo ? `<p class="hint">The campaign has a campaign budget (CBO), so the ad set has none.</p>` : `<div class="row"><label>${esc(curLabel("Budget/day"))}</label><input id="f_budget" type="number" step="0.01" min="1"></div>`}
-      <div class="row"><label>Countries</label><input id="f_ctry" placeholder="GB, DE, US (2-letter codes)"></div>
+      <div class="row"><label>Countries</label>${GeoPicker.field("f_ctry", [], {title:"Countries for the new ad set"})}</div>
       <div class="row"><label>Age</label><span><input id="f_amin" type="number" min="18" max="65" value="18" style="width:80px"> to <input id="f_amax" type="number" min="18" max="65" value="65" style="width:80px"></span></div>
       <div class="row"><label>Start date</label><input id="f_start" type="date" min="${iso(new Date())}" placeholder="blank = when it is turned on"></div>
       <div class="row"><label>End date</label><input id="f_end" type="date" min="${iso(new Date())}"></div>
@@ -1784,7 +1815,8 @@ const META_ADD = {
       [["Add to draft", () => {
         const pl = readPl();
         if (!pl.advantage && !Object.keys(pl.plats).length) return toast("Tick at least one platform, or turn Advantage+ placements on");
-        const c = {type:"meta_new_adset", campaign_id:S.camp, name:val("f_name"), countries:val("f_ctry").toUpperCase().split(/[ ,]+/).filter(Boolean),
+        const bad = GeoPicker.problems(GeoPicker.read("f_ctry"), null); if (bad.length) return toast(bad[0]);
+        const c = {type:"meta_new_adset", campaign_id:S.camp, name:val("f_name"), countries:GeoPicker.read("f_ctry"),
           age_min:+val("f_amin") || 18, age_max:+val("f_amax") || 65, placements:plChange(pl)};
         if (!cbo && val("f_budget")) c.daily_budget = +val("f_budget");
         if (val("f_start")) c.start_date = val("f_start");
@@ -1792,7 +1824,7 @@ const META_ADD = {
         if (val("f_goal")) c.optimization_goal = val("f_goal");
         submit([c], val("f_note"));
       }, "primary"]]);
-    wirePl();
+    wirePl(); GeoPicker.wire("f_ctry");
   },
   async ads(){
     const sc = needScope("ad_group"); if (!sc) return;
@@ -2316,6 +2348,14 @@ function plChange(pl){ // parsed placements -> the change fields
   for (const [p, pos] of Object.entries(pl.plats)) if (pos.length) out[p + "_positions"] = pos;
   return out;
 }
+// countries of an ad set: summary + "Choose countries" (static/geo_picker.js); the draft value is "GB, DE"
+function ctryFld(r){
+  const live = (r.geo || {}).countries || [], cur = r._draft && r._draft.countries ? String(r._draft.countries.value || "").split(/[ ,]+/).filter(Boolean) : live;
+  const chg = cur.join(",") !== live.join(",");
+  return `<div class="fld ${chg ? "chg" : ""}"><label><span>Countries${chg ? " · in draft" : ""}</span><span>${cur.length} selected</span></label>
+    ${GeoPicker.field("e_ctry", cur, {geo:r.geo, title:"Countries for " + r.ad_set})}
+    ${chg ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(GeoPicker.summaryText(live))}${live.length > 2 ? ` (${esc(live.join(", "))})` : ""}</div>` : ""}</div>`;
+}
 function editAdset(r){
   const [amin, amax] = String(dv(r, "age") || "-").split("-"), [lmin, lmax] = String(r.age || "-").split("-");
   const livePl = parsePl(r.placements), curPl = parsePl(dv(r, "placements"));
@@ -2323,21 +2363,24 @@ function editAdset(r){
     ${fld("e_status", "Status", dv(r, "status"), r.status, {sel:ST_OPTS})}
     ${fld("e_name", "Ad set name", dv(r, "ad_set"), r.ad_set)}
     ${r.cbo ? `<p class="hint">Budget is set on the campaign (CBO).</p>` : fld("e_budget", curLabel("Daily budget"), dv(r, "budget"), r.budget, {type:"number"}) + fxHint("e_budget")}
-    ${fld("e_ctry", "Countries (2-letter codes)", dv(r, "countries"), r.countries)}
+    ${ctryFld(r)}
     <div class="fld"><label><span>Age</span></label><span><input id="e_amin" type="number" min="18" max="65" value="${esc(amin)}" style="width:44%"> to <input id="e_amax" type="number" min="18" max="65" value="${esc(amax)}" style="width:44%"></span></div>
     ${fld("e_end", "End date", dv(r, "end"), r.end, {type:"date"})}
     <div class="fld ${r._draft && r._draft.placements ? "chg" : ""}"><label><span>Placements${r._draft && r._draft.placements ? " · in draft" : ""}</span></label>${plWidget(curPl, livePl)}
       ${r._draft && r._draft.placements ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(r.placements)}</div>` : ""}</div>
     <p class="hint">Audiences: ${esc(r.audiences || "none")} · Excluded: ${esc(r.excluded || "none")}${r.advantage_audience ? " · Advantage+ audience on" : ""}</p>`;
   $("#e_end").removeAttribute("step");
-  wirePl(); wireFx();
+  wirePl(); wireFx(); GeoPicker.wire("e_ctry");
   wireAutoSave(r, ["status", "ad_set", "budget", "countries", "age", "end", "placements"], () => {
     const ch = [];
     if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
     if (val("e_name") !== r.ad_set) ch.push({type:"meta_rename", level:"adset", id:r.id, new_name:val("e_name")});
     if (!r.cbo && val("e_budget") !== "" && +val("e_budget") !== r.budget) ch.push({type:"meta_budget", level:"adset", id:r.id, budget:+val("e_budget")});
-    const ctry = val("e_ctry").toUpperCase().split(/[ ,]+/).filter(Boolean), t = {type:"meta_targeting", level:"adset", id:r.id};
-    if (ctry.join(",") !== (r.countries || "").replace(/ /g, "")) t.countries = ctry;
+    const ctry = GeoPicker.read("e_ctry"), t = {type:"meta_targeting", level:"adset", id:r.id};
+    if (ctry.join(",") !== ((r.geo || {}).countries || []).join(",")){
+      const bad = GeoPicker.problems(ctry, r.geo); if (bad.length) throw new Error(bad[0]);
+      t.countries = ctry;
+    }
     if (val("e_amin") !== lmin) t.age_min = +val("e_amin");
     if (val("e_amax") !== lmax) t.age_max = +val("e_amax");
     if (Object.keys(t).length > 3) ch.push(t);
@@ -2634,6 +2677,7 @@ window.addEventListener("unhandledrejection", e => { console.error("Studio: unha
   if (typeof toast === "function"){ toast(friendlyErr(e.reason)); e.preventDefault() } });
 window.addEventListener("error", e => { if (e.error) console.error("Studio: page error", e.error) });
 </script>
+<script src="/static/geo_picker.js"></script><!-- country picker for Meta ad sets -->
 <script src="/static/setup.js"></script>
 <script src="/static/meta_tests.js"></script><!-- [meta tests] the Tests tab in the Meta ads area -->
 <script src="/static/videos.js"></script><!-- [videos] the Videos tab in the Google Ads area -->

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import core
 import datapolicy
+import geo_countries  # country list + location rules (also served to the UI picker)
 import meta_audiences  # [audiences] Audiences view + meta_audience change type
 import progress
 
@@ -142,7 +143,8 @@ def delete(path):
 
 # ---------- reading (cached) ----------
 
-F_CAMP = "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,start_time,stop_time,updated_time"
+F_CAMP = ("id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,start_time,stop_time,updated_time,"
+          "special_ad_categories")
 F_ADSET = ("id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,optimization_goal,bid_strategy,bid_amount,"
            "start_time,end_time,targeting,updated_time")
 F_AD = ("id,name,adset_id,campaign_id,status,effective_status,updated_time,"
@@ -459,14 +461,29 @@ def _placements(t):
     return "; ".join(bits)
 
 
+def _sets_ctry(c):
+    """True when a meta_targeting change replaces the country list (an empty list too: regions / cities only)."""
+    return isinstance(c.get("countries"), list) and (bool(c["countries"]) or c.get("type") == "meta_targeting")
+
+
+def _geo_view(t):
+    """Location targeting for the UI picker: countries, plus the regions / cities / ... it shows read-only."""
+    geo, excl = t.get("geo_locations") or {}, t.get("excluded_geo_locations") or {}
+    return {"countries": geo_countries.clean(geo.get("countries")), "country_groups": list(geo.get("country_groups") or []),
+            "places": [{"kind": w, "name": n, "country": cc} for w, n, cc in geo_countries.sub_places(geo)],
+            "excluded_countries": geo_countries.clean(excl.get("countries")),
+            "excluded_places": [{"kind": w, "name": n, "country": cc} for w, n, cc in geo_countries.sub_places(excl)],
+            "raw": {k: geo[k] for k in geo_countries.LOCATION_KEYS if geo.get(k)}}
+
+
 def _targeting(t):
     t = t or {}
     geo = t.get("geo_locations") or {}
-    places = (geo.get("countries") or []) + [r.get("name", "") for r in geo.get("regions", [])] + [c.get("name", "") for c in geo.get("cities", [])]
     adv = bool((t.get("targeting_automation") or {}).get("advantage_audience"))
     age = (f"{t['age_range'][0]}-{t['age_range'][1]} (suggestion)" if adv and isinstance(t.get("age_range"), list) and len(t["age_range"]) == 2
            else f"{t.get('age_min', '')}-{t.get('age_max', '')}")
-    return {"countries": ", ".join(places), "age": age,
+    return {"countries": ", ".join(geo_countries.clean(geo.get("countries"))), "locations": geo_countries.summary(geo),
+            "geo": _geo_view(t), "age": age,
             "audiences": ", ".join(a.get("name", a.get("id", "")) for a in t.get("custom_audiences", [])),
             "excluded": ", ".join(a.get("name", a.get("id", "")) for a in t.get("excluded_custom_audiences", [])),
             "advantage_audience": bool((t.get("targeting_automation") or {}).get("advantage_audience")),
@@ -698,9 +715,11 @@ def _camp_facts(cid, d, items):
         if not it or it["change"].get("type") != "meta_new_campaign":
             raise ValueError(f"campaign {cid} is not a new campaign in this draft")
         c = it["change"]
-        return {"name": c.get("name", ""), "objective": c.get("objective"), "cbo": bool(c.get("daily_budget")), "new": True}
+        return {"name": c.get("name", ""), "objective": c.get("objective"), "cbo": bool(c.get("daily_budget")), "new": True,
+                "special_ad_categories": c.get("special_ad_categories") or []}
     o = _find(d, "campaign", cid)
-    return {"name": o["name"], "objective": o.get("objective"), "cbo": bool(o.get("daily_budget") or o.get("lifetime_budget")), "new": False}
+    return {"name": o["name"], "objective": o.get("objective"), "cbo": bool(o.get("daily_budget") or o.get("lifetime_budget")), "new": False,
+            "special_ad_categories": o.get("special_ad_categories") or []}
 
 
 def _adset_facts(sid, d, items):
@@ -778,7 +797,7 @@ def summarise(c, d=None, items=None):
     if t == "meta_rename":
         return f"Meta {who}: rename to \"{c['new_name']}\""
     if t == "meta_targeting":
-        bits = [f"countries {', '.join(c['countries'])}" if c.get("countries") else "",
+        bits = [f"countries {', '.join(c['countries']) or 'none (regions / cities only)'}" if _sets_ctry(c) else "",
                 f"age {c.get('age_min', '')}-{c.get('age_max', '')}" if c.get("age_min") or c.get("age_max") else "",
                 meta_audiences.targeting_words(c, d)]
         return f"Meta {who}: " + "; ".join(b for b in bits if b)
@@ -942,8 +961,9 @@ def check(c, d=None, items=None):
                 problems.append(f"optimization_goal for {obj}: one of {', '.join((GOALS[obj][0],) + GOALS[obj][1])}")
             if not c.get("countries"):
                 problems.append("the new ad set needs at least one country")
-            elif any(not re.fullmatch(r"[A-Za-z]{2}", str(x)) for x in c["countries"]):
-                problems.append("countries are 2-letter codes, e.g. GB, DE")
+            else:
+                problems += geo_countries.code_problems(c["countries"])
+                warnings += geo_countries.special_warnings(camp.get("special_ad_categories"), None, c["countries"])
             lo, hi = int(c.get("age_min") or 18), int(c.get("age_max") or 65)
             if lo < 18 or hi > 65 or lo > hi:
                 problems.append("age must be 18-65 with min <= max")
@@ -1010,8 +1030,15 @@ def check(c, d=None, items=None):
                 problems.append("only ad sets have an end date, targeting and placements")
             if t == "meta_targeting":  # [audiences] attach / detach audiences on the ad set
                 problems += meta_audiences.targeting_problems(c, d)
-                if not any(c.get(k) for k in ("countries", "age_min", "age_max") + meta_audiences.AUD_KEYS):
+                if not _sets_ctry(c) and not any(c.get(k) for k in ("age_min", "age_max") + meta_audiences.AUD_KEYS):
                     problems.append("nothing to change: give countries, age_min / age_max or audiences_add / _remove, excluded_add / _remove")
+                if _sets_ctry(c):  # countries replace the list; regions / cities stay as they are
+                    tg0 = o.get("targeting") or {}
+                    problems += geo_countries.geo_problems(c["countries"], tg0)
+                    old = set(geo_countries.clean((tg0.get("geo_locations") or {}).get("countries")))
+                    camp = next((x for x in d["campaigns"] if x["id"] == o.get("campaign_id")), {})
+                    warnings += geo_countries.special_warnings(camp.get("special_ad_categories"), tg0,
+                                                               [x for x in c["countries"] if x not in old])
             if t == "meta_end" and c.get("end_date"):
                 try:
                     if dt.date.fromisoformat(c["end_date"]) <= dt.date.today():
@@ -1118,9 +1145,11 @@ def _normalise(c):
         c["objective"] = OBJECTIVES.get(o.lower().replace("outcome_", ""), o.upper())
         c.setdefault("special_ad_categories", [])
     if c.get("type") == "meta_new_adset":
-        c["countries"] = [str(x).upper() for x in c.get("countries") or []]
+        c["countries"] = geo_countries.clean(c.get("countries"))
         if c.get("campaign_draft"):
             c["campaign_id"] = "d-" + str(c.pop("campaign_draft"))
+    if c.get("type") == "meta_targeting" and c.get("countries") is not None:
+        c["countries"] = geo_countries.clean(c["countries"] if isinstance(c["countries"], list) else str(c["countries"]).split(","))
     if c.get("type") == "meta_new_ad" and isinstance(c.get("cards"), list):
         c["cards"] = [{**x, "index": i} if isinstance(x, dict) else x for i, x in enumerate(c["cards"])]
     if c.get("type") in ("meta_new_ad", "meta_boost_post") and c.get("adset_draft"):
@@ -1258,8 +1287,11 @@ def _overlay(kind, out, campaign_id, adset_id):
         elif t == "meta_targeting":
             if any(c.get(k) for k in meta_audiences.AUD_KEYS):
                 r["_draft"]["audiences"] = {**mark, "value": meta_audiences.targeting_words(c, d)}
-            if c.get("countries"):
+            if _sets_ctry(c):
                 r["_draft"]["countries"] = {**mark, "value": ", ".join(c["countries"])}
+                geo = dict((r.get("geo") or {}).get("raw") or {})
+                geo["countries"] = c["countries"]
+                r["_draft"]["locations"] = {**mark, "value": geo_countries.summary(geo)}
             if c.get("age_min") or c.get("age_max"):
                 r["_draft"]["age"] = {**mark, "value": f"{c.get('age_min', '')}-{c.get('age_max', '')}"}
         elif t == "meta_placements":
@@ -1895,11 +1927,18 @@ def ops_for(c, items=None):
         tg = json.loads(json.dumps(cur.get("targeting") or {}))
         before = _targeting(tg)
         spend = []
-        if c.get("countries"):
-            geo = tg.setdefault("geo_locations", {})
+        if _sets_ctry(c):
+            bad = geo_countries.geo_problems(c["countries"], tg)  # against the live targeting, right before it is sent
+            if bad:
+                raise ValueError("; ".join(bad))
+            geo = tg.setdefault("geo_locations", {})  # only the country list changes: regions, cities, ... stay
             old = set(geo.get("countries") or [])
-            geo["countries"] = [x.upper() for x in c["countries"]]
-            if set(geo["countries"]) - old:
+            new = geo_countries.clean(c["countries"])
+            if new:
+                geo["countries"] = new
+            else:
+                geo.pop("countries", None)
+            if set(new) - old:
                 spend.append("more countries")
         for k in ("age_min", "age_max"):
             if c.get(k):
@@ -1907,7 +1946,7 @@ def ops_for(c, items=None):
                     spend.append("wider age")
                 tg[k] = int(c[k])
         undo_wider = []
-        if c.get("countries") and set((cur.get("targeting") or {}).get("geo_locations", {}).get("countries") or []) - {x.upper() for x in c["countries"]}:
+        if _sets_ctry(c) and set((cur.get("targeting") or {}).get("geo_locations", {}).get("countries") or []) - {x.upper() for x in c["countries"]}:
             undo_wider.append("brings back countries")
         if (c.get("age_min") and int(c["age_min"]) > int((cur.get("targeting") or {}).get("age_min", 18))) or \
                 (c.get("age_max") and int(c["age_max"]) < int((cur.get("targeting") or {}).get("age_max", 65))):
@@ -1922,7 +1961,7 @@ def ops_for(c, items=None):
         aud = (f'; audiences {before["audiences"] or "none"} -> {after["audiences"] or "none"}; excluded {before["excluded"] or "none"} -> '
                f'{after["excluded"] or "none"}') if any(c.get(k) for k in meta_audiences.AUD_KEYS) else ""
         return [{"kind": "update", "id": oid, "params": {"targeting": _pin_device(tg)}, "undo": {"targeting": _pin_device(cur.get("targeting"))},
-                 "line": f'ad set "{nm}": countries {before["countries"]} -> {after["countries"]}; age {before["age"]} -> {after["age"]}' + aud,
+                 "line": f'ad set "{nm}": locations {before["locations"] or "none"} -> {after["locations"] or "none"}; age {before["age"]} -> {after["age"]}' + aud,
                  # conservative: undoing any targeting change puts the old targeting back, which can reach more people
                  "spend": ", ".join(spend), "undo_spend": ", ".join(undo_wider) or "puts the ad set's old targeting back (can reach more people)"}]
     if t == "meta_placements":
@@ -2874,7 +2913,10 @@ CHANGE_REFERENCE = """Meta (account "meta") draft changes. ids are Meta ids from
      CBO campaigns: change the campaign; otherwise the ad set.
   {"type":"meta_end","level":"adset","id":"..","end_date":"2026-12-31"}             (null = no end)
   {"type":"meta_rename","level":"campaign|adset|ad","id":"..","new_name":".."}
-  {"type":"meta_targeting","level":"adset","id":"..","countries":["GB","DE"],"age_min":25,"age_max":65}  (replaces the country list)
+  {"type":"meta_targeting","level":"adset","id":"..","countries":["GB","DE"],"age_min":25,"age_max":65}  (replaces the country list;
+     the ad set's regions / cities stay. ISO 2-letter codes; [] = no countries, only when a region or city remains. Refused:
+     countries Meta doesn't serve (CU, IR, KP, SY, RU), a country that overlaps a region / city of the ad set in that country,
+     a country the ad set excludes)
   {"type":"meta_placements","level":"adset","id":"..","advantage":true}             (Advantage+ placements: Meta picks)
   {"type":"meta_placements","level":"adset","id":"..","advantage":false,"publisher_platforms":["facebook","instagram"],
    "facebook_positions":["feed","story"],"instagram_positions":["stream","story","reels"]}   (merged into the ad set's targeting)

@@ -135,6 +135,13 @@ on top, gradient from the series colour to 35% of it. Lines 2px with a soft area
 **Dialogs.** White, radius `--r-xl`, `--sh-dlg`, padding 24, title 18/600, footer actions right (secondary then primary).
 Backdrop `rgba(17,19,24,.35)` with a light blur.
 
+**Country picker** (`static/geo_picker.js`, `.gp-*`). In a form: the selection as text ("United Kingdom, Germany +3") and a
+secondary "Choose countries" button. The pop-up is a second dialog (560 wide) over the form: the count as a neutral chip in
+the header, selected countries pinned at the top as `--accent-bg` pill chips with a remove button, a search field (Enter
+ticks the first match), quick groups as ghost buttons in `--accent`, then the list (name left, ISO code right in mono,
+ticked rows `--sel`; countries that can't be picked are greyed with the reason in `--warn`). Regions and cities show
+read-only under the list. Footer: Clear (link, left), Cancel, Done (n). Escape cancels, Tab stays inside.
+
 **Toasts.** `--ink` background, white text, radius `--r`, `--sh-pop`, bottom centre.
 
 **Tooltips.** `--ink` small tooltip for icons; white card tooltip for charts.

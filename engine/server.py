@@ -274,9 +274,9 @@ def live_job(source, acct, path, body):
                 PUSH_LOCK.release()
 
     def after(job):
-        if job["state"] != "done":
+        if job["state"] == "error":
             return
-        if kind == "push":
+        if kind == "push" and job["state"] == "done":
             try:
                 team_live.after_post("/api/live/push", body, job["result"])  # [team live] as the synchronous route does
             except Exception:  # noqa: BLE001
@@ -298,6 +298,11 @@ def live_job(source, acct, path, body):
         if kind == "push":
             PUSH_LOCK.release()
         return 409, {"error": str(b), "job": b.job_id}
+    except Exception as ex:  # noqa: BLE001 - e.g. no thread could be started: never keep the push lock
+        traceback.print_exc()
+        if kind == "push":
+            PUSH_LOCK.release()
+        return 500, {"error": f"could not start the job: {ex}"}
 
 
 def _then(res, fn):

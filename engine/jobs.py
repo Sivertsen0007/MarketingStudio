@@ -5,8 +5,11 @@ server.py starts a job when a live preview / push route gets "background": true 
 last ~50 are kept. Only one push job per account runs at a time (start() raises Busy with the running job's id).
 
 Job record:
-  {id, kind: preview|push, source: google|meta, acct, state: running|done|error, started, finished,
+  {id, kind: preview|push, source: google|meta, acct, state: running|done|failed|error, ok, started, finished,
    progress: {done, total, label}, items: [{key, label, status, detail, link}], result, error}
+state: done = finished and went through; failed = a push that finished but the engine said ok: false (spend not ticked,
+refused, needs approval, partly reversed: see result.message); error = an exception (see error).
+ok: null while running, else true for done, false for failed and error (a preview with problems is done, ok false).
 
 Progress comes from the engine's progress keyword when it has one (fn(done, total, label, item_key, status)), else
 from progress.py (the per-account live list the synchronous push already fills), read when the job is fetched.
@@ -121,7 +124,7 @@ def start(kind, source, acct, fn, after=None):
             busy = next((j["id"] for j in _jobs.values() if j["kind"] == "push" and j["acct"] == acct and j["state"] == "running"), None)
             if busy:
                 raise Busy(busy)
-        _jobs[jid] = {"id": jid, "kind": kind, "source": source, "acct": acct, "state": "running", "started": time.time(),
+        _jobs[jid] = {"id": jid, "kind": kind, "source": source, "acct": acct, "state": "running", "ok": None, "started": time.time(),
                       "finished": None, "progress": {"done": 0, "total": 0, "label": "Starting"}, "items": [],
                       "result": None, "error": None}
         _prune()
@@ -144,13 +147,16 @@ def start(kind, source, acct, fn, after=None):
                 if mapped:
                     j["items"] = mapped
                 j["result"], j["error"] = res, err
-                j["state"] = "error" if err else "done"
+                refused = isinstance(res, dict) and res.get("ok") is False
+                j["state"] = "error" if err else "failed" if refused and kind == "push" else "done"
+                j["ok"] = not err and not refused
                 j["finished"] = time.time()
                 p = j["progress"]
                 if not err:
                     p["total"] = p["total"] or len(j["items"])
                     p["done"] = p["total"]
-                p["label"] = "Failed" if err else (res.get("message") if isinstance(res, dict) and res.get("message") else "Done")
+                msg = res.get("message") if isinstance(res, dict) else None
+                p["label"] = "Failed" if err else msg or ("Not pushed" if j["state"] == "failed" else "Done")
                 snap = copy.deepcopy(j)
             else:
                 snap = None
@@ -160,7 +166,13 @@ def start(kind, source, acct, fn, after=None):
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
 
-    threading.Thread(target=run, name=f"job-{kind}-{jid}", daemon=True).start()
+    try:
+        threading.Thread(target=run, name=f"job-{kind}-{jid}", daemon=True).start()
+    except BaseException:
+        with _lock:  # never leave a job "running" that has no thread (it would block the account's pushes)
+            _jobs.pop(jid, None)
+            _fallback.pop(jid, None)
+        raise
     return jid
 
 

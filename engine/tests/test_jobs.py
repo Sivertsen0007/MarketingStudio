@@ -12,6 +12,7 @@ import json
 import sys
 import threading
 import time
+import types
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +24,17 @@ sys.path.insert(0, str(HERE))
 import jobs  # noqa: E402
 import progress  # noqa: E402
 import server  # noqa: E402
+
+
+class _NoThread:
+    def __init__(self, *a, **k):
+        pass
+
+    def start(self):
+        raise RuntimeError("can't start new thread")
+
+
+NO_THREADS = types.SimpleNamespace(Thread=_NoThread)  # jobs.py's threading, as when the process is out of threads
 
 
 def wait(pred, timeout=5):
@@ -117,6 +129,31 @@ class JobsUnit(unittest.TestCase):
         go.set()
         j = done(jid)
         self.assertEqual([i["status"] for i in j["items"]], ["done", "done"])
+
+    def test_refused_push_is_failed_not_done(self):
+        j = done(jobs.start("push", "google", "1", lambda r: {"ok": False, "message": "Not pushed - tick the box"}))
+        self.assertEqual((j["state"], j["ok"], j["error"]), ("failed", False, None))
+        self.assertEqual(j["progress"]["label"], "Not pushed - tick the box")
+        j = done(jobs.start("push", "google", "1", lambda r: {"ok": False, "needs_approval": True}))
+        self.assertEqual((j["state"], j["ok"], j["progress"]["label"]), ("failed", False, "Not pushed"))
+        j = done(jobs.start("push", "google", "1", lambda r: {"ok": True}))
+        self.assertEqual((j["state"], j["ok"]), ("done", True))
+        j = done(jobs.start("preview", "google", "1", lambda r: {"ok": False, "items": []}))  # a preview with problems ran fine
+        self.assertEqual((j["state"], j["ok"]), ("done", False))
+        j = done(jobs.start("push", "google", "1", lambda r: 1 / 0))
+        self.assertEqual((j["state"], j["ok"]), ("error", False))
+        go = threading.Event()
+        jid = jobs.start("push", "google", "2", lambda r: go.wait(5) and {"ok": True})
+        self.assertIsNone(jobs.get(jid)["ok"])
+        go.set()
+        done(jid)
+
+    def test_thread_start_failure_leaves_no_job(self):
+        with mock.patch.object(jobs, "threading", NO_THREADS):
+            with self.assertRaises(RuntimeError):
+                jobs.start("push", "google", "1", lambda r: {"ok": True})
+        self.assertEqual(jobs.latest(), [])
+        self.assertIsNone(jobs.running_push("1"))
 
     def test_accepts(self):
         self.assertTrue(jobs.accepts(lambda a, progress=None: 0, "progress"))
@@ -252,6 +289,30 @@ class JobsHTTP(unittest.TestCase):
             st, res = self.call("POST", "/api/live/push", {"acct": "meta", "background": True})
             j = done(res["job"])
         self.assertEqual(j["result"], {"ok": True, "refreshing": False})
+
+    def test_background_push_refused_is_failed(self):
+        with mock.patch.object(server.live, "push", lambda acct, en, sp, perm, only: {
+                "ok": False, "message": "Not pushed - this push can raise spend; tick the box to accept."}):
+            st, res = self.call("POST", "/api/live/push", {"acct": "1234567890", "background": True})
+            self.assertEqual(st, 202)
+            j = done(res["job"])
+        self.assertEqual((j["state"], j["ok"]), ("failed", False))
+        self.assertIn("tick the box", j["progress"]["label"])
+        wait(lambda: not server.PUSH_LOCK.locked())
+        time.sleep(0.05)
+        self.assertEqual(self.posted, [])  # never reported to the team as a push
+
+    def test_job_start_failure_releases_lock(self):
+        with mock.patch.object(server.jobs, "threading", NO_THREADS):
+            st, res = self.call("POST", "/api/live/push", {"acct": "1234567890", "background": True})
+        self.assertEqual(st, 500)
+        self.assertIn("can't start new thread", res["error"])
+        self.assertFalse(server.PUSH_LOCK.locked())
+        self.assertEqual(jobs.latest(), [])
+        with mock.patch.object(server.live, "push", lambda acct, en, sp, perm, only: {"ok": True}):
+            st, res = self.call("POST", "/api/live/push", {"acct": "1234567890", "background": True})
+            self.assertEqual(st, 202)
+            self.assertEqual(done(res["job"])["state"], "done")
 
     def test_guards(self):
         st, _ = self.call("POST", "/api/live/push", {"acct": "1234567890", "background": True}, {"X-Studio-Press": "wrong"})

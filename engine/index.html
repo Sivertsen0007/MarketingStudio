@@ -96,9 +96,10 @@ header h1 b{font-weight:700}
 /* unacknowledged alerts: a small red counter on the Alerts tab (static/alerts.js sets the number) */
 .atabs #alBadge .n{margin-left:0;min-width:16px;padding:0 4px;font-size:10.5px;line-height:16px}
 #ovBtn:hover,.atabs button:hover{background:var(--hover);color:var(--text)}
-.atabs button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
+.atabs button.on{background:var(--accent-soft);color:var(--accent);box-shadow:none}
+.atabs button.on:hover{background:var(--accent-soft);color:var(--accent)}
 body.ov .atabs button.on{background:transparent;color:var(--muted);box-shadow:none}
-body.ov #ovBtn{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
+body.ov #ovBtn{background:var(--accent-soft);color:var(--accent);box-shadow:none}
 body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 .tb{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1),0 0 0 1px var(--line-strong);color:var(--text);font-size:12.5px;font-weight:600;white-space:nowrap}
 .tb svg{width:15px;height:15px;fill:currentColor;flex:none}
@@ -178,7 +179,7 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .node{display:flex;align-items:center;gap:8px;padding:0 10px;height:32px;margin:1px 0;border-radius:var(--r-sm);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text2);font-size:13px;font-weight:500;
   transition:background var(--t) var(--ease),color var(--t) var(--ease)}
 .node:hover{background:var(--hover)}
-.node.sel{background:var(--accent-soft);color:var(--accent);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)}
+.node.sel{background:var(--accent-soft);color:var(--accent);font-weight:700}
 .node.sel:hover{background:var(--accent-soft)}
 .node.path{background:var(--accent-bg);color:var(--text);font-weight:600}  /* the campaign that holds the selected ad group / ad set */
 .node .tw{width:14px;color:var(--faint);flex:none;text-align:center;font-size:10px}
@@ -195,7 +196,7 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .tabs{display:flex;flex-direction:column;overflow:auto;flex:1 1 45%;padding:0 8px 10px}
 .tab{flex:none;display:flex;justify-content:space-between;text-align:left;padding:0 10px 0 12px;height:32px;margin:1px 0;align-items:center;border:0;border-radius:var(--r-sm);background:none;box-shadow:none;white-space:nowrap;color:var(--text2);font-weight:500;font-size:13px}
 .tab:hover{background:var(--hover)}
-.tab.on{background:var(--accent-soft);color:var(--accent);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)}
+.tab.on{background:var(--accent-soft);color:var(--accent);font-weight:700;box-shadow:none}
 .tab.on:hover{background:var(--accent-soft)}
 .tab.on .n{background:var(--panel)}
 .tab .n{font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-bg);border-radius:var(--r-pill);padding:0 7px;margin-left:6px;line-height:18px}
@@ -240,7 +241,6 @@ td input,td select{height:28px;padding:2px 8px;width:100%;min-width:70px}
 input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}
 tr.picked td{background:var(--accent-bg)!important}  /* ticked for a bulk action */
 tr.focus td{background:var(--accent-soft)!important}  /* open in the Edit panel */
-tr.focus td:first-child{box-shadow:inset 4px 0 0 var(--accent)}
 tr.focus td.stk-name,tr.focus td.stk-name *{font-weight:700}
 #grid tr[data-i]{scroll-margin-top:44px;scroll-margin-bottom:8px}
 .st{font-size:12.5px}

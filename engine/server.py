@@ -35,6 +35,7 @@ import alerts  # Ads alerts (areas/alerts.py): rules, hourly / daily checks, his
 import health
 import gapi
 import progress
+import jobs  # background live preview / push jobs (jobs.py), polled at GET /api/jobs/<id>
 import scheduler  # background jobs (one thread, started in main)
 import areas
 import setup_routes  # keys (Keychain), Sign in with Google, .env import
@@ -211,6 +212,94 @@ def _meta_after(res):
     return res
 
 
+def _kw(fn, report):
+    """The engine's optional progress keyword (progress=fn(done, total, label, item_key, status)) when it has one."""
+    return {"progress": report} if jobs.accepts(fn, "progress") else {}
+
+
+def _jobs_acct(a):
+    """The account key jobs are filed under: the Meta UI key as sent, or the resolved Google account id."""
+    if meta.is_meta(a):
+        return str(a)
+    return str(core.resolve(a))
+
+
+def live_job(source, acct, path, body):
+    """A live preview or push as a background job (jobs.py): same engine calls, same gating and guards as the
+    synchronous routes. Returns (status code, JSON). A push holds PUSH_LOCK until it ends; a second push on the same
+    account answers 409 with the running job's id."""
+    kind = "push" if path == "/api/live/push" else "preview"
+    if kind == "push":
+        busy = jobs.running_push(acct)
+        if busy:
+            return 409, {"error": "a push is already running for this account", "job": busy}
+        if not PUSH_LOCK.acquire(blocking=False):
+            others = [j["id"] for j in jobs.latest() if j["kind"] == "push" and j["state"] == "running"]
+            return 409, {"error": "a push is already running", "job": others[0] if others else None}
+    meta_refresh = source == "meta" and kind == "push" and jobs.accepts(meta.push, "refresh")
+
+    def google(report):
+        if kind == "preview":
+            return team_reviews.gated_preview("ads", f"ads:{acct}", body, lambda only: live.preview(
+                acct, bool(body.get("enable_new")), only=only, **_kw(live.preview, report)))
+        kw = _kw(live.push, report)
+        if not kw:
+            report.use_progress_py(acct)
+        return _after_live(acct, team_reviews.gated_push("ads", f"ads:{acct}", body, lambda only: live.push(
+            acct, bool(body.get("enable_new")), bool(body.get("accept_spend")), bool(body.get("accept_permanent")), only, **kw),
+            "Pushed live to Google Ads"))
+
+    def meta_job(report):
+        meta.use(acct)  # Meta's account is per thread
+        if kind == "preview":
+            return team_reviews.gated_preview("ads", f"ads:{meta.acct()}", body, lambda only: meta.preview(
+                bool(body.get("enable_new")), only=only, **_kw(meta.preview, report)))
+        kw = _kw(meta.push, report)
+        if not kw:
+            report.use_progress_py(meta.acct())
+        if meta_refresh:
+            kw["refresh"] = False
+        res = team_reviews.gated_push("ads", f"ads:{meta.acct()}", body, lambda only: meta.push(
+            bool(body.get("enable_new")), bool(body.get("accept_spend")), bool(body.get("accept_permanent")), only, **kw),
+            "Pushed live to Meta")
+        if isinstance(res, dict):
+            res["refreshing"] = bool(meta_refresh)
+        return res
+
+    def run(report):
+        try:
+            return (google if source == "google" else meta_job)(report)
+        finally:
+            if kind == "push":
+                PUSH_LOCK.release()
+
+    def after(job):
+        if job["state"] != "done":
+            return
+        if kind == "push":
+            try:
+                team_live.after_post("/api/live/push", body, job["result"])  # [team live] as the synchronous route does
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+        if meta_refresh:
+            def refresh():
+                try:
+                    meta.use(acct)
+                    meta.refresh_account()  # only this ad account
+                except Exception:  # noqa: BLE001 - the push is done; a failed read only leaves the cache older
+                    traceback.print_exc()
+                finally:
+                    jobs.set_result(job["id"], refreshing=False)
+            threading.Thread(target=refresh, daemon=True).start()
+
+    try:
+        return 202, {"job": jobs.start(kind, source, acct, run, after)}
+    except jobs.Busy as b:
+        if kind == "push":
+            PUSH_LOCK.release()
+        return 409, {"error": str(b), "job": b.job_id}
+
+
 def _then(res, fn):
     fn()
     return res
@@ -313,6 +402,11 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, FAVICON, "image/svg+xml")
         if u.path == "/api/accounts":
             return self._run(accounts_with_currency)
+        if u.path == "/api/jobs":  # background live preview / push jobs, newest first
+            return self._run(lambda: {"jobs": jobs.latest(_jobs_acct(q["acct"]) if q.get("acct") else None, _int(q.get("limit")) or 20)})
+        if u.path.startswith("/api/jobs/"):
+            j = jobs.get(u.path[len("/api/jobs/"):])
+            return self._send(200, j) if j else self._send(404, {"error": "no such job"})
         if u.path == "/api/fx":
             return self._run(lambda: {**fx.info(), "display_currency": display_currency()})
         if u.path == "/api/overview":
@@ -458,6 +552,8 @@ class H(BaseHTTPRequestHandler):
         if meta.is_meta(body.get("acct")):
             return self._meta_post(body)
         acct = core.resolve(body.get("acct"))
+        if body.get("background") is True and self.path in ("/api/live/preview", "/api/live/push"):
+            return self._send(*live_job("google", str(acct), self.path, body))
 
         def push():
             if not PUSH_LOCK.acquire(blocking=False):
@@ -576,6 +672,9 @@ class H(BaseHTTPRequestHandler):
             meta.use(body.get("acct"))
         except ValueError as ex:
             return self._send(400, {"error": str(ex)})
+        if body.get("background") is True and self.path in ("/api/live/preview", "/api/live/push"):
+            return self._send(*live_job("meta", str(body.get("acct") or meta.KEY), self.path, body))
+
         def live_push():
             if not PUSH_LOCK.acquire(blocking=False):
                 raise ValueError("a push is already running")

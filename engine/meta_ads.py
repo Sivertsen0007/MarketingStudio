@@ -165,7 +165,7 @@ def refresh():
     data = {"account": get(act(), fields="name,currency,timezone_name,account_status"),
             "campaigns": get_all(f"{act()}/campaigns", fields=F_CAMP, effective_status=LIVE_CAMP),
             "adsets": get_all(f"{act()}/adsets", fields=F_ADSET, effective_status=LIVE_ADSET),
-            "ads": get_all(f"{act()}/ads", fields=F_AD, effective_status=LIVE_AD),
+            "ads": get_all(f"{act()}/ads", fields=F_AD, effective_status=LIVE_AD, limit=100),  # 500 with full creatives (carousels) is refused as too much data
             "audiences": get_all(f"{act()}/customaudiences", fields=F_AUD, limit=100),  # [audiences] Meta refuses big pages with these fields
             "insights": {}}
     for level in ("campaign", "adset", "ad"):
@@ -744,6 +744,8 @@ def summarise(c, d=None, items=None):
         except (KeyError, ValueError):
             where = str(c.get("adset_id"))
         src = []
+        if c.get("cards"):
+            src.append(f'carousel of {len(c["cards"])} uploaded images')
         if c.get("media_id"):
             m = _media_index().get(c["media_id"]) or {}
             src.append(f'uploaded {m.get("kind", "file")} "{m.get("name", c["media_id"][:8])}"')
@@ -946,8 +948,10 @@ def check(c, d=None, items=None):
             _adset_facts(c.get("adset_id"), d, items)
             if not c.get("name"):
                 problems.append("the new ad needs a name")
-            if not c.get("from_ad") and not c.get("media_id"):
-                problems.append("a new ad needs from_ad (copy an ad's image/video) or media_id (an uploaded file)")
+            if c.get("cards"):  # a new carousel: every card is an uploaded image (Studio can't copy carousels)
+                problems += _carousel_problems(c)
+            elif not c.get("from_ad") and not c.get("media_id"):
+                problems.append("a new ad needs from_ad (copy an ad's image/video), media_id (an uploaded file) or cards (a carousel)")
             src = None
             if c.get("from_ad"):
                 src = _find(d, "ad", c["from_ad"])
@@ -963,6 +967,9 @@ def check(c, d=None, items=None):
                             problems.append(f"a new ad from an uploaded file needs {k}")
             link = c.get("link") or (creative_text(src.get("creative"))["link"] if src else "")
             links.append((link, c.get("primary_text")))
+            for x in c.get("cards") or []:
+                if isinstance(x, dict) and x.get("link"):
+                    links.append((x["link"], " ".join(x.get(k) or "" for k in ("name", "description"))))
         elif t == "meta_boost_post":
             _adset_facts(c.get("adset_id"), d, items)
             if not c.get("name"):
@@ -1107,6 +1114,8 @@ def _normalise(c):
         c["countries"] = [str(x).upper() for x in c.get("countries") or []]
         if c.get("campaign_draft"):
             c["campaign_id"] = "d-" + str(c.pop("campaign_draft"))
+    if c.get("type") == "meta_new_ad" and isinstance(c.get("cards"), list):
+        c["cards"] = [{**x, "index": i} if isinstance(x, dict) else x for i, x in enumerate(c["cards"])]
     if c.get("type") in ("meta_new_ad", "meta_boost_post") and c.get("adset_draft"):
         c["adset_id"] = "d-" + str(c.pop("adset_draft"))
     if c.get("type") == "meta_boost_post":
@@ -1219,6 +1228,10 @@ def _overlay(kind, out, campaign_id, adset_id):
                            "_new": mark, **{k: c[k] for k in ("primary_text", "headline", "description", "link", "cta") if c.get(k) is not None}}
                     if m:
                         row.update({"format": m["kind"].title(), "media_id": c["media_id"], "image": "", "thumbnail": ""})
+                    if c.get("cards"):
+                        row.update({"format": "Carousel", "media_id": c["cards"][0].get("media_id"), "image": "", "thumbnail": "",
+                                    "cards": [{"index": i, **{k: x.get(k, "") for k in ("name", "description", "link", "media_id")}}
+                                              for i, x in enumerate(c["cards"])]})
                     out.insert(0, row)
                 continue
         except (KeyError, ValueError):
@@ -1442,6 +1455,54 @@ def _media_creative(c, src_cr, kind, name):
     return _pin_showcase(p)
 
 
+CAROUSEL_CARDS = (2, 10)
+
+
+def _carousel_problems(c):
+    """A new carousel (meta_new_ad with cards): 2-10 cards, each an uploaded image with a headline and a link."""
+    out = []
+    cards = c.get("cards")
+    if not isinstance(cards, list) or not CAROUSEL_CARDS[0] <= len(cards) <= CAROUSEL_CARDS[1]:
+        return [f"a carousel needs {CAROUSEL_CARDS[0]}-{CAROUSEL_CARDS[1]} cards"]
+    if c.get("from_ad") or c.get("media_id"):
+        out.append("a carousel takes its images from cards: leave out from_ad and media_id")
+    for k in ("link", "primary_text"):
+        if not c.get(k):
+            out.append(f"a new carousel needs {k} (the ad's text and its 'see more' link)")
+    idx = _media_index()
+    for i, x in enumerate(cards):
+        if not isinstance(x, dict):
+            out.append(f"card {i + 1}: must be an object")
+            continue
+        m = idx.get(x.get("media_id") or "")
+        if not m:
+            out.append(f"card {i + 1}: media_id not found: upload the file again")
+        elif m.get("kind") != "image":
+            out.append(f"card {i + 1}: carousel cards are images only (videos not available yet)")
+        for k in ("name", "link"):
+            if not x.get(k):
+                out.append(f"card {i + 1}: needs {k}")
+    return out
+
+
+def _carousel_creative(c, name):
+    """Creative params for a new carousel; each card's image_hash is filled in at push (or by a stand-in to check).
+    The cards stay in the order given (multi_share_optimized off) and Meta adds no end card."""
+    cta_type = c.get("cta") or "LEARN_MORE"
+    kids = []
+    for x in c["cards"]:
+        ch = {"link": x["link"], "name": x["name"],
+              "call_to_action": {"type": x.get("cta") or cta_type, "value": {"link": x["link"]}}}
+        if x.get("description"):
+            ch["description"] = x["description"]
+        kids.append(ch)
+    oss = _identity()
+    oss["link_data"] = {"link": c["link"], "message": c["primary_text"], "child_attachments": kids,
+                        "multi_share_optimized": False, "multi_share_end_card": False,
+                        "call_to_action": {"type": cta_type, "value": {"link": c["link"]}}}
+    return _pin_showcase({"name": name[:100], "object_story_spec": oss})
+
+
 def _stand_in_media(kind):
     """An image hash / video already in the account, used only to let Meta validate a creative before the upload."""
     for a in load()["ads"]:
@@ -1592,6 +1653,28 @@ def ops_for(c, items=None):
         else:
             where = f"ad set {c['adset_id']}"
         base = {"kind": "new_ad", "phase": "new_ad", "adset": None if aref else str(c["adset_id"]), "adset_ref": aref, "name": c["name"]}
+        if c.get("cards"):
+            cr = _carousel_creative(c, c["name"] + " (Studio)")
+            mids = [x["media_id"] for x in c["cards"]]
+            have = [(media_info(m).get("uploads") or {}).get(act()) for m in mids]
+            line = f'new carousel ad "{c["name"]}" (Paused) in {where} with {len(mids)} cards'
+            check_creative = True
+            if all(h and h.get("hash") for h in have):
+                for ch, h in zip(cr["object_story_spec"]["link_data"]["child_attachments"], have):
+                    ch["image_hash"] = h["hash"]
+                line += " (images already in the ad account's media library)"
+            else:
+                stand_in = _stand_in_media("image")
+                if stand_in:
+                    for ch, h in zip(cr["object_story_spec"]["link_data"]["child_attachments"], have):
+                        ch["image_hash"] = h["hash"] if h and h.get("hash") else stand_in["hash"]
+                    line += ("; the images are uploaded to the ad account's media library at push (an upload can't be test-run, "
+                             "so Meta checked the carousel with a stand-in image from the account)")
+                else:
+                    check_creative = False
+                    line += "; the images are uploaded at push and Meta checks the creative then"
+            return [{**base, "line": line, "creative": cr, "card_media": mids, "check_creative": check_creative,
+                     "source_creative": None if aref else _any_creative(c["adset_id"])}]
         if not c.get("media_id"):
             return [{**base, "line": f'new ad "{c["name"]}" (Paused) in {where}, copy of ad {c["from_ad"]}',
                      "creative": _creative_params(src_cr, c, c["name"] + " (Studio)"), "source_creative": src_cr["id"]}]
@@ -1764,7 +1847,14 @@ def _only(only):
     return [i for i in items if (only.admits(i) if hasattr(only, "admits") else i["id"] in only)]
 
 
-def plan(tick=False, only=None):
+def _activate(s):
+    """enable_new: a new ad is created Active (its ad set / campaign decide whether it delivers). Raises spend."""
+    s["status"] = "ACTIVE"
+    s["line"] = s["line"].replace("(Paused)", "(Active)", 1)
+    s["spend"] = f'new ad "{s["name"]}" is created Active and starts delivering once Meta approves it'
+
+
+def plan(tick=False, only=None, enable_new=False):
     items = _only(only)
     pool = {it["id"]: it for it in items}
     steps, per_item, touched = [], [], {}
@@ -1785,6 +1875,8 @@ def plan(tick=False, only=None):
                     progress.totals(acct(), {it["id"]: len(its)})
                     progress.mark(acct(), it["id"], "checking")
                 for s in its:
+                    if enable_new and s.get("kind") == "new_ad":
+                        _activate(s)
                     key = (s.get("id"), tuple(sorted(s.get("params", {}))))
                     if s["kind"] == "update" and key in touched:
                         raise ValueError(f"the same field is changed twice in this draft (also in: {touched[key]})")
@@ -1820,7 +1912,7 @@ def plan(tick=False, only=None):
 
 
 def preview(enable_new=False, only=None):
-    p = plan(only=only)
+    p = plan(only=only, enable_new=enable_new)
     return {k: v for k, v in p.items() if k != "steps"}
 
 
@@ -1858,9 +1950,21 @@ def _do(s, ctx=None):
             ctx["__uploaded"] = ctx.get("__uploaded") or fresh
             _set_media(creative, s["media_kind"], ref)
             rec["uploaded"] = {"media_id": s["media_id"], **ref}
+        if s.get("card_media"):
+            kids = creative["object_story_spec"]["link_data"]["child_attachments"]
+            ups = []
+            for ch, mid in zip(kids, s["card_media"]):
+                fresh = act() not in (media_info(mid).get("uploads") or {})
+                ref = upload_media(mid)
+                ctx["__uploaded"] = ctx.get("__uploaded") or fresh
+                ch["image_hash"] = ref["hash"]
+                ch.pop("picture", None)
+                ups.append({"media_id": mid, **ref})
+            rec["uploaded_cards"] = ups
         adset = ctx[s["adset_ref"]] if s.get("adset_ref") else s["adset"]
         new_cr = post(f"{act()}/adcreatives", creative)["id"]
-        ad = post(f"{act()}/ads", {"name": s["name"], "adset_id": adset, "status": "PAUSED", "creative": {"creative_id": new_cr}})["id"]
+        ad = post(f"{act()}/ads", {"name": s["name"], "adset_id": adset, "status": s.get("status", "PAUSED"),
+                                   "creative": {"creative_id": new_cr}})["id"]
         if s.get("item"):
             ctx[s["item"]] = ad  # a creative test in this push can point at it
         return {"line": s["line"], "id": ad, "undo": {"status": "DELETED"}, "created": "ad", "created_ad": ad, "created_creative": new_cr,
@@ -1938,7 +2042,7 @@ def push(enable_new=False, accept_spend=False, accept_permanent=False, only=None
 
 
 def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=None):
-    p = plan(tick=True, only=only)
+    p = plan(tick=True, only=only, enable_new=enable_new)
     for e in p["items"]:
         if e["problems"]:
             progress.mark(acct(), e["id"], "failed")
@@ -1953,7 +2057,7 @@ def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=Non
     done, error, ctx = [], None, {}
     progress.phase(acct(), "sending", "Sending to Meta, one change at a time")
     for s in p["steps"]:
-        if s.get("media_id"):
+        if s.get("media_id") or s.get("card_media"):
             progress.phase(acct(), "sending", "Uploading to Meta. A video can take several minutes while Meta processes it")
         try:
             rec_ = _do(s, ctx)
@@ -2098,6 +2202,10 @@ CHANGE_REFERENCE = """Meta (account "meta") draft changes. ids are Meta ids from
    "media_id":"<from an upload, instead of or as well as from_ad>","primary_text":"..","headline":"..","description":"..",
    "link":"..","cta":".."}   (always created Paused. With media_id and no from_ad, link, primary_text and headline are needed.
      The file is uploaded to the ad account's media library only at Push live; undo deletes the ad, the library file stays)
+  {"type":"meta_new_ad","adset_id":"<id> or d-s1","name":"..","primary_text":"..","link":"<see more link>","cta":"..",
+   "cards":[{"media_id":"<uploaded image>","name":"<card headline>","description":"..","link":"..","cta":"(optional)"}, ..]}
+     (a new carousel: 2-10 cards, each an uploaded image; no from_ad / media_id. Cards keep their order and Meta adds
+      no end card. Images are uploaded at Push live. Always created Paused)
   "ref" names a new campaign / ad set inside one add_to_draft call; "d-<ref or draft item id>" points at it.
   Push order: new campaigns, then new ad sets, then new ads, then edits. Rollback and undo set to DELETED only what that
   push created; anything that existed before only gets its old values back.
@@ -2369,6 +2477,13 @@ def draft_preview(ad_id=None, placement="facebook", overrides=None, draft_id=Non
     step = ops_for(c)[0]
     out = {"placement": placement, "draft": True, "html": "",
            "note": "Meta's rendering of the drafted copy. Nothing is created and nothing is live until you push."}
+    if t == "meta_new_ad" and c.get("cards"):
+        pending = [x["media_id"] for x in c["cards"] if act() not in (media_info(x["media_id"]).get("uploads") or {})]
+        if pending:
+            return {**out, "media_id": c["cards"][0]["media_id"], "media_kind": "image", "cards": c["cards"],
+                    "note": "The card images are only uploaded to Meta at push, so Meta can't render this carousel yet. "
+                            "Showing the text with the first card's image from this Mac.",
+                    **{k: c.get(k) for k in ("primary_text", "headline", "description", "link", "cta")}}
     if t == "meta_new_ad" and c.get("media_id"):
         m = media_info(c["media_id"])
         if act() not in (m.get("uploads") or {}):

@@ -1039,7 +1039,8 @@ async function sendToEditor(){
 }
 
 // ---- push live: straight to the Google Ads API, after Google has checked it (validateOnly) ----
-const LIVE = {enable_new:false};
+const LIVE = {enable_new:false, meta_new:localStorage.getItem("studio.metaNewActive") === "1"};  // Meta: new ads are Paused unless the user ticks Active (remembered per Mac)
+const liveNew = () => isMeta() ? LIVE.meta_new : LIVE.enable_new;
 const histLink = () => ["Push history", liveHistory, "link"];
 // Editor-style tally of the draft: "Ad sets edited 2", "Keywords added 14" ...
 const ENT = {campaign:["Campaign", "Campaigns"], adset:["Ad set", "Ad sets"], ad_group:["Ad group", "Ad groups"], ad:["Ad", "Ads"], keyword:["Keyword", "Keywords"],
@@ -1072,7 +1073,7 @@ async function livePreview(){
   showDialog("Push to " + where, `<div class="empty">Asking ${who} to check the ${S.draftItems.length} change${S.draftItems.length > 1 ? "s" : ""} in the draft ...</div>`, [histLink()]);
   let p;
   const TR = window.TeamReviews; // [team reviews] approvals, only mine / all approved, why note
-  try { p = await api("/api/live/preview", {enable_new:LIVE.enable_new, ...(TR ? TR.extra() : {})}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
+  try { p = await api("/api/live/preview", {enable_new:liveNew(), ...(TR ? TR.extra() : {})}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
   const byId = Object.fromEntries((S.draftItems || []).map(i => [i.id, i]));
   const counts = pushCounts(p.items.map(i => byId[i.id] || {}));
   const bad = p.items.filter(i => i.problems.length), nSpend = p.items.filter(i => i.spend.length).length, nPerm = p.items.filter(i => i.permanent.length).length;
@@ -1084,7 +1085,8 @@ async function livePreview(){
     ${(i.warnings || []).map(x => `<div class="warnl">${esc(x)}</div>`).join("")}</div>`).join("");
   const body = `<table class="tally">${counts.map(([l, n]) => `<tr><td>${esc(l)}</td><td>${n}</td></tr>`).join("")}</table>
     ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then Undo or fix ${bad.length > 1 ? "them" : "it"} in the Draft tab.</div>` : ""}
-    ${isMeta() ? "" : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
+    ${isMeta() ? `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.meta_new ? "checked" : ""}> <span>Create new ads as <b>Active</b> (they deliver once Meta approves them; new campaigns and ad sets stay Paused)</span></label>`
+      : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
     ${p.spend ? `<label class="tick"><input type="checkbox" id="lv_spend"> <span>${nSpend} change${nSpend > 1 ? "s" : ""} can raise spend. I know.</span></label>` : ""}
     ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (${isMeta() ? "permanent changes" : "removals"}). I know.</span></label>` : ""}
     <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary>${details}</details>${TR ? TR.section(p.team) : ""}`;
@@ -1093,7 +1095,10 @@ async function livePreview(){
   const upd = () => { btn.disabled = !p.ok || (p.spend && !$("#lv_spend").checked) || (p.permanent && !$("#lv_perm").checked) || (TR && !TR.ready(p.team)) };
   ["#lv_spend", "#lv_perm"].forEach(id => $(id) && ($(id).onchange = upd)); upd();
   if (TR) TR.wire($("#dlgB"), livePreview, upd);
-  if ($("#lv_new")) $("#lv_new").onchange = e => { LIVE.enable_new = e.target.checked; livePreview() };
+  if ($("#lv_new")) $("#lv_new").onchange = e => {
+    if (isMeta()) { LIVE.meta_new = e.target.checked; localStorage.setItem("studio.metaNewActive", e.target.checked ? "1" : "0") }
+    else LIVE.enable_new = e.target.checked;
+    livePreview() };
 }
 // ---- progress list while a push or undo runs (like Editor's Post window) ----
 const PST = {waiting:"Waiting", checking:"Checking", sending:"Sending", done:"Done", failed:"Failed", reversed:"Reversed"};
@@ -1122,7 +1127,7 @@ async function withProgress(title, path, body, progUrl){
 async function lastProgress(progUrl){ try { return progressHTML(await api(progUrl || "/api/live/progress?" + qs({acct:S.acct})), "") } catch(e) { return "" } }
 async function livePush(){
   const btn = $("#dlgF .live"); btn.disabled = true; btn.textContent = "Pushing ...";
-  const body = {enable_new:LIVE.enable_new, accept_spend:!!($("#lv_spend") && $("#lv_spend").checked), accept_permanent:!!($("#lv_perm") && $("#lv_perm").checked),
+  const body = {enable_new:liveNew(), accept_spend:!!($("#lv_spend") && $("#lv_spend").checked), accept_permanent:!!($("#lv_perm") && $("#lv_perm").checked),
                 ...(window.TeamReviews ? TeamReviews.extra() : {})};
   try {
     const r = await withProgress("Pushing live to " + (isMeta() ? "Meta" : "Google Ads"), "/api/live/push", body);

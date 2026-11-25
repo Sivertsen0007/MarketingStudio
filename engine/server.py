@@ -581,7 +581,7 @@ class H(BaseHTTPRequestHandler):
                 raise ValueError("a push is already running")
             try:
                 return _meta_after(team_reviews.gated_push("ads", f"ads:{meta.acct()}", body, lambda only: meta.push(  # [team reviews]
-                    False, bool(body.get("accept_spend")), bool(body.get("accept_permanent")), only), "Pushed live to Meta"))
+                    bool(body.get("enable_new")), bool(body.get("accept_spend")), bool(body.get("accept_permanent")), only), "Pushed live to Meta"))
             finally:
                 PUSH_LOCK.release()
 
@@ -590,7 +590,7 @@ class H(BaseHTTPRequestHandler):
 
         routes = {
             "/api/live/preview": lambda: team_reviews.gated_preview("ads", f"ads:{meta.acct()}", body,
-                                                                   lambda only: meta.preview(only=only)),
+                                                                   lambda only: meta.preview(bool(body.get("enable_new")), only=only)),
             "/api/live/push": live_push,
             "/api/live/undo": lambda: _meta_after(meta.undo(body["push_id"], bool(body.get("accept_spend")))),
             "/api/draft/add": lambda: meta.add(body["changes"], body.get("by", "you"), body.get("note")),

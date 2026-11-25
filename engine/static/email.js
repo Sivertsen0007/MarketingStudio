@@ -16,6 +16,7 @@ if (!document.getElementById("em-css")){
 .em-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
 .em-head p{margin:4px 0 0;font-size:13.5px;font-weight:500;color:var(--muted)}
 .em-head .acts{display:flex;gap:8px;align-items:center}
+.em-banner .link{min-height:32px;padding:0 6px;display:inline-flex;align-items:center}
 .em-banner{display:flex;gap:10px;align-items:center;margin:0 28px 14px;padding:10px 14px;border-radius:var(--r-md);background:var(--warn-bg);color:var(--text2);font-size:13px;font-weight:500;flex-wrap:wrap}
 .em-banner b{color:var(--warn);font-weight:600}
 .em-banner.ok{background:var(--ok-bg)} .em-banner.ok b{color:var(--ok)}

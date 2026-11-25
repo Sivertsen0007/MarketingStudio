@@ -21,8 +21,8 @@ radius or shadow: they use the tokens below.
 | `--line-strong` / `--line-stronger` | `#d6d9e1` / `#b9bdc8` | Input border on hover, scrollbar thumb / thumb on hover |
 | `--text` | `#111318` | Headings, values, primary text |
 | `--text2` | `#3d4049` | Body text |
-| `--muted` | `#8a8e98` | Labels, secondary text, inactive tabs |
-| `--faint` | `#a9acb4` | Placeholders, axis ticks |
+| `--muted` | `#5f6370` | Labels, secondary text, inactive tabs, filter counts (5.99:1 on white, 5.35:1 on `--sunken`) |
+| `--faint` | `#767b87` | Placeholders and chart axis ticks only, never body text (4.24:1 on white) |
 | `--accent` | `#0a46e0` | Brand blue: links, active states, positive amounts, main chart series |
 | `--accent-2` | `#2f6bf0` | Hover on blue, gradient end |
 | `--accent-bg` / `--accent-soft` | `#eef2ff` / `#d3e1fb` | Selected rows, info tint / progress track, chart fill |
@@ -33,7 +33,8 @@ radius or shadow: they use the tokens below.
 | `--warn` / `--warn-bg` | `#b45309` / `#fff4e0` | Warnings |
 | `--warn-dot` | `#f5a524` | Amber status dot (connections, data warning, legend) |
 | `--idle` | `#a9acb4` | Paused / unknown status dot |
-| `--bad` / `--bad-bg` | `#e5484d` / `#fdecec` | Problems, errors, down, notification dot |
+| `--bad` / `--bad-bg` | `#e5484d` / `#fdecec` | Problems, errors, down, notification dot, bars and dots (fills, not text) |
+| `--bad-text` | `#c8303a` | Red text: danger buttons (`button.danger`, `button.link.danger`, dialog danger buttons), `.chip.bad`, the alerts counter (5.33:1 on white) |
 | `--draft` / `--draft-bg` | `#8b4fe0` / `#f4ecfe` | In draft |
 | `--c1` ... `--c6` | blue, violet, green, orange, light blue, red | Chart series, in that order |
 | `--scrim` | `rgba(17,19,24,.35)` | Dialog backdrop |
@@ -63,7 +64,7 @@ Manrope (Google Fonts, 400/500/600/700), `--font`. Numbers use `font-variant-num
 | `--sh-card` | Cards and panels (soft shadow plus a 1px hairline) |
 | `--sh-pop` | Menus, dropdowns, tooltips, popovers |
 | `--sh-dlg` | Dialogs |
-| `--ring` | Focus ring (keyboard focus and focused inputs) |
+| `--ring` | Focus ring on focused inputs. Keyboard focus everywhere is a 2px `--accent` outline, offset 2px (`:focus-visible`, `!important` so no component can cancel it) |
 | `--ease`, `--t` | 160 ms ease-out for hover, focus and open |
 
 Spacing steps: 4, 8, 12, 16, 20, 24, 36. Cards pad 18-24, gaps between cards 12.
@@ -72,8 +73,10 @@ Spacing steps: 4, 8, 12, 16, 20, 24, 36. Cards pad 18-24, gaps between cards 12.
 
 **Top bar.** White, no bottom border, a 1px `--line2` hairline under it. Brand left: a 28px blue gradient mark and
 Marketing **Studio** (18). Then the pill tabs: Overview first, then the areas. 36 high, radius 9, padding 0/14, 13/600; inactive
-`--muted` on transparent, active `--text` on white with `--sh-1`. Actions on the right are secondary buttons 34 high (`.tb`);
-Push turns blue with a counter when the draft has changes. Under 1380px the brand name and the Setup/Settings icons hide.
+`--muted` on transparent, active `--text` on white with `--sh-1`. The Alerts tab carries a small red counter for unacknowledged
+alerts (no separate button). Actions on the right are secondary buttons 34 high (`.tb`): Refresh data (one menu for every
+source and account), Push live, Connections, Setup, Settings. Push live turns blue with a counter when the draft has changes.
+Under 1380px the brand name and the Setup/Settings icons hide; under 1240px the Refresh data and Push live icons hide too.
 
 **Data bar.** Sits on the canvas, not in a card: account picker (select without a border, `--sh-1`), freshness chips as white
 chips with `--sh-1` (status tints when they warn), and the legend right: white chips with a small coloured square.
@@ -84,12 +87,14 @@ rows (radius 6) with the selected row in `--sel` and blue text. MANAGE is a list
 track, white active pill) and 34px selects and buttons. The Edit/Draft switch is the same segmented pill style.
 
 **Buttons.** Height 32-34, radius `--r`, padding 0 12-14, 12.5-13/600, optional 14px icon with gap 8.
-- Secondary (default): white, `--sh-1`, no border.
+- Secondary (default): white, `--sh-1` plus a 1px `--line-strong` edge so it reads on white cards.
 - Primary: `--ink` with white text. The one action that commits something on a screen.
 - Blue (`.blue`): brand blue, for Push live and the main call to action.
 - Ghost: no fill or shadow until hover. Link: blue text only.
 - Icon button: 32x32, radius `--r`, white, `--sh-1`.
-- Danger: red text on the secondary button.
+- Danger: `--bad-text` on the secondary button. A quiet danger next to a main action is a ghost danger (`.ghost.danger`),
+  placed left of the main action, e.g. the Ads draft: Clear draft (ghost danger, left) and Check draft (blue, main).
+  In a bulk bar the destructive action sits after a small gap (`.bsep`).
 
 **Inputs and selects.** Height 34, radius `--r`, `--line` border, white, placeholder `--faint`, focus = blue border + `--ring`.
 Selects carry a small chevron. Search inputs have a 14px search icon and may show a `⌘K` key hint (`--sunken`, radius 4).
@@ -113,6 +118,9 @@ cards (Email, SEO, SoMe), and the two tables as cards with the table running edg
 
 **Tables and grids.** Header `--head`, 11.5/600 `--muted`, sticky. Rows 38-40 high, `--line2` dividers, hover `--hover`,
 selected `--sel`. Numbers right-aligned, tabular. In-draft cells keep the draft tint; problems and warnings keep their tints.
+In the Ads grid the tick box, Status and the name column stay put when the grid scrolls sideways (sticky, the name capped
+at 260px with the full name in the tooltip). Numbers and dates are en-GB (`1,234.5`, `£2,773.16`, `18 Jun 2024`).
+Filter pills and small icon buttons are at least 32px high. Below 1360px the Edit/Draft panel starts closed (opening a row opens it).
 
 **Lists.** 40px icon tile (radius `--r`, `--sh-1`), title 14/500, meta 11/500 `--muted`, value right 14-16/600. Positive values
 in `--accent`.

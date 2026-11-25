@@ -129,7 +129,13 @@ function draw(){
 // After an await the user may have switched to another area (T.el is the shared area page): write into a detached
 // stand-in then, instead of throwing "Cannot set properties of null".
 const body = () => (T.el && T.el.querySelector("#tcBody")) || document.createElement("div");
-const F = window.studioFmt;
+// en-GB formatters from static/setup.js, read when used (not at load) with a plain fallback if setup.js is missing
+const MON_FB = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const F = {
+  get MON(){ return (window.studioFmt && window.studioFmt.MON) || MON_FB },
+  date(v){ if (window.studioFmt) return window.studioFmt.date(v); const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? String(v ?? "") : `${d.getDate()} ${MON_FB[d.getMonth()]} ${d.getFullYear()}` },
+  dateTime(v){ if (window.studioFmt) return window.studioFmt.dateTime(v); const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? String(v ?? "") : `${F.date(d)}, ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` },
+};
 
 // ---------- calendar ----------
 function range(){

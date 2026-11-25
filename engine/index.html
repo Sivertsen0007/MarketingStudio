@@ -16,12 +16,12 @@
   /* lines */
   --line:#e6e8ee;--line2:#eff0f4;--line-strong:#d6d9e1;--line-stronger:#b9bdc8;
   /* text */
-  --text:#111318;--text2:#3d4049;--muted:#8a8e98;--faint:#a9acb4;
+  --text:#111318;--text2:#3d4049;--muted:#5f6370;--faint:#767b87;
   /* brand */
   --accent:#0a46e0;--accent-2:#2f6bf0;--accent-bg:#eef2ff;--accent-soft:#d3e1fb;--violet:#a56bf0;--violet-bg:#f4ecfe;
   --ink:#17181c;--ink-2:#2a2c33;--ink-text:#fff;--on-accent:#fff;
   /* status */
-  --ok:#1c9a4c;--ok-bg:#e3f7e9;--warn:#b45309;--warn-bg:#fff4e0;--warn-dot:#f5a524;--bad:#e5484d;--bad-bg:#fdecec;--idle:#a9acb4;
+  --ok:#1c9a4c;--ok-bg:#e3f7e9;--warn:#b45309;--warn-bg:#fff4e0;--warn-dot:#f5a524;--bad:#e5484d;--bad-text:#c8303a;--bad-bg:#fdecec;--idle:#a9acb4;
   --draft:#8b4fe0;--draft-bg:#f4ecfe;--info-bg:#eef2ff;--sel:#eef2ff;--sel-text:#111318;--title:#17181c;--title-text:#fff;
   /* chart series */
   --c1:#0a46e0;--c2:#a56bf0;--c3:#22b35a;--c4:#ff8a3d;--c5:#6aa0ff;--c6:#e5484d;
@@ -41,20 +41,23 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:500 13.5px/1.5 var(--font);-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
-button{cursor:pointer;border:0;background:var(--panel);border-radius:var(--r);padding:7px 14px;font-weight:600;font-size:13px;color:var(--text);box-shadow:var(--sh-1);
+button{cursor:pointer;border:0;background:var(--panel);border-radius:var(--r);padding:7px 14px;font-weight:600;font-size:13px;color:var(--text);box-shadow:var(--sh-1),0 0 0 1px var(--line-strong);
   transition:background var(--t) var(--ease),box-shadow var(--t) var(--ease),transform var(--t) var(--ease),color var(--t) var(--ease)}
 button:hover{background:var(--hover)}
 button:active{transform:translateY(.5px)}
-button:focus-visible{outline:0;box-shadow:var(--sh-1),var(--ring)}
+button:focus-visible{outline:0;box-shadow:var(--sh-1),0 0 0 1px var(--line-strong),var(--ring)}
+/* keyboard focus: one visible outline everywhere; !important so no later rule (tabs, pills, ghost buttons, area pages) can cancel it */
+:focus-visible{outline:2px solid var(--accent)!important;outline-offset:2px!important}
 button:disabled{opacity:.45;cursor:default}
 button.primary{background:var(--ink);color:var(--ink-text);box-shadow:0 1px 3px rgba(17,19,24,.25)}
 button.primary:hover{background:var(--ink-2)}
-button.blue{background:var(--accent);color:var(--on-accent)} button.blue:hover{background:var(--accent-2)}
+button.blue{background:var(--accent);color:var(--on-accent);box-shadow:0 1px 3px rgba(10,70,224,.25)} button.blue:hover{background:var(--accent-2)}
 button.ghost{background:transparent;box-shadow:none;color:var(--text2)} button.ghost:hover{background:var(--hover)}
-button.danger{color:var(--bad)}
+button.danger{color:var(--bad-text)}
+button.ghost.danger:hover{background:var(--bad-bg)}
 button.link{border:0;background:none;box-shadow:none;padding:0;color:var(--accent);font-weight:600}
 button.link:hover{background:none;text-decoration:underline}
-button.link.danger{color:var(--bad)}
+button.link.danger{color:var(--bad-text)}
 input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:7px 11px;box-shadow:0 1px 2px rgba(17,19,24,.04);
   transition:border-color var(--t) var(--ease),box-shadow var(--t) var(--ease)}
 input::placeholder,textarea::placeholder{color:var(--faint)}
@@ -77,7 +80,7 @@ body.ov .app{grid-template-rows:auto 1fr auto}
 body.area .app{grid-template-rows:auto 1fr auto}
 .areapage{display:none;min-height:0;overflow:hidden}
 body.area:not(.ov) .areapage{display:flex;flex-direction:column}
-body.area main, body.area .subbar, body.area #sideOpen, body.area #acct, body.area #refreshBtn, body.area #pushHdr{display:none!important}
+body.area main, body.area .subbar, body.area #sideOpen, body.area #acct, body.area #pushHdr{display:none!important}
 .spacer{flex:1}
 
 /* ---- top bar: brand, pill tabs (Overview + areas), secondary action buttons ---- */
@@ -90,24 +93,25 @@ header h1 b{font-weight:700}
 .atabs{display:flex;gap:4px;min-width:0}
 #ovBtn,.atabs button{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 14px;border:0;border-radius:9px;background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600;white-space:nowrap}
 #ovBtn svg{width:15px;height:15px;fill:currentColor;flex:none}
+/* unacknowledged alerts: a small red counter on the Alerts tab (static/alerts.js sets the number) */
+.atabs #alBadge .n{margin-left:0;min-width:16px;padding:0 4px;font-size:10.5px;line-height:16px}
 #ovBtn:hover,.atabs button:hover{background:var(--hover);color:var(--text)}
 .atabs button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 body.ov .atabs button.on{background:transparent;color:var(--muted);box-shadow:none}
 body.ov #ovBtn{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
-.tb{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1);color:var(--text);font-size:12.5px;font-weight:600;white-space:nowrap}
+.tb{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1),0 0 0 1px var(--line-strong);color:var(--text);font-size:12.5px;font-weight:600;white-space:nowrap}
 .tb svg{width:15px;height:15px;fill:currentColor;flex:none}
 .tb svg.chev{width:9px;height:6px;fill:none;margin-left:-2px;opacity:.7}
 .tb:hover{background:var(--hover)}
-#refreshBtn{width:34px;padding:0;justify-content:center}
-.pushhdr.has{background:var(--accent);color:var(--on-accent)} .pushhdr.has:hover{background:var(--accent-2)}
+.pushhdr.has{background:var(--accent);color:var(--on-accent);box-shadow:var(--sh-1)} .pushhdr.has:hover{background:var(--accent-2)}
 .pushn{display:none;min-width:20px;height:20px;line-height:20px;padding:0 6px;border-radius:var(--r-pill);background:var(--glass);font-size:11.5px;text-align:center} .pushhdr.has .pushn{display:inline-block}
 .tb .n{display:inline-block;min-width:18px;height:18px;line-height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--bad);color:var(--on-accent);font-size:11px;text-align:center}
 #hlAge{font-size:11px;color:var(--muted);font-weight:500}
 #dataWarn{width:7px;height:7px;border-radius:50%;background:var(--warn-dot);display:none}
 @media (max-width:1560px){header{gap:6px;padding:10px 14px} #hlAge{display:none} #ovBtn,.atabs button{padding:0 11px} header h1{margin-right:8px}}
 @media (max-width:1380px){header h1 .bname{display:none} header h1{margin-right:4px} .tb{padding:0 10px} #setupBtn svg,#setBtn svg{display:none}}
-@media (max-width:1240px){#ovBtn,.atabs button{padding:0 9px;font-size:12.5px} .atabs{gap:2px} #setupBtn,#setBtn{padding:0 9px}}
+@media (max-width:1240px){#ovBtn,.atabs button{padding:0 9px;font-size:12.5px} .atabs{gap:2px} #setupBtn,#setBtn{padding:0 9px} #dataBtn>svg:first-child,#pushHdr>svg{display:none} .tb{padding:0 9px}}
 
 /* ---- push dialog bits ---- */
 .pushok{font-size:16px;margin:4px 0 12px} .pushok b{color:var(--ok)} .pushok.plain b{color:var(--text)}
@@ -147,7 +151,7 @@ body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 .chip.warn,.subbar .chip.warn{background:var(--warn-bg);color:var(--warn);box-shadow:none}
 .chip.draft,.subbar .chip.draft{background:var(--draft-bg);color:var(--draft);box-shadow:none}
 .chip.ok,.subbar .chip.ok{background:var(--ok-bg);color:var(--ok);box-shadow:none}
-.chip.bad{background:var(--bad-bg);color:var(--bad)}
+.chip.bad{background:var(--bad-bg);color:var(--bad-text)}
 .chip.info{background:var(--accent-bg);color:var(--accent)}
 .chip.trend{background:var(--ok-bg);color:var(--ok);font-size:10.5px;padding:3px 8px} .chip.trend.down{background:var(--bad-bg);color:var(--bad)}
 .tile .chip.trend{margin-top:8px}
@@ -161,7 +165,7 @@ aside.tree,aside.draft,main>section{background:var(--panel);border-radius:var(--
 main.noside{grid-template-columns:288px minmax(0,1fr) 0;gap:12px 12px}
 main.noside aside.draft{display:none}
 #sideOpen{display:none;white-space:nowrap}
-body.noside #sideOpen{display:inline-flex}
+body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .pad{padding:12px}
 
 /* search field with an icon */
@@ -197,7 +201,8 @@ body.noside #sideOpen{display:inline-flex}
 .toolbar .crumb{color:var(--text);font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;margin-right:4px}
 .toolbar input#search{height:34px;padding-left:32px;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24'%3E%3Cpath fill='%238a8e98' d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E") no-repeat 11px center}
 .toolbar select{height:34px;font-size:12.5px;font-weight:600}
-.toolbar>button,.bulk button{height:34px;padding:0 12px;font-size:12.5px}
+.toolbar>button,.tb-right>button,.bulk button{height:34px;padding:0 12px;font-size:12.5px}
+.tb-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
 .grid-wrap{overflow:auto;flex:1;background:var(--panel)}
 
 /* ---- data grid: sticky header, compact rows, hairline dividers ---- */
@@ -217,6 +222,11 @@ tr.new td{background:var(--draft-bg)}
 tr.new td:first-child{box-shadow:inset 3px 0 0 var(--draft)}
 td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
 td.cb,th.cb{width:38px;text-align:center;padding:0 6px}
+/* sticky leading columns (renderGrid marks them; stickLefts() sets --l0.. from the header widths) */
+th.stk,td.stk{position:sticky;z-index:1;background:var(--panel)} th.stk{z-index:3;background:var(--head)}
+.stk0{left:var(--l0,0)} .stk1{left:var(--l1,0)} .stk2{left:var(--l2,0)} .stk3{left:var(--l3,0)}
+:where(th.stk-end,td.stk-end){box-shadow:inset -1px 0 0 var(--line)}
+th.stk-name,td.stk-name{max-width:260px}
 td.changed{background:var(--draft-bg)!important;color:var(--text);font-weight:600}
 td.changed .old{color:var(--muted);text-decoration:line-through;font-weight:500;margin-right:6px}
 td.edit{cursor:text}
@@ -253,8 +263,8 @@ tr.focus td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .item .sum{margin:4px 0 0;color:var(--text);font-weight:600;word-break:break-word}
 .item .note{font-size:12px;color:var(--muted);margin-top:3px}
 .item .prob,.item .warnl{margin:8px 0 0}
-.draft-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;border-top:1px solid var(--line2)}
-button.live{background:var(--accent);color:var(--on-accent)}
+.draft-actions{display:grid;grid-template-columns:auto 1fr;gap:8px;padding:12px;border-top:1px solid var(--line2)}
+button.live{background:var(--accent);color:var(--on-accent);box-shadow:0 1px 3px rgba(10,70,224,.25)}
 button.live:hover{background:var(--accent-2)}
 button.live:disabled{opacity:.45;cursor:default}
 
@@ -285,9 +295,10 @@ button.live:disabled{opacity:.45;cursor:default}
 
 /* ---- bulk actions ---- */
 .bulk{display:flex;gap:6px;align-items:center}
-.bulk.off{visibility:hidden}
+.bulk.off{display:none}
 .bulk #bulkN{display:inline-block;min-width:92px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted)}
 .bulk button:disabled{opacity:.45;cursor:not-allowed}
+.bulk .bsep{width:1px;height:20px;background:var(--line-strong);margin:0 6px}
 .fxh{display:block;font-size:10.5px;color:var(--muted);line-height:1.2}
 
 /* ---- dialogs ---- */
@@ -324,6 +335,7 @@ footer{display:flex;align-items:center;gap:14px;padding:6px 20px 8px;background:
 .hl-row:last-child{border-bottom:0}
 .hl-row .hdot{margin-top:6px}
 .hl-row b{text-transform:capitalize;color:var(--text)}
+.hl-tech{margin-top:4px;font-size:12px;color:var(--muted)} .hl-tech summary{cursor:pointer;font-weight:600;color:var(--text2);display:inline-block;min-height:24px} .hl-tech div{margin-top:4px;word-break:break-word}
 
 /* ---- status pill + menus ---- */
 .pill{display:inline-flex;align-items:center;gap:6px;padding:0 9px 0 8px;border-radius:var(--r-pill);background:var(--sunken);color:var(--text2);font-size:12px;font-weight:600;line-height:22px}
@@ -354,10 +366,10 @@ td.st-edit:hover .pill{box-shadow:0 0 0 1px currentColor}
 /* ---- filter pills ---- */
 .fpills{display:flex;gap:2px;flex-wrap:wrap;background:var(--sunken);border-radius:var(--r-md);padding:3px}
 .fpills:empty{display:none}
-.fpills button{height:28px;padding:0 11px;border-radius:var(--r);background:transparent;box-shadow:none;font-weight:600;font-size:12px;color:var(--muted)}
+.fpills button{height:32px;padding:0 11px;border-radius:var(--r);background:transparent;box-shadow:none;font-weight:600;font-size:12px;color:var(--muted)}
 .fpills button:hover{background:transparent;color:var(--text)}
 .fpills button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
-.fpills .n{color:var(--faint);margin-left:5px;font-size:11px;font-variant-numeric:tabular-nums}
+.fpills .n{color:var(--muted);margin-left:5px;font-size:11px;font-variant-numeric:tabular-nums}
 .fpills button.on .n{color:var(--accent)}
 
 /* ---- thumbnails + hover preview ---- */
@@ -403,7 +415,7 @@ td.thumbc{padding:2px 6px;width:52px}
 .colpick label.c:hover{background:var(--hover)}
 .colpick .sel .r{display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid var(--line2)}
 .colpick .sel .r span{flex:1}
-.colpick .sel .r button{width:26px;height:26px;padding:0}
+.colpick .sel .r button{width:32px;height:32px;padding:0}
 .cardbox{border-radius:var(--r-md);padding:12px 14px 4px;margin-bottom:12px;box-shadow:var(--sh-card)}
 .cardh{display:flex;gap:10px;align-items:center;margin-bottom:10px}
 .cardh img{width:40px;height:40px;object-fit:cover;border-radius:var(--r);cursor:zoom-in}
@@ -499,9 +511,8 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
   <nav id="areaTabs" class="atabs"><button data-area="ads" class="on">Ads</button></nav>
   </div>
   <span class="spacer"></span>
-  <button id="refreshBtn" class="tb" style="display:none" title="Refresh this account only (Google: about 10 seconds, Meta: about 20)" aria-label="Refresh this account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
   <button id="dataBtn" class="tb" title="Studio keeps what it fetched until you refresh. Pick what to fetch again."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8l-4 4h3a6 6 0 0 1-8.8 5.3l-1.46 1.46A8 8 0 0 0 20 12h3l-4-4zM6 12a6 6 0 0 1 8.8-5.3l1.46-1.46A8 8 0 0 0 4 12H1l4 4 4-4H6z"/></svg>Refresh data<svg class="chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="dataWarn"></span></button>
-  <button id="pushHdr" class="tb pushhdr" title="Review everything in the draft and push it live"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z"/></svg>Push <span id="pushN" class="pushn"></span></button>
+  <button id="pushHdr" class="tb pushhdr" title="Review everything in the draft and push it live"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z"/></svg>Push live <span id="pushN" class="pushn"></span></button>
   <button id="hlBtn" class="tb" title="Connection health: Ads, Email, SEO and SoMe"><span id="hlDot" class="hdot"></span>Connections <span id="hlAge"></span></button>
   <button id="setupBtn" class="tb" title="Keys and Sign in with Google" onclick="openSetup()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.65 10A6 6 0 1 0 7 18a6 6 0 0 0 5.65-4H17v4h4v-4h2v-4H12.65zM7 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>Setup</button>
   <button id="setBtn" class="tb" title="Accounts and saved views"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.84a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 0 0-.61.22L2.66 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.61.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.84c.24 0 .45-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.09.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>Settings</button>
@@ -528,14 +539,15 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
       <input id="search" placeholder="Search this view" style="width:200px">
       <span id="fpills" class="fpills"></span>
       <span id="gridNote" class="chip warn" style="display:none"></span>
-      <span class="spacer"></span>
+      <span class="tb-right">
       <select id="rangeSel" title="Date range for the stats columns"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="custom">Custom range ...</option></select>
       <select id="viewSel" title="Saved views"></select>
       <button id="colBtn" title="Choose and order columns">Columns</button>
       <span id="bulk" class="bulk" title="Select rows first"><span id="bulkN">None selected</span>
-        <button data-bulk="enabled" disabled>Enable</button><button data-bulk="paused" disabled>Pause</button><button data-bulk="removed" class="danger" disabled>Remove</button></span>
-      <button id="addBtn" class="primary">+ Add</button>
+        <button data-bulk="enabled" disabled>Enable</button><button data-bulk="paused" disabled>Pause</button><span class="bsep" aria-hidden="true"></span><button data-bulk="removed" class="danger" disabled>Remove</button></span>
+      <button id="addBtn" class="primary">New campaign</button>
       <button id="sideOpen" title="Open the Edit and Draft panel">Edit · Draft <span id="draftN2"></span></button>
+      </span>
     </div>
     <div id="grid" class="grid-wrap"></div>
   </section>
@@ -545,8 +557,8 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
     <div id="paneDraft" class="pane on">
       <div id="draft" class="draft-list" style="padding-top:12px"></div>
       <div class="draft-actions">
-        <button id="clearBtn" class="danger" title="Empty the draft">Clear</button>
-        <button id="valBtn">Check</button>
+        <button id="clearBtn" class="ghost danger" title="Empty the draft">Clear draft</button>
+        <button id="valBtn" class="blue" title="Check every change in the draft before you push it">Check draft</button>
       </div>
     </div>
   </aside>
@@ -581,6 +593,10 @@ const qs = o => Object.entries(o).filter(([,v]) => v !== null && v !== undefined
 
 // ---- views: columns per entity type, Editor's names ----
 const money = v => v == null ? "" : Number(v).toFixed(2);
+// en-GB dates for display ("18 Jun 2024", "25 Nov 2026, 16:48"); studioFmt comes from static/setup.js, which loads after this script
+const gbDate = v => v == null || v === "" ? "" : window.studioFmt ? studioFmt.date(v) : String(v);
+const gbDT = v => v == null || v === "" ? "" : window.studioFmt ? studioFmt.dateTime(String(v).slice(0, 16)) : String(v).replace("T", " ").slice(0, 16);
+const DATEF = v => esc(gbDate(v));
 // ---- display currency (Settings, saved server-side). DISPLAY ONLY: what is typed, stored in a draft or pushed to
 // Google/Meta is always the account's own currency (native values from the server, never converted here). ----
 S.disp = "own"; S.fx = null;
@@ -614,7 +630,7 @@ const VIEWS = {
   campaigns:{label:"Campaigns", cols:[{...ST, edit:"status3"}, CA, {key:"type",label:"Type"}, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money"},
     {key:"shared_budget",label:"Shared budget"}, {key:"bidding",label:"Bid strategy"}, {key:"max_cpc_cap",label:"Max CPC cap",num:1,fmt:money},
     {key:"target_cpa",label:"Target CPA",num:1,fmt:money}, {key:"ad_groups",label:"Ad groups",num:1}, {key:"keywords",label:"Keywords",num:1},
-    {key:"start",label:"Start"}, {key:"end",label:"End"}, ED]},
+    {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED]},
   ad_groups:{label:"Ad groups", cols:[{...ST, edit:"status"}, CA, AG, {key:"max_cpc",label:"Default max CPC",num:1,fmt:money,edit:"money"},
     {key:"keywords",label:"Keywords",num:1}, {key:"ads",label:"Ads",num:1}, ED], bulk:1},
   keywords:{label:"Keywords", cols:[{...ST, edit:"status"}, CA, AG, {key:"keyword",label:"Keyword"}, {key:"match",label:"Match"},
@@ -627,8 +643,8 @@ const VIEWS = {
   asset_groups:{label:"Asset groups", cols:[ST, CA, {key:"asset_group",label:"Asset group"}, {key:"headlines",label:"Headlines",num:1},
     {key:"long_headlines",label:"Long headlines",num:1}, {key:"descriptions",label:"Descriptions",num:1}, {key:"final_url",label:"Final URL"}, {key:"ad_strength",label:"Ad strength"}, ED]},
   sitelinks:{label:"Sitelinks", cols:[LV, CA, AG, ST, {key:"text",label:"Link text"}, {key:"line1",label:"Description 1"}, {key:"line2",label:"Description 2"},
-    {key:"final_url",label:"Final URL"}, {key:"start",label:"Start"}, {key:"end",label:"End"}, ED], open:r => r.level !== "Ad group" && sitelinkDialog(r)},
-  callouts:{label:"Callouts", cols:[LV, CA, AG, ST, {key:"text",label:"Callout text"}, {key:"start",label:"Start"}, {key:"end",label:"End"}, ED]},
+    {key:"final_url",label:"Final URL"}, {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED], open:r => r.level !== "Ad group" && sitelinkDialog(r)},
+  callouts:{label:"Callouts", cols:[LV, CA, AG, ST, {key:"text",label:"Callout text"}, {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED]},
   snippets:{label:"Snippets", cols:[LV, CA, AG, ST, {key:"header",label:"Header"}, {key:"values",label:"Values"}, ED]},
   prices:{label:"Prices", cols:[LV, CA, AG, ST, {key:"price_type",label:"Type"}, {key:"qualifier",label:"Qualifier"}, {key:"items",label:"Items"}, ED]},
   promotions:{label:"Promotions", cols:[LV, CA, ST, {key:"occasion",label:"Occasion"}, {key:"target",label:"Item"}, {key:"discount",label:"Discount"}, {key:"final_url",label:"Final URL"}, ED]},
@@ -674,7 +690,7 @@ const META_VIEWS = {
     {key:"ad_sets",label:"Ad sets",num:1}, {key:"ads",label:"Ads",num:1}, ...STATS, UPD, IDC], bulk:1},
   adsets:{label:"Ad sets", cols:[MST, CA, AS, DL, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money",when:r => r.budget != null},
     {key:"optimisation",label:"Optimisation"}, {key:"countries",label:"Countries"}, {key:"age",label:"Age"}, {key:"audiences",label:"Audiences"},
-    {key:"excluded",label:"Excluded"}, {key:"end",label:"End"}, {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money,hide:1},
+    {key:"excluded",label:"Excluded"}, {key:"end",label:"End",fmt:DATEF}, {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money,hide:1},
     ...STATS, UPD, IDC], bulk:1, open:r => adsetDialog(r)},
   ads:{label:"Ads", cols:[MST, THUMB, {key:"ad",label:"Ad"}, CA, AS, DL, {key:"format",label:"Format"}, {key:"headline",label:"Headline"},
     {key:"primary_text",label:"Primary text"}, {key:"description",label:"Description",hide:1}, {key:"link",label:"Link"}, {key:"cta",label:"CTA"},
@@ -694,7 +710,7 @@ const rangeQ = () => S.range.start ? {start:S.range.start, end:S.range.end}
   : S.range.days === "90" && !isMeta() ? {start:ymd(new Date(Date.now() - 90 * 864e5)), end:ymd(new Date(Date.now() - 864e5))} : {days:S.range.days || "7"};
 function renderRange(){
   const sel = $("#rangeSel"); [...sel.options].filter(o => o.dataset.c).forEach(o => o.remove());
-  if (S.range.start){ const o = new Option(`${S.range.start} to ${S.range.end}`, "cur"); o.dataset.c = 1; sel.insertBefore(o, sel.lastElementChild); sel.value = "cur" } else sel.value = S.range.days || "7";
+  if (S.range.start){ const o = new Option(`${gbDate(S.range.start)} to ${gbDate(S.range.end)}`, "cur"); o.dataset.c = 1; sel.insertBefore(o, sel.lastElementChild); sel.value = "cur" } else sel.value = S.range.days || "7";
 }
 $("#rangeSel").onchange = e => {
   const v = e.target.value;
@@ -752,10 +768,10 @@ function renderTree(){
     if (f && !c.name.toLowerCase().includes(f) && !groups.length) continue;
     const open = S.open.has(String(c.id)) || (f && groups.length);
     h += `<div class="node ${S.camp === String(c.id) && !S.ag ? "sel" : ""}" data-c="${c.id}" title="${esc(c.name)} - ${esc(c.type)}">
-      <span class="tw" data-tw="${c.id}">${c.ad_groups.length ? (open ? "▾" : "▸") : ""}</span><span class="dot ${c.status}"></span><span class="nm">${esc(c.name)}</span>
+      <span class="tw" data-tw="${c.id}">${c.ad_groups.length ? (open ? "▾" : "▸") : ""}</span><span class="dot ${c.status}"></span><span class="nm" title="${esc(c.name)}">${esc(c.name)}</span>
       ${c.editor ? `<span class="ed">${c.editor}</span>` : ""}${expChip(c)}${c.draft ? ` <span class="chip draft" title="New in the draft: created Paused when you push live">draft</span>` : ""}</div>`;
     if (open) for (const g of (f && !c.name.toLowerCase().includes(f) ? groups : c.ad_groups))
-      h += `<div class="node ag ${S.ag === String(g.id) ? "sel" : ""}" data-c="${c.id}" data-g="${g.id}" title="${esc(g.name)}"><span class="dot ${g.status}"></span><span class="nm">${esc(g.name)}</span>${g.draft ? ` <span class="chip draft">draft</span>` : ""}</div>`;
+      h += `<div class="node ag ${S.ag === String(g.id) ? "sel" : ""}" data-c="${c.id}" data-g="${g.id}" title="${esc(g.name)}"><span class="dot ${g.status}"></span><span class="nm" title="${esc(g.name)}">${esc(g.name)}</span>${g.draft ? ` <span class="chip draft">draft</span>` : ""}</div>`;
   }
   $("#tree").innerHTML = h;
 }
@@ -779,10 +795,16 @@ $("#tree").onclick = e => {
 $("#treeSearch").oninput = renderTree;
 
 // ---- tabs + grid ----
+// the grid's add button says what it adds on each MANAGE tab
+const ADD_LABEL = {google:{campaigns:"New campaign", ad_groups:"New ad group", keywords:"New keywords", negatives:"New negative keywords", ads:"New ad",
+  sitelinks:"New sitelink", callouts:"New callouts", locations:"Exclude locations", asset_group_assets:"New PMax assets", user_lists:"Add audiences",
+  shared_lists:"Attach shared lists", videos:"Add video"},
+  meta:{campaigns:"New campaign", adsets:"New ad set", ads:"New ad", audiences:"New audience", tests:"New test"}};
 function renderTabs(){
+  $("#addBtn").textContent = (ADD_LABEL[chan()] || {})[S.kind] || "Add";
   $("#tabs").innerHTML = Object.entries(V()).filter(([k, v]) => !v.api || S.gsrc !== "editor").map(([k, v]) => `<button class="tab ${k === S.kind ? "on" : ""}" data-k="${k}">${v.label}${k === S.kind ? `<span class="n">${S.rows.length}</span>` : ""}</button>`).join("");
 }
-$("#tabs").onclick = e => { const b = e.target.closest(".tab"); if (!b) return; S.kind = b.dataset.k; localSet("kind", S.kind); S.sort = null; S.focus = null; renderTabs(); renderViews(); loadGrid() };
+$("#tabs").onclick = e => { const b = e.target.closest(".tab"); if (!b) return; $("#grid").scrollLeft = 0; S.kind = b.dataset.k; localSet("kind", S.kind); S.sort = null; S.focus = null; renderTabs(); renderViews(); loadGrid() };
 function scopeNames(){
   const c = S.tree.find(c => String(c.id) === S.camp), g = c && c.ad_groups.find(g => String(g.id) === S.ag);
   return {campaign: c ? c.name : null, ad_group: g ? g.name : null};
@@ -840,29 +862,40 @@ function renderGrid(){
   renderPills();
   if (!rows.length) { $("#grid").innerHTML = `<div class="empty">Nothing here${S.camp ? " for this selection" : ""}${S.filter !== "all" ? " with this filter" : ""}.</div>`; updBulk(); return }
   const MAX = 2000;
-  let h = `<table><thead><tr>${v.bulk ? `<th class="cb"><input type="checkbox" id="selAll"></th>` : ""}${cols.map(c => `<th data-s="${c.key}" draggable="true" title="Click to sort, drag to move" class="${S.sort && S.sort.key === c.key ? "sorted" : ""}">${esc(colLabel(c))}${S.sort && S.sort.key === c.key ? (S.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>`;
+  // sticky leading columns (tick box, Status, then up to the name column) so a wide grid scrolls under them
+  const ni = cols.slice(0, 3).findIndex(c => STK_NAME.includes(c.key)), nStk = ni >= 0 ? ni + 1 : cols[0] && cols[0].key === "status" ? 1 : 0;
+  const off = v.bulk ? 1 : 0, stkC = (i, name) => i < nStk ? `stk stk${i + off}${i === nStk - 1 ? " stk-end" : ""}${name ? " stk-name" : ""}` : "";
+  const SK = {}; cols.forEach((c, i) => { SK[c.key] = stkC(i, i === ni) });
+  const cbC = v.bulk && nStk ? "stk stk0" : "";
+  let h = `<table><thead><tr>${v.bulk ? `<th class="cb ${cbC}"><input type="checkbox" id="selAll"></th>` : ""}${cols.map(c => `<th data-s="${c.key}" draggable="true" title="Click to sort, drag to move" class="${SK[c.key]} ${S.sort && S.sort.key === c.key ? "sorted" : ""}">${esc(colLabel(c))}${S.sort && S.sort.key === c.key ? (S.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>`;
   rows.slice(0, MAX).forEach(r => {
     const i = S.rows.indexOf(r);
     const removed = r.status === "Removed" || (r._draft && r._draft.status && r._draft.status.value === "Removed");
     h += `<tr data-i="${i}" class="${r._new ? "new" : ""} ${removed ? "removed" : ""} ${S.focus && String(r.id) === S.focus ? "focus" : ""}">`;
-    if (v.bulk) h += `<td class="cb">${r._new || isTrial(r) ? "" : `<input type="checkbox" data-sel="${i}" ${S.sel.has(i) ? "checked" : ""}>`}</td>`;
+    if (v.bulk) h += `<td class="cb ${cbC}">${r._new || isTrial(r) ? "" : `<input type="checkbox" data-sel="${i}" ${S.sel.has(i) ? "checked" : ""}>`}</td>`;
     for (const c of cols){
       if (c.thumb){ const mu = r.media_id && mediaUrl(r.media_id);
-        h += `<td class="thumbc">${mu ? (r.format === "Video" ? `<span class="chip draft" title="Uploaded video, stored on this Mac until you push">Video</span>` : `<img class="thumb" src="${esc(mu)}" data-big="${esc(mu)}" alt="" loading="lazy">`)
+        h += `<td class="thumbc ${SK[c.key]}">${mu ? (r.format === "Video" ? `<span class="chip draft" title="Uploaded video, stored on this Mac until you push">Video</span>` : `<img class="thumb" src="${esc(mu)}" data-big="${esc(mu)}" alt="" loading="lazy">`)
           : r.thumbnail ? `<img class="thumb" src="${esc(r.thumbnail)}" data-big="${esc(r.image || r.thumbnail)}" alt="" loading="lazy">` : ""}</td>`; continue }
       const d = r._draft && r._draft[c.key];
       const val = cellVal(r, c);
       const mon = isMoney(c) ? moneyCell(c, val) : null;
-      const shown = mon ? mon[0] : c.fmt ? c.fmt(val) : esc(val);
+      const shown = mon ? mon[0] : c.fmt ? c.fmt(val) : c.num && !/(^|_)id$/.test(c.key) && val !== "" && val != null && !isNaN(val) ? fmtN(val) : esc(val);
       const editable = c.edit && !r._new && !isTrial(r) && (!c.when || c.when(r)) && !(S.kind === "campaigns" && c.key === "budget" && r.shared_budget);
       const stEdit = editable && (c.edit.startsWith("status") || c.edit === "mstatus");
-      h += `<td class="${c.num ? "num" : ""} ${d ? "changed" : ""} ${stEdit ? "st-edit" : editable ? "edit" : ""}" data-k="${c.key}" title="${esc(mon ? mon[1] : val)}">${d ? `<span class="old">${isMoney(c) ? moneyCell(c, r[c.key])[0] : c.fmt ? c.fmt(r[c.key]) : esc(r[c.key])}</span>` : ""}${shown}${c.key === "campaign" ? expChip(r) : ""}</td>`;
+      h += `<td class="${SK[c.key]} ${c.num ? "num" : ""} ${d ? "changed" : ""} ${stEdit ? "st-edit" : editable ? "edit" : ""}" data-k="${c.key}" title="${esc(mon ? mon[1] : val)}">${d ? `<span class="old">${isMoney(c) ? moneyCell(c, r[c.key])[0] : c.fmt ? c.fmt(r[c.key]) : esc(r[c.key])}</span>` : ""}${shown}${c.key === "campaign" ? expChip(r) : ""}</td>`;
     }
     h += "</tr>";
   });
   h += "</tbody></table>";
   if (rows.length > MAX) h += `<div class="empty">Showing ${MAX} of ${rows.length}. Pick a campaign or search to narrow it down.</div>`;
-  $("#grid").innerHTML = h; updBulk(); refreshFocus();
+  $("#grid").innerHTML = h; stickLefts(); updBulk(); refreshFocus();
+}
+const STK_NAME = ["campaign", "ad", "list", "lead_form", "type"];
+// left offset of each sticky column = the widths of the sticky columns before it (measured on the header row)
+function stickLefts(){
+  const t = $("#grid table"); if (!t) return; let x = 0;
+  t.querySelectorAll("thead th.stk").forEach((th, i) => { t.style.setProperty("--l" + i, x + "px"); x += th.offsetWidth });
 }
 // drag a column header to move the column; the order is saved like the Columns dialog (Save as a view keeps it under a name)
 {
@@ -996,7 +1029,7 @@ document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
     return addChanges(rows.map(r => changeFor(r, "status", st === "enabled" ? "active" : "paused")), "");
   }
   if (S.kind === "asset_group_assets"){
-    if (st !== "removed") return toast("PMax assets can only be removed here (or added with + Add)");
+    if (st !== "removed") return toast("PMax assets can only be removed here (or added with New PMax assets)");
     const txt = rows.filter(r => ["HEADLINE", "LONG_HEADLINE", "DESCRIPTION"].includes(r.field_type));
     if (txt.length < rows.length) toast("Only text assets (headlines, long headlines, descriptions) can be removed from Studio");
     if (!txt.length || !confirm(`Remove ${txt.length} text asset(s) from their asset groups? Removal is permanent in Google Ads once pushed.`)) return;
@@ -1027,7 +1060,7 @@ function renderDraft(d){
     ${i.note ? `<div class="note">${esc(i.note)}</div>` : ""}
     ${i.problems.map(p => `<div class="prob">${esc(p)}</div>`).join("")}
     ${i.warnings.map(p => `<div class="warnl">${esc(p)}</div>`).join("")}
-  </div>`).join("") : `<div class="empty">No changes yet.<br><br>Edit a cell, use + Add, or ask Claude (MCP: marketing-studio).</div>`;
+  </div>`).join("") : `<div class="empty">No changes yet.<br><br>Edit a cell, use the New button above the grid, or ask Claude (MCP: marketing-studio).</div>`;
   const blocked = d.items.some(i => i.problems.length);
   $("#pushN").textContent = n || ""; $("#pushHdr").classList.toggle("has", n > 0);
   $("#pushHdr").title = n ? `${n} change${n > 1 ? "s" : ""} in the draft${blocked ? " (some need fixing)" : ""}. Review and push them live.` : "Nothing in the draft. Push history is in here too.";
@@ -1418,7 +1451,7 @@ async function liveUndo(id, spend){
 }
 async function liveHistory(){
   const h = await api("/api/live/history?acct=" + S.acct);
-  showDialog("Live pushes", h.length ? h.map(r => `<div class="pv"><div><b>${esc(r.ts.replace("T", " "))}</b> ${r.undo_of ? "(undo)" : ""} ${r.ok ? "" : `<span class="flag perm">failed</span>`} ${r.undone ? `<span class="flag spend">undone</span>` : ""}</div>
+  showDialog("Live pushes", h.length ? h.map(r => `<div class="pv"><div><b>${esc(gbDT(r.ts))}</b> ${r.undo_of ? "(undo)" : ""} ${r.ok ? "" : `<span class="flag perm">failed</span>`} ${r.undone ? `<span class="flag spend">undone</span>` : ""}</div>
     ${r.summaries.map(x => `<div>${esc(x)}</div>`).join("")}
     ${r.lines.map(l => `<div class="ln2">${esc(l)}</div>`).join("")}
     ${r.can_undo ? `<button class="danger" data-undo="${r.id}" style="margin-top:6px">Undo</button>` : ""}</div>`).join("") : `<div class="empty">No live pushes yet.</div>`, [["Back to push", livePreview]]);
@@ -1430,10 +1463,9 @@ $("#pushHdr").onclick = async () => { await asFlush(); await poll(true); livePre
 async function poll(force){
   let st; try { st = await api("/api/state?" + qs({acct:S.acct, ...rangeQ()})) } catch(e) { return }
   const g = st.google || {};
-  $("#refreshBtn").style.display = isMeta() || g.source === "api" ? "" : "none";
   $("#pend").style.display = isMeta() ? "none" : "";
   if (isMeta()){
-    $("#fresh").textContent = st.refreshing ? "Meta: refreshing ..." : "Meta data " + (st.last_download || "").replace("T", " ");
+    $("#fresh").textContent = st.refreshing ? "Meta: refreshing ..." : "Meta data " + gbDT(st.last_download);
     $("#fresh").className = "chip";
     $("#fresh").title = "Pulled from the Meta API and kept until you refresh (Refresh data, or Push live / Undo for this account)";
     $("#behind").style.display = "none";
@@ -1446,14 +1478,14 @@ async function poll(force){
   $("#pend").textContent = p ? `${p} unposted in Editor` : "Editor: nothing unposted"; $("#pend").className = "chip " + (p ? "warn" : "ok");
   if (S.gsrc !== g.source){ const first = !S.gsrc; S.gsrc = g.source; renderTabs(); if (!first) { loadTree(); force = true } }
   if (g.source === "api"){
-    $("#fresh").textContent = g.refreshing ? "Google: refreshing ..." : "Google API data " + String(g.fetched_at || "").replace("T", " ").slice(0, 16);
+    $("#fresh").textContent = g.refreshing ? "Google: refreshing ..." : "Google API data " + gbDT(g.fetched_at);
     $("#fresh").className = "chip"; $("#fresh").title = "Read from the Google Ads API and kept until you refresh (Refresh data, or Push live / Undo for this account). Stats: " + (g.window || "");
     $("#pend").style.display = p ? "" : "none";
     if (S.wasRefreshing && !g.refreshing){ loadTree(); force = true }
     S.wasRefreshing = g.refreshing;
   } else if (st.last_download){
     const age = (Date.now() - new Date(st.last_download)) / 864e5;
-    $("#fresh").textContent = "Editor data " + st.last_download.replace("T", " ");
+    $("#fresh").textContent = "Editor data " + gbDT(st.last_download);
     $("#fresh").className = "chip " + (age >= 2 ? "warn" : "");
     $("#fresh").title = age >= 2 ? "Old data - in Editor: Get recent changes" : "Last download in Editor";
   }
@@ -1813,10 +1845,6 @@ const META_ADD = {
     fill();
   },
 };
-$("#refreshBtn").onclick = async () => {
-  $("#fresh").textContent = (isMeta() ? "Meta" : "Google") + ": refreshing ...";
-  await dataRefresh(isMeta() ? "meta" : "google", S.acct);
-};
 // ---- data: Studio keeps what it fetched until you refresh (datapolicy.py). One menu to refresh one source or all ----
 const DS = {st:null, busy:new Set()};
 function fmtWhen(iso){
@@ -1888,6 +1916,13 @@ async function dataRefresh(source, account, opt){
 }
 // ---- Overview dashboard: a page of its own; the same button goes back to the studio ----
 const fmtN = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB", {maximumFractionDigits:1});
+// "google:8931136258", "meta:meta_6449..." -> "Master Liveaboards Global (Google Ads)", ...: account names, never raw ids
+function srcNames(list){
+  const CH = {google:"Google Ads", meta:"Meta"}, digits = x => String(x || "").replace(/\D/g, "");
+  return [...new Set((list || []).map(k => { const [src, id] = String(k).split(/:(.*)/);
+    const a = id && (S.accts || []).find(a => a.key === id || String(a.id) === id || (digits(id) && digits(a.id) === digits(id)) || digits(a.key) === digits(id) && digits(id));
+    return a ? `${a.name} (${CH[src] || src})` : CH[src] ? `a ${CH[src]} account` : (DLABEL[src] || src) }))].join(", ");
+}
 async function overviewPage(days){
   days = days || localGet("ovdays") || "7";
   const pg = $("#ovPage");
@@ -1908,8 +1943,8 @@ async function overviewPage(days){
     ${tile("Spend", esc(curFmt(o.all_channels.spend, dc)), 0, o.totals.map(t => `${t.channel}: ${nat(t.spend, t.currency)}`).join(" + "))}${tile("Clicks", fmtN(o.all_channels.clicks))}${tile("Results", fmtN(o.all_channels.results))}
     ${tile("Select Cabin", fmtN(o.all_channels.select_cabin), 1)}${tile("Cost / Select Cabin", esc(curFmt(o.all_channels.cost_per_select_cabin, dc)), 1)}</div>`, "hero", "ovAll") : "";
   const tiles = allT + o.totals.map((t, ti) => card(esc(t.channel), `${esc(t.currency)}${dc ? ` (shown in ${esc(dc)})` : ""} · ${t.campaigns} campaigns with spend`, `<div class="tiles">
-    ${dc ? tile("Spend", esc(curFmt(t.spend_display, dc)), 0, nat(t.spend, t.currency)) : tile("Spend", money(t.spend))}${tile("Clicks", fmtN(t.clicks))}${tile("Results", fmtN(t.results))}
-    ${tile("Select Cabin", fmtN(t.select_cabin), 1)}${dc ? tile("Cost / Select Cabin", esc(curFmt(t.cost_per_select_cabin_display, dc)), 1, nat(t.cost_per_select_cabin, t.currency)) : tile("Cost / Select Cabin", money(t.cost_per_select_cabin), 1)}</div>`, !dc && ti === 0 ? "hero" : "")).join("");
+    ${dc ? tile("Spend", esc(curFmt(t.spend_display, dc)), 0, nat(t.spend, t.currency)) : tile("Spend", esc(curFmt(t.spend, t.currency)))}${tile("Clicks", fmtN(t.clicks))}${tile("Results", fmtN(t.results))}
+    ${tile("Select Cabin", fmtN(t.select_cabin), 1)}${dc ? tile("Cost / Select Cabin", esc(curFmt(t.cost_per_select_cabin_display, dc)), 1, nat(t.cost_per_select_cabin, t.currency)) : tile("Cost / Select Cabin", esc(curFmt(t.cost_per_select_cabin, t.currency)), 1)}</div>`, !dc && ti === 0 ? "hero" : "")).join("");
   // two small charts drawn from the destination rows already on the page (no extra data)
   const dests = o.destinations.slice().sort((a, b) => (b.select_cabin || 0) - (a.select_cabin || 0)).slice(0, 8);
   const scMax = Math.max(1, ...dests.map(d => d.select_cabin || 0));
@@ -1920,17 +1955,17 @@ async function overviewPage(days){
   const n0 = 2 + keys.length;
   pg.innerHTML = head(`<div class="ov-tools"><span class="fresh" id="ovFetched" title="Kept until you press this Refresh or Refresh data > All">Fetched ${esc(fmtWhen(o.fetched_at))}</span><select id="ovDays">${["7", "14", "30"].map(d => `<option value="${d}" ${d === String(o.days) ? "selected" : ""}>Last ${d} days</option>`).join("")}</select>
     <button id="ovRefresh" class="primary">Refresh</button></div>`) + `<p class="ov-note" id="ovCurNote">${dc ? esc(o.display.note) : "Currencies are never added together."}</p>
-    ${(o.newer_sources || []).length ? `<div class="warnl" style="margin-bottom:12px">Refreshed after this Overview was built: ${esc(o.newer_sources.join(", "))}. Press Refresh here to rebuild it with the new data.</div>` : ""}
+    ${(o.newer_sources || []).length ? `<div class="warnl" style="margin-bottom:12px">Refreshed after this Overview was built: ${esc(srcNames(o.newer_sources))}. Press Refresh here to rebuild it with the new data.</div>` : ""}
     ${o.errors.map(e => `<div class="prob">${esc(e)}</div>`).join("")}
     ${tiles}
     ${bars || share ? `<div class="ov-grid two">${bars}${share}</div>` : ""}
     ${(o.areas || []).length ? `<div class="ov-grid two">${(o.areas || []).map(b => card(esc(b.title), "", `<div class="tiles">${(b.tiles || []).map(t => tile(esc(t.k), esc(t.v ?? ""), t.hi)).join("")}</div>${b.note ? `<p class="hint" style="margin:14px 0 0">${esc(b.note)}</p>` : ""}`)).join("")}</div>` : ""}
     ${o.note ? `<p class="hint">${esc(o.note)}</p>` : ""}
     ${card("By destination", `${o.destinations.length} destinations`, dc ? tbl(["Destination", "Spend (" + esc(dc) + ")", "Clicks", "Results", "Select Cabin"], o.destinations.map(d => `<tr><td>${esc(d.destination)}</td><td class="num" title="${esc(Object.entries(d.spend).map(([k, v]) => `${k}: ${money(v)}`).join(" + "))}">${esc(curFmt(d.spend_display, dc))}</td><td class="num">${fmtN(d.clicks)}</td><td class="num">${fmtN(d.results)}</td><td class="num"><b>${fmtN(d.select_cabin || "")}</b></td></tr>`), [1, 2, 3, 4])
-    : tbl(["Destination", ...keys.map(k => "Spend " + k), "Clicks", "Results", "Select Cabin"], o.destinations.map(d => `<tr><td>${esc(d.destination)}</td>${keys.map(k => `<td class="num">${d.spend[k] != null ? money(d.spend[k]) : ""}</td>`).join("")}<td class="num">${fmtN(d.clicks)}</td><td class="num">${fmtN(d.results)}</td><td class="num"><b>${fmtN(d.select_cabin || "")}</b></td></tr>`),
+    : tbl(["Destination", ...keys.map(k => "Spend " + k), "Clicks", "Results", "Select Cabin"], o.destinations.map(d => `<tr><td>${esc(d.destination)}</td>${keys.map(k => `<td class="num">${d.spend[k] != null ? esc(curFmt(d.spend[k], k.split(" ").pop())) : ""}</td>`).join("")}<td class="num">${fmtN(d.clicks)}</td><td class="num">${fmtN(d.results)}</td><td class="num"><b>${fmtN(d.select_cabin || "")}</b></td></tr>`),
       Array.from({length:n0 + 2}, (_, i) => i).filter(i => i > 0)))}
-    ${card("Campaigns with spend", `${o.campaigns.length} campaigns`, dc ? tbl(["Channel", "Campaign", "Destination", "Status", "Spend (" + esc(dc) + ")", "Native", "Clicks", "Results", "Select Cabin", "Cost / Select Cabin (" + esc(dc) + ")"], o.campaigns.map(r => `<tr><td>${r.channel}</td><td title="${esc(r.account)}">${esc(r.campaign)}</td><td>${esc(r.destination)}</td><td>${pill(r.status)}</td><td class="num" title="${esc(nat(r.spend, r.currency))}">${r.spend_display == null ? "not converted" : esc(curFmt(r.spend_display, dc))}</td><td>${esc(money(r.spend) + " " + r.currency)}</td><td class="num">${fmtN(r.clicks)}</td><td class="num">${fmtN(r.results)}</td><td class="num"><b>${fmtN(r.select_cabin || "")}</b></td><td class="num" title="${esc(r.select_cabin ? nat(r.spend / r.select_cabin, r.currency) : "")}">${r.select_cabin && r.spend_display != null ? esc(curFmt(r.spend_display / r.select_cabin, dc)) : ""}</td></tr>`), [4, 6, 7, 8, 9])
-    : tbl(["Channel", "Campaign", "Destination", "Status", "Spend", "Cur.", "Clicks", "Results", "Select Cabin", "Cost / Select Cabin"], o.campaigns.map(r => `<tr><td>${r.channel}</td><td title="${esc(r.account)}">${esc(r.campaign)}</td><td>${esc(r.destination)}</td><td>${pill(r.status)}</td><td class="num">${money(r.spend)}</td><td>${r.currency}</td><td class="num">${fmtN(r.clicks)}</td><td class="num">${fmtN(r.results)}</td><td class="num"><b>${fmtN(r.select_cabin || "")}</b></td><td class="num">${r.select_cabin ? money(r.spend / r.select_cabin) : ""}</td></tr>`), [4, 6, 7, 8, 9]))}`;
+    ${card("Campaigns with spend", `${o.campaigns.length} campaigns`, dc ? tbl(["Channel", "Campaign", "Destination", "Status", "Spend (" + esc(dc) + ")", "Native", "Clicks", "Results", "Select Cabin", "Cost / Select Cabin (" + esc(dc) + ")"], o.campaigns.map(r => `<tr><td>${r.channel}</td><td title="${esc(r.account)}">${esc(r.campaign)}</td><td>${esc(r.destination)}</td><td>${pill(r.status)}</td><td class="num" title="${esc(nat(r.spend, r.currency))}">${r.spend_display == null ? "not converted" : esc(curFmt(r.spend_display, dc))}</td><td>${esc(curFmt(r.spend, r.currency))}</td><td class="num">${fmtN(r.clicks)}</td><td class="num">${fmtN(r.results)}</td><td class="num"><b>${fmtN(r.select_cabin || "")}</b></td><td class="num" title="${esc(r.select_cabin ? nat(r.spend / r.select_cabin, r.currency) : "")}">${r.select_cabin && r.spend_display != null ? esc(curFmt(r.spend_display / r.select_cabin, dc)) : ""}</td></tr>`), [4, 6, 7, 8, 9])
+    : tbl(["Channel", "Campaign", "Destination", "Status", "Spend", "Cur.", "Clicks", "Results", "Select Cabin", "Cost / Select Cabin"], o.campaigns.map(r => `<tr><td>${r.channel}</td><td title="${esc(r.account)}">${esc(r.campaign)}</td><td>${esc(r.destination)}</td><td>${pill(r.status)}</td><td class="num">${esc(curFmt(r.spend, r.currency))}</td><td>${r.currency}</td><td class="num">${fmtN(r.clicks)}</td><td class="num">${fmtN(r.results)}</td><td class="num"><b>${fmtN(r.select_cabin || "")}</b></td><td class="num">${r.select_cabin ? esc(curFmt(r.spend / r.select_cabin, r.currency)) : ""}</td></tr>`), [4, 6, 7, 8, 9]))}`;
   $("#ovDays").onchange = e => { localSet("ovdays", e.target.value); overviewPage(e.target.value) };
   $("#ovRefresh").onclick = async () => { $("#ovRefresh").disabled = true; $("#ovFetched").innerHTML = `<span class="spin"></span> Fetching ...`;
     await dataRefresh("overview", null, {reload:false, body:{days:String(o.days)}}); overviewPage(String(o.days)) };
@@ -1951,13 +1986,21 @@ function setArea(name){
   document.body.classList.toggle("area", name !== "ads");
   $("#areaTabs").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.area === name));
   if (document.body.classList.contains("ov")) setMode(false);
-  if (name !== "ads"){ const el = $("#areaPage"); el.innerHTML = ""; try { AREAS[name].render(el) } catch(e) { el.innerHTML = `<div class="prob">${esc(e.message)}</div>` } }
+  if (name !== "ads"){ const el = $("#areaPage"); el.innerHTML = ""; try { AREAS[name].render(el) } catch(e) { console.error("Studio: area " + name, e); el.innerHTML = `<div class="prob">${esc(friendlyErr(e))}</div>` } }
 }
 $("#areaTabs").onclick = e => { const b = e.target.closest("[data-area]"); if (b) setArea(b.dataset.area) };
 (async () => {
   let list = []; try { list = await api("/api/areas") } catch(e) {}
   for (const a of list){
+    // Alerts: the tab itself carries the unacknowledged-alerts counter. static/alerts.js fills any #alBadge that already exists
+    // (its .n and title), so the tab is put in place before the script loads instead of an extra top-bar button.
+    let pre = null;
+    if (a.name === "alerts" && !document.getElementById("alBadge")){
+      $("#areaTabs").insertAdjacentHTML("beforeend", `<button data-area="alerts" id="alBadge" style="display:none"><span class="lbl">${esc(a.label || "Alerts")}</span><span class="n" style="display:none"></span></button>`);
+      pre = document.getElementById("alBadge");
+    }
     await new Promise(res => { const sc = document.createElement("script"); sc.src = "/static/" + a.name + ".js"; sc.onload = sc.onerror = res; document.head.appendChild(sc) });
+    if (pre){ if (AREAS[a.name]){ pre.querySelector(".lbl").textContent = AREAS[a.name].label || a.label; pre.style.display = "" } else pre.remove(); continue }
     if (AREAS[a.name]) $("#areaTabs").insertAdjacentHTML("beforeend", `<button data-area="${esc(a.name)}">${esc(AREAS[a.name].label || a.label)}</button>`);
   }
   const want = localGet("area"); if (want && want !== "ads" && AREAS[want] && localGet("mode") !== "overview") setArea(want);
@@ -1969,10 +2012,12 @@ function showPane(p){ $("#rtEdit").classList.toggle("on", p === "edit"); $("#rtD
 $("#rtEdit").onclick = () => showPane("edit");
 $("#rtDraft").onclick = () => showPane("draft");
 // close / open the right panel (remembered on this Mac)
-const sideOpen = on => { document.querySelector("main").classList.toggle("noside", !on); document.body.classList.toggle("noside", !on); localSet("side", on ? "open" : "closed") };
+const sideShow = on => { document.querySelector("main").classList.toggle("noside", !on); document.body.classList.toggle("noside", !on) };
+const sideOpen = on => { sideShow(on); localSet("side", on ? "open" : "closed") };
 $("#sideClose").onclick = () => sideOpen(false);
 $("#sideOpen").onclick = () => sideOpen(true);
-if (localGet("side") === "closed") sideOpen(false);
+// below 1360px the grid needs the room: the panel starts closed unless it was opened on purpose (opening a row opens it)
+if (localGet("side") === "closed" || (!localGet("side") && innerWidth < 1360)) sideShow(false);
 const fld = (id, label, val, live, opt = {}) => {
   const chg = String(val ?? "") !== String(live ?? "");
   const inner = opt.area ? `<textarea id="${id}" rows="${opt.area}">${esc(val)}</textarea>`
@@ -1989,6 +2034,7 @@ function focusRow(r){
   document.querySelectorAll("tr.focus").forEach(t => t.classList.remove("focus"));
   const tr = document.querySelector(`tr[data-i="${S.rows.indexOf(r)}"]`); if (tr) tr.classList.add("focus");
   renderEdit(r); showPane("edit");
+  if (document.body.classList.contains("noside") && localGet("side") !== "closed") sideShow(true); // closed only by the narrow-window default
 }
 function editFoot(buttons){
   const f = $("#editFoot"); f.innerHTML = ""; f.style.display = buttons.length ? "flex" : "none";
@@ -2365,11 +2411,29 @@ async function healthDot(){
     const ah = sm.age_hours; $("#hlAge").textContent = ah == null ? "" : ah < 1 ? "<1 h" : ah < 48 ? Math.round(ah) + " h" : Math.round(ah / 24) + " d";
     return h } catch(e) { return null }
 }
+// Plain English first; the raw check, detail and fix stay one click away under "Technical details"
+const H_CHECK = {"Service account token":"Sign-in", "Token":"Access", "API version":"Connection version", "Account answers":"Account reachable",
+  "API usage":"Usage", "Access tier":"Access level", "Version auto-upgrade":"Connection version", "Connection module":"Studio files"};
+function healthPlain(r){
+  let d = String(r.detail || ""), f = String(r.fix || "");
+  d = d.replace(/^(?:Token obtained|Signed in to Google Ads) \(adwords scope\)\.?$/, "Studio can read and manage Google Ads.")
+    .replace(/^(?:SYSTEM_USER|System user) token[^,]*, never expires, has ads_management \+ ads_read$/i, "Meta access works and does not expire.")
+    .replace(/^(?:SYSTEM_USER|System user|USER|User) token[^,]*, expires ([^,]+), has ads_management \+ ads_read$/i, "Meta access works until $1.")
+    .replace(/^.*token.*missing scopes: .*$/i, "Meta access is missing a permission Studio needs.")
+    .replace(/^development_access \(Meta's Limited access[^)]*\)$/, "Limited access: Meta only lets Studio ask a little at a time.")
+    .replace(/^Highest usage (\d+)% of the current limit window\.$/, "Studio has used $1% of what Meta allows right now.")
+    .replace(/\s*\(?[Ss]ource https?:\/\/\S+?(?:, read [^.)]*)?[.)]*$/, ".")
+    .replace(/\.\.$/, ".").replace(/\b(\d{4}-\d{2}-\d{2})\b/g, x => gbDate(x));
+  f = f.replace(/([Ss]ee )?ADMIN[\w-]*\.md(?: section \w+)?(?: \(([^)]+)\))?(:?)/g, (m, see, t, colon) => (see ? see + "the admin guide" : "Admin guide") + (t ? " (" + t + ")" : "") + colon);
+  return {check: H_CHECK[r.check] || r.check, detail: d, fix: f};
+}
 function healthHtml(h){
   if (!h || !h.results || !h.results.length) return `<p class="hint">Not checked yet.</p>`;
-  return `<p class="hint">Checked ${esc(String(h.checked_at || "").replace("T", " ").slice(0, 16))}. Read-only checks: nothing is changed in Google, Meta, your email platform, WordPress or the social channels.</p>`
-    + h.results.map(r => `<div class="hl-row"><span class="hdot ${hcls(r.ok)}"></span><div><b>${esc(chLabel(r.channel))}</b><div class="sub hint" style="margin:0">${esc(r.account || "")}</div></div>
-      <div>${esc(r.check)}: ${esc(r.detail)}${r.ok !== true && r.fix ? `<div class="hint" style="margin:2px 0 0">Fix: ${esc(r.fix)}</div>` : ""}</div></div>`).join("");
+  return `<p class="hint">Checked ${esc(gbDT(h.checked_at))}. Read-only checks: nothing is changed in Google, Meta, your email platform, WordPress or the social channels.</p>`
+    + h.results.map(r => { const p = healthPlain(r), raw = p.detail !== r.detail || p.fix !== (r.fix || "");
+      return `<div class="hl-row"><span class="hdot ${hcls(r.ok)}"></span><div><b>${esc(chLabel(r.channel))}</b><div class="sub hint" style="margin:0">${esc(r.account || "")}</div></div>
+      <div>${esc(p.check)}: ${esc(p.detail)}${r.ok !== true && p.fix ? `<div class="hint" style="margin:2px 0 0">Fix: ${esc(p.fix)}</div>` : ""}
+      ${raw ? `<details class="hl-tech"><summary>Technical details</summary><div>${esc(r.check)}: ${esc(r.detail)}${r.fix ? `<br>Fix: ${esc(r.fix)}` : ""}</div></details>` : ""}</div></div>` }).join("");
 }
 async function healthDialog(run){
   showDialog("Connections", `<div id="hlBody">${run ? `<div class="empty">Checking every connection ...</div>` : healthHtml(await healthDot())}</div>`, [["Check now", () => healthDialog(true), "primary"]]);
@@ -2380,7 +2444,7 @@ $("#hlBtn").onclick = () => healthDialog(false);
 
 // ---- settings: ad accounts ----
 async function switchAcct(key){
-  S.acct = key; localSet("acct", key); $("#acct").value = key; S.camp = S.ag = null; S.open.clear(); S.draftV = -1; S.sort = null; S.focus = null;
+  S.acct = key; localSet("acct", key); $("#acct").value = key; $("#grid").scrollLeft = 0; S.camp = S.ag = null; S.open.clear(); S.draftV = -1; S.sort = null; S.focus = null;
   $("#editBody").innerHTML = `<div class="empty">Click a row to see and edit it here.</div>`; editFoot([]);
   dropOtherPreview(); jobPill();
   renderTabs(); renderViews(); noteFetch(); loadTree(); loadGrid(); await poll(true); resumeJobs();
@@ -2399,12 +2463,12 @@ async function settingsDialog(){
   let st; try { st = await api("/api/settings") } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
   $("#dlgB").innerHTML = `
     <div class="set-sec"><h3>Google Ads accounts</h3>
-      ${st.google.map(a => `<div class="set-row"><div class="grow"><div>${esc(a.name)}</div><div class="sub">${esc(a.id)} · Editor download ${esc((a.last_download || "never").replace("T", " "))}</div><div class="sub" id="gt_${esc(a.key)}"></div></div><select data-gsrc="${esc(a.key)}" title="Where Studio reads this account from"><option value="api" ${a.source === "api" ? "selected" : ""}>Read from Google Ads API</option><option value="editor" ${a.source === "editor" ? "selected" : ""}>Read from Ads Editor</option></select><button data-gtest="${esc(a.key)}">Test live access</button></div>`).join("") || `<p class="hint">No accounts downloaded in Google Ads Editor yet.</p>`}
+      ${st.google.map(a => `<div class="set-row"><div class="grow"><div>${esc(a.name)}</div><div class="sub">${esc(a.id)} · Editor download ${esc(a.last_download ? gbDT(a.last_download) : "never")}</div><div class="sub" id="gt_${esc(a.key)}"></div></div><select data-gsrc="${esc(a.key)}" title="Where Studio reads this account from"><option value="api" ${a.source === "api" ? "selected" : ""}>Read from Google Ads API</option><option value="editor" ${a.source === "editor" ? "selected" : ""}>Read from Ads Editor</option></select><button data-gtest="${esc(a.key)}">Test live access</button></div>`).join("") || `<p class="hint">No accounts downloaded in Google Ads Editor yet.</p>`}
       <p class="hint">Studio reads Google straight from the API by default (live data, with stats). Ads Editor is optional: pick "Read from Ads Editor" to see Editor's copy instead. Send to Editor works either way.</p><p class="hint"><b>Add a Google Ads account:</b> in Google Ads Editor choose Accounts, then Add, sign in and download the account. It shows up here on its own (Studio reads Editor's data). Then press Test live access to check Push live can reach it through the API. Accounts outside our manager account also need API access in Google Ads.</p></div>
     <div class="set-sec"><h3>Meta ad accounts</h3>
-      ${st.meta.map(a => `<div class="set-row"><div class="grow"><input data-mname="${esc(a.act)}" value="${esc(a.name)}" style="width:100%"><div class="sub">${esc(a.act)} · data ${esc((a.last_download || "not pulled yet").replace("T", " "))}</div></div>
+      ${st.meta.map(a => `<div class="set-row"><div class="grow"><input data-mname="${esc(a.act)}" value="${esc(a.name)}" style="width:100%"><div class="sub">${esc(a.act)} · data ${esc(a.last_download ? gbDT(a.last_download) : "not pulled yet")}</div></div>
         <button data-mrn="${esc(a.act)}">Save name</button><button class="danger" data-mrm="${esc(a.act)}">Remove</button></div>`).join("") || `<p class="hint">No Meta ad accounts in Studio yet.</p>`}
-      ${st.meta_token ? `<div id="metaVis" class="hint">Checking which ad accounts the Meta token can reach ...</div>
+      ${st.meta_token ? `<div id="metaVis" class="hint"><button class="link" id="metaVisBtn" title="Asks Meta (read-only) which ad accounts Studio's access can see">Show ad accounts Studio can reach</button></div>
       <div class="set-row"><div class="grow"><input id="m_act" placeholder="Ad account ID, e.g. act_1234567890" style="width:100%"></div><input id="m_name" placeholder="Name in Studio (optional)"><button class="primary" id="m_add">Add</button></div>
       <p class="hint">Studio uses the system user token in shared/.env. To add an account the token can't see yet, give the system user access to it in Meta Business Settings (Users > System users > Assign assets), then add it here. Removing an account here only hides it in Studio.</p>`
       : `<p class="prob">No META_ACCESS_TOKEN in shared/.env.</p>`}</div>
@@ -2439,7 +2503,8 @@ async function settingsDialog(){
       if (t.dataset.vdel){ await api("/api/settings/view/delete", JSON.parse(t.dataset.vdel)); await loadViews(); settingsDialog() }
     } catch(err) { t.disabled = false; toast(err.message) }
   };
-  if (st.meta_token){
+  // Asks Meta only when the user presses the link (opening Settings sends nothing)
+  if (st.meta_token && $("#metaVisBtn")) $("#metaVisBtn").onclick = async e => { e.stopPropagation(); $("#metaVis").textContent = "Checking which ad accounts the Meta token can reach ...";
     try { const vis = await api("/api/settings/meta/visible", {});
       $("#metaVis").innerHTML = "<b>Ad accounts the token can reach:</b> " + vis.map(a => `${esc(a.name)} (${esc(a.act)}, ${esc(a.currency)})${a.active ? "" : " - not active"} ${a.added ? "<span class='chip ok'>in Studio</span>" : `<button class="link" data-madd="${esc(a.act)}">Add</button>`}`).join(" · ");
     } catch(e) { $("#metaVis").textContent = "Couldn't list ad accounts: " + e.message }
@@ -2449,7 +2514,7 @@ async function settingsDialog(){
 async function loadJobs(){
   const el = $("#jobRows"); if (!el) return;
   let st; try { st = await api("/api/scheduler") } catch(e) { el.innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
-  const when = v => v ? esc(String(v).replace("T", " ").slice(0, 16)) : "never";
+  const when = v => v ? esc(gbDT(v)) : "never";
   const res = j => j.running ? "running now" : j.last_status === "ok" ? "OK" : j.last_status === "held" ? "held (data refresh is manual)" : j.last_status ? esc(j.last_status) : "not run yet";
   el.className = "";
   const auto = st.policy === "auto";
@@ -2532,7 +2597,20 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
 })();
 </script>
 <!-- [mac-app updater] end -->
-<script>window.addEventListener("unhandledrejection", e => { const m = e.reason && e.reason.message; if (m && typeof toast === "function"){ toast(m); e.preventDefault() } });</script>
+<script>
+// Anything that slips through: plain words in the toast, the technical details in the console. Studio's own answers
+// (api() errors carry the server's message) are already plain; built-in JS errors (TypeError and friends) never reach the toast.
+window.friendlyErr = e => {
+  const m = e && e.message ? String(e.message) : "";
+  if (e instanceof TypeError && /fetch|network|load failed/i.test(m)) return "Studio is not answering. Check that it is still running, then try again.";
+  if (!m || e instanceof TypeError || e instanceof ReferenceError || e instanceof RangeError || e instanceof SyntaxError || e instanceof URIError)
+    return "Something went wrong on this page. Try again, or reload Studio if it keeps happening.";
+  return m;
+};
+window.addEventListener("unhandledrejection", e => { console.error("Studio: unhandled error", e.reason);
+  if (typeof toast === "function"){ toast(friendlyErr(e.reason)); e.preventDefault() } });
+window.addEventListener("error", e => { if (e.error) console.error("Studio: page error", e.error) });
+</script>
 <script src="/static/setup.js"></script>
 <script src="/static/meta_tests.js"></script><!-- [meta tests] the Tests tab in the Meta ads area -->
 <script src="/static/videos.js"></script><!-- [videos] the Videos tab in the Google Ads area -->

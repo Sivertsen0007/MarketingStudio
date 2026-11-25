@@ -133,7 +133,7 @@ def google_checks(today):
     try:
         tok = g._token()
         _SECRETS.append(tok)
-        out.append(_row("google", "", "Service account token", True, "Token obtained (adwords scope)."))
+        out.append(_row("google", "", "Service account token", True, "Signed in to Google Ads (adwords scope)."))
     except Exception as e:  # noqa: BLE001
         out.append(_row("google", "", "Service account token", False, f"No token: {e}",
                         "The service account key may be missing or deleted. See the README (Setup)."))
@@ -242,7 +242,7 @@ def meta_checks(today):
             days = (dt.datetime.fromtimestamp(exp).date() - today).days if exp else None
             ok = False if missing else (None if days is not None and days < 14 else True)
             out.append(_row("meta", "", "Token", ok,
-                            f"{d.get('type', '?')} token" + (f" for app \"{d['application']}\"" if d.get("application") else "") + f", {exp_txt}"
+                            f"{ {'SYSTEM_USER': 'System user', 'USER': 'User', 'PAGE': 'Page'}.get(d.get('type'), d.get('type', '?'))} token" + (f" for app \"{d['application']}\"" if d.get("application") else "") + f", {exp_txt}"
                             + (f", missing scopes: {', '.join(missing)}" if missing else ", has ads_management + ads_read"),
                             "" if ok else "Generate a new system user token with ads_management and ads_read. See the README (Setup)."))
     except Exception as e:  # noqa: BLE001

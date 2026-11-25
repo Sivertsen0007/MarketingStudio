@@ -7,7 +7,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- Showcase of the Daymark design system used by Marketing Studio. The tokens and component CSS below are a copy of the
-     first <style>/* Daymark design system (docs/design-system.md): light, Manrope, blue #0a46e0, white cards with soft shadows.
+     first <style> block in engine/index.html (keep them in sync); the showcase-only rules follow after it. -->
+<style>
+/* Daymark design system (docs/design-system.md): light, Manrope, blue #0a46e0, white cards with soft shadows.
    Every colour, radius and shadow in Studio comes from these tokens; the area files (static/*.js) use the same names. */
 :root{
   color-scheme:light;
@@ -16,12 +18,12 @@
   /* lines */
   --line:#e6e8ee;--line2:#eff0f4;--line-strong:#d6d9e1;--line-stronger:#b9bdc8;
   /* text */
-  --text:#111318;--text2:#3d4049;--muted:#8a8e98;--faint:#a9acb4;
+  --text:#111318;--text2:#3d4049;--muted:#5f6370;--faint:#767b87;
   /* brand */
   --accent:#0a46e0;--accent-2:#2f6bf0;--accent-bg:#eef2ff;--accent-soft:#d3e1fb;--violet:#a56bf0;--violet-bg:#f4ecfe;
   --ink:#17181c;--ink-2:#2a2c33;--ink-text:#fff;--on-accent:#fff;
   /* status */
-  --ok:#1c9a4c;--ok-bg:#e3f7e9;--warn:#b45309;--warn-bg:#fff4e0;--warn-dot:#f5a524;--bad:#e5484d;--bad-bg:#fdecec;--idle:#a9acb4;
+  --ok:#1c9a4c;--ok-bg:#e3f7e9;--warn:#b45309;--warn-bg:#fff4e0;--warn-dot:#f5a524;--bad:#e5484d;--bad-text:#c8303a;--bad-bg:#fdecec;--idle:#a9acb4;
   --draft:#8b4fe0;--draft-bg:#f4ecfe;--info-bg:#eef2ff;--sel:#eef2ff;--sel-text:#111318;--title:#17181c;--title-text:#fff;
   /* chart series */
   --c1:#0a46e0;--c2:#a56bf0;--c3:#22b35a;--c4:#ff8a3d;--c5:#6aa0ff;--c6:#e5484d;
@@ -41,20 +43,23 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:500 13.5px/1.5 var(--font);-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
-button{cursor:pointer;border:0;background:var(--panel);border-radius:var(--r);padding:7px 14px;font-weight:600;font-size:13px;color:var(--text);box-shadow:var(--sh-1);
+button{cursor:pointer;border:0;background:var(--panel);border-radius:var(--r);padding:7px 14px;font-weight:600;font-size:13px;color:var(--text);box-shadow:var(--sh-1),0 0 0 1px var(--line-strong);
   transition:background var(--t) var(--ease),box-shadow var(--t) var(--ease),transform var(--t) var(--ease),color var(--t) var(--ease)}
 button:hover{background:var(--hover)}
 button:active{transform:translateY(.5px)}
-button:focus-visible{outline:0;box-shadow:var(--sh-1),var(--ring)}
+button:focus-visible{outline:0;box-shadow:var(--sh-1),0 0 0 1px var(--line-strong),var(--ring)}
+/* keyboard focus: one visible outline everywhere; !important so no later rule (tabs, pills, ghost buttons, area pages) can cancel it */
+:focus-visible{outline:2px solid var(--accent)!important;outline-offset:2px!important}
 button:disabled{opacity:.45;cursor:default}
 button.primary{background:var(--ink);color:var(--ink-text);box-shadow:0 1px 3px rgba(17,19,24,.25)}
 button.primary:hover{background:var(--ink-2)}
-button.blue{background:var(--accent);color:var(--on-accent)} button.blue:hover{background:var(--accent-2)}
+button.blue{background:var(--accent);color:var(--on-accent);box-shadow:0 1px 3px rgba(10,70,224,.25)} button.blue:hover{background:var(--accent-2)}
 button.ghost{background:transparent;box-shadow:none;color:var(--text2)} button.ghost:hover{background:var(--hover)}
-button.danger{color:var(--bad)}
+button.danger{color:var(--bad-text)}
+button.ghost.danger:hover{background:var(--bad-bg)}
 button.link{border:0;background:none;box-shadow:none;padding:0;color:var(--accent);font-weight:600}
 button.link:hover{background:none;text-decoration:underline}
-button.link.danger{color:var(--bad)}
+button.link.danger{color:var(--bad-text)}
 input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:7px 11px;box-shadow:0 1px 2px rgba(17,19,24,.04);
   transition:border-color var(--t) var(--ease),box-shadow var(--t) var(--ease)}
 input::placeholder,textarea::placeholder{color:var(--faint)}
@@ -77,7 +82,7 @@ body.ov .app{grid-template-rows:auto 1fr auto}
 body.area .app{grid-template-rows:auto 1fr auto}
 .areapage{display:none;min-height:0;overflow:hidden}
 body.area:not(.ov) .areapage{display:flex;flex-direction:column}
-body.area main, body.area .subbar, body.area #sideOpen, body.area #acct, body.area #refreshBtn, body.area #pushHdr{display:none!important}
+body.area main, body.area .subbar, body.area #sideOpen, body.area #acct, body.area #pushHdr{display:none!important}
 .spacer{flex:1}
 
 /* ---- top bar: brand, pill tabs (Overview + areas), secondary action buttons ---- */
@@ -90,27 +95,46 @@ header h1 b{font-weight:700}
 .atabs{display:flex;gap:4px;min-width:0}
 #ovBtn,.atabs button{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 14px;border:0;border-radius:9px;background:transparent;box-shadow:none;color:var(--muted);font-size:13px;font-weight:600;white-space:nowrap}
 #ovBtn svg{width:15px;height:15px;fill:currentColor;flex:none}
+/* unacknowledged alerts: a small red counter on the Alerts tab (static/alerts.js sets the number) */
+.atabs #alBadge .n{margin-left:0;min-width:16px;padding:0 4px;font-size:10.5px;line-height:16px}
 #ovBtn:hover,.atabs button:hover{background:var(--hover);color:var(--text)}
 .atabs button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 body.ov .atabs button.on{background:transparent;color:var(--muted);box-shadow:none}
 body.ov #ovBtn{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
-.tb{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1);color:var(--text);font-size:12.5px;font-weight:600;white-space:nowrap}
+.tb{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:0;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1),0 0 0 1px var(--line-strong);color:var(--text);font-size:12.5px;font-weight:600;white-space:nowrap}
 .tb svg{width:15px;height:15px;fill:currentColor;flex:none}
 .tb svg.chev{width:9px;height:6px;fill:none;margin-left:-2px;opacity:.7}
 .tb:hover{background:var(--hover)}
-#refreshBtn{width:34px;padding:0;justify-content:center}
-.pushhdr.has{background:var(--accent);color:var(--on-accent)} .pushhdr.has:hover{background:var(--accent-2)}
+.pushhdr.has{background:var(--accent);color:var(--on-accent);box-shadow:var(--sh-1)} .pushhdr.has:hover{background:var(--accent-2)}
 .pushn{display:none;min-width:20px;height:20px;line-height:20px;padding:0 6px;border-radius:var(--r-pill);background:var(--glass);font-size:11.5px;text-align:center} .pushhdr.has .pushn{display:inline-block}
 .tb .n{display:inline-block;min-width:18px;height:18px;line-height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--bad);color:var(--on-accent);font-size:11px;text-align:center}
 #hlAge{font-size:11px;color:var(--muted);font-weight:500}
 #dataWarn{width:7px;height:7px;border-radius:50%;background:var(--warn-dot);display:none}
 @media (max-width:1560px){header{gap:6px;padding:10px 14px} #hlAge{display:none} #ovBtn,.atabs button{padding:0 11px} header h1{margin-right:8px}}
 @media (max-width:1380px){header h1 .bname{display:none} header h1{margin-right:4px} .tb{padding:0 10px} #setupBtn svg,#setBtn svg{display:none}}
-@media (max-width:1240px){#ovBtn,.atabs button{padding:0 9px;font-size:12.5px} .atabs{gap:2px} #setupBtn,#setBtn{padding:0 9px}}
+@media (max-width:1240px){#ovBtn,.atabs button{padding:0 9px;font-size:12.5px} .atabs{gap:2px} #setupBtn,#setBtn{padding:0 9px} #dataBtn>svg:first-child,#pushHdr>svg{display:none} .tb{padding:0 9px}}
 
 /* ---- push dialog bits ---- */
-.pushok{font-size:16px;margin:4px 0 12px} .pushok b{color:var(--ok)}
+.pushok{font-size:16px;margin:4px 0 12px} .pushok b{color:var(--ok)} .pushok.plain b{color:var(--text)}
+/* background job: overall bar, per-item rows with a status chip, the top-bar pill */
+.jbar{height:8px;background:var(--accent-soft);border-radius:var(--r-pill);overflow:hidden;position:relative;margin:2px 0 4px}
+.jbar i{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent);transition:width .4s var(--ease)}
+.jbar.indet i{animation:indet 1.3s var(--ease) infinite} @keyframes indet{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
+.jbar.ok{background:var(--ok-bg)} .jbar.ok i{background:var(--ok)} .jbar.bad{background:var(--bad-bg)} .jbar.bad i{background:var(--bad)}
+.jlist{margin-top:10px}
+.jrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;padding:9px 0;border-bottom:1px solid var(--line2);font-size:13px}
+.jrow .jd{font-size:12px;color:var(--muted);margin-top:2px} .jrow .jd.bad{color:var(--bad)} .jrow .jd.warn{color:var(--warn)}
+.jrow .jr{display:flex;gap:10px;align-items:center;justify-content:flex-end;white-space:nowrap}
+.jrow .jr a{font-size:12px;font-weight:600;color:var(--accent);text-decoration:none} .jrow .jr a:hover{text-decoration:underline}
+.jrow .chip .spin{width:10px;height:10px;border-width:2px}
+.jobpill{background:var(--accent-bg);color:var(--accent);box-shadow:none;flex:none} .jobpill:hover{background:var(--accent-soft)}
+.jobpill.ok{background:var(--ok-bg);color:var(--ok)} .jobpill.ok:hover{background:var(--ok-bg)} .jobpill.bad{background:var(--bad-bg);color:var(--bad)} .jobpill.bad:hover{background:var(--bad-bg)}
+/* media library (new Meta ad): pick a stored file, Prepare for Meta uploads it ahead of the push */
+.medlib{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);padding:2px 10px}
+.medrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2);font-size:13px}
+.medrow:last-child{border-bottom:0} .medrow .hint{font-size:11.5px}
+.medrow .mp{grid-column:2 / 4;font-size:12px;color:var(--muted)} .medrow .mp:empty{display:none}
 .dlg-f .link{margin-right:auto}
 .tally{border-collapse:collapse;width:100%;min-width:0;margin:2px 0 14px;font-size:13.5px} .tally td{padding:9px 4px;height:auto;border:0;border-bottom:1px solid var(--line2)} .tally td:last-child{text-align:right;font-weight:600;width:60px;font-variant-numeric:tabular-nums}
 .tally tr:hover td{background:none}
@@ -129,7 +153,7 @@ body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 .chip.warn,.subbar .chip.warn{background:var(--warn-bg);color:var(--warn);box-shadow:none}
 .chip.draft,.subbar .chip.draft{background:var(--draft-bg);color:var(--draft);box-shadow:none}
 .chip.ok,.subbar .chip.ok{background:var(--ok-bg);color:var(--ok);box-shadow:none}
-.chip.bad{background:var(--bad-bg);color:var(--bad)}
+.chip.bad{background:var(--bad-bg);color:var(--bad-text)}
 .chip.info{background:var(--accent-bg);color:var(--accent)}
 .chip.trend{background:var(--ok-bg);color:var(--ok);font-size:10.5px;padding:3px 8px} .chip.trend.down{background:var(--bad-bg);color:var(--bad)}
 .tile .chip.trend{margin-top:8px}
@@ -143,7 +167,7 @@ aside.tree,aside.draft,main>section{background:var(--panel);border-radius:var(--
 main.noside{grid-template-columns:288px minmax(0,1fr) 0;gap:12px 12px}
 main.noside aside.draft{display:none}
 #sideOpen{display:none;white-space:nowrap}
-body.noside #sideOpen{display:inline-flex}
+body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .pad{padding:12px}
 
 /* search field with an icon */
@@ -179,7 +203,8 @@ body.noside #sideOpen{display:inline-flex}
 .toolbar .crumb{color:var(--text);font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;margin-right:4px}
 .toolbar input#search{height:34px;padding-left:32px;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24'%3E%3Cpath fill='%238a8e98' d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E") no-repeat 11px center}
 .toolbar select{height:34px;font-size:12.5px;font-weight:600}
-.toolbar>button,.bulk button{height:34px;padding:0 12px;font-size:12.5px}
+.toolbar>button,.tb-right>button,.bulk button{height:34px;padding:0 12px;font-size:12.5px}
+.tb-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
 .grid-wrap{overflow:auto;flex:1;background:var(--panel)}
 
 /* ---- data grid: sticky header, compact rows, hairline dividers ---- */
@@ -199,6 +224,11 @@ tr.new td{background:var(--draft-bg)}
 tr.new td:first-child{box-shadow:inset 3px 0 0 var(--draft)}
 td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
 td.cb,th.cb{width:38px;text-align:center;padding:0 6px}
+/* sticky leading columns (renderGrid marks them; stickLefts() sets --l0.. from the header widths) */
+th.stk,td.stk{position:sticky;z-index:1;background:var(--panel)} th.stk{z-index:3;background:var(--head)}
+.stk0{left:var(--l0,0)} .stk1{left:var(--l1,0)} .stk2{left:var(--l2,0)} .stk3{left:var(--l3,0)}
+:where(th.stk-end,td.stk-end){box-shadow:inset -1px 0 0 var(--line)}
+th.stk-name,td.stk-name{max-width:260px}
 td.changed{background:var(--draft-bg)!important;color:var(--text);font-weight:600}
 td.changed .old{color:var(--muted);text-decoration:line-through;font-weight:500;margin-right:6px}
 td.edit{cursor:text}
@@ -235,8 +265,8 @@ tr.focus td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .item .sum{margin:4px 0 0;color:var(--text);font-weight:600;word-break:break-word}
 .item .note{font-size:12px;color:var(--muted);margin-top:3px}
 .item .prob,.item .warnl{margin:8px 0 0}
-.draft-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;border-top:1px solid var(--line2)}
-button.live{background:var(--accent);color:var(--on-accent)}
+.draft-actions{display:grid;grid-template-columns:auto 1fr;gap:8px;padding:12px;border-top:1px solid var(--line2)}
+button.live{background:var(--accent);color:var(--on-accent);box-shadow:0 1px 3px rgba(10,70,224,.25)}
 button.live:hover{background:var(--accent-2)}
 button.live:disabled{opacity:.45;cursor:default}
 
@@ -267,9 +297,10 @@ button.live:disabled{opacity:.45;cursor:default}
 
 /* ---- bulk actions ---- */
 .bulk{display:flex;gap:6px;align-items:center}
-.bulk.off{visibility:hidden}
+.bulk.off{display:none}
 .bulk #bulkN{display:inline-block;min-width:92px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted)}
 .bulk button:disabled{opacity:.45;cursor:not-allowed}
+.bulk .bsep{width:1px;height:20px;background:var(--line-strong);margin:0 6px}
 .fxh{display:block;font-size:10.5px;color:var(--muted);line-height:1.2}
 
 /* ---- dialogs ---- */
@@ -306,6 +337,7 @@ footer{display:flex;align-items:center;gap:14px;padding:6px 20px 8px;background:
 .hl-row:last-child{border-bottom:0}
 .hl-row .hdot{margin-top:6px}
 .hl-row b{text-transform:capitalize;color:var(--text)}
+.hl-tech{margin-top:4px;font-size:12px;color:var(--muted)} .hl-tech summary{cursor:pointer;font-weight:600;color:var(--text2);display:inline-block;min-height:24px} .hl-tech div{margin-top:4px;word-break:break-word}
 
 /* ---- status pill + menus ---- */
 .pill{display:inline-flex;align-items:center;gap:6px;padding:0 9px 0 8px;border-radius:var(--r-pill);background:var(--sunken);color:var(--text2);font-size:12px;font-weight:600;line-height:22px}
@@ -336,10 +368,10 @@ td.st-edit:hover .pill{box-shadow:0 0 0 1px currentColor}
 /* ---- filter pills ---- */
 .fpills{display:flex;gap:2px;flex-wrap:wrap;background:var(--sunken);border-radius:var(--r-md);padding:3px}
 .fpills:empty{display:none}
-.fpills button{height:28px;padding:0 11px;border-radius:var(--r);background:transparent;box-shadow:none;font-weight:600;font-size:12px;color:var(--muted)}
+.fpills button{height:32px;padding:0 11px;border-radius:var(--r);background:transparent;box-shadow:none;font-weight:600;font-size:12px;color:var(--muted)}
 .fpills button:hover{background:transparent;color:var(--text)}
 .fpills button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
-.fpills .n{color:var(--faint);margin-left:5px;font-size:11px;font-variant-numeric:tabular-nums}
+.fpills .n{color:var(--muted);margin-left:5px;font-size:11px;font-variant-numeric:tabular-nums}
 .fpills button.on .n{color:var(--accent)}
 
 /* ---- thumbnails + hover preview ---- */
@@ -385,7 +417,7 @@ td.thumbc{padding:2px 6px;width:52px}
 .colpick label.c:hover{background:var(--hover)}
 .colpick .sel .r{display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid var(--line2)}
 .colpick .sel .r span{flex:1}
-.colpick .sel .r button{width:26px;height:26px;padding:0}
+.colpick .sel .r button{width:32px;height:32px;padding:0}
 .cardbox{border-radius:var(--r-md);padding:12px 14px 4px;margin-bottom:12px;box-shadow:var(--sh-card)}
 .cardh{display:flex;gap:10px;align-items:center;margin-bottom:10px}
 .cardh img{width:40px;height:40px;object-fit:cover;border-radius:var(--r);cursor:zoom-in}
@@ -470,7 +502,6 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
 
 @media (max-width:1300px){main{grid-template-columns:248px minmax(0,1fr) 340px} main.noside{grid-template-columns:248px minmax(0,1fr) 0} .ovpage{padding:8px 24px 24px}}
 @media (max-width:1100px){main{grid-template-columns:240px 1fr}aside.draft{display:none}.legend{display:none}}
-
 /* ---- showcase page only (not in the app) ---- */
 html,body{overflow:auto;height:auto}
 .ds-top{position:sticky;top:0}
@@ -515,7 +546,7 @@ main.ds-main{display:block;max-width:1240px;margin:0 auto;padding:0 32px 48px}
 <div class="ds">
 <header class="ds-top"><h1><span class="brandmark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z"/></svg></span><span class="bname">Marketing <b>Studio</b></span></h1>
   <div class="htabs"><nav class="atabs"><button class="on">Design system</button><button>Ads</button><button>Email</button><button>SEO</button><button>SoMe</button></nav></div>
-  <span class="spacer"></span><button class="tb">Refresh data</button><button class="tb pushhdr has">Push <span class="pushn">3</span></button></header>
+  <span class="spacer"></span><button class="tb">Refresh data</button><button class="tb pushhdr has">Push live <span class="pushn">3</span></button></header>
 
 <main class="ds-main">
 <div class="ov-crumb">Docs / Design system</div>
@@ -540,7 +571,7 @@ main.ds-main{display:block;max-width:1240px;margin:0 auto;padding:0 32px 48px}
 <div class="stack">
 <div class="rowx"><button>Secondary</button><button class="primary">Primary</button><button class="blue">Push live</button><button class="ghost">Ghost</button><button class="link">Link</button><button class="danger">Remove</button></div>
 <div class="rowx"><button disabled>Disabled</button><button class="primary" disabled>Primary</button><button class="blue" disabled>Push live</button><button class="ds-focus">Focused</button></div>
-<div class="rowx"><button class="tb"><svg viewBox="0 0 24 24"><path d="M12.65 10A6 6 0 1 0 7 18a6 6 0 0 0 5.65-4H17v4h4v-4h2v-4H12.65zM7 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>Setup</button><button class="tb pushhdr">Push <span class="pushn"></span></button><button class="tb pushhdr has">Push <span class="pushn">3</span></button><button class="tb" style="width:34px;padding:0;justify-content:center"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button></div>
+<div class="rowx"><button class="tb"><svg viewBox="0 0 24 24"><path d="M12.65 10A6 6 0 1 0 7 18a6 6 0 0 0 5.65-4H17v4h4v-4h2v-4H12.65zM7 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>Setup</button><button class="tb pushhdr">Push <span class="pushn"></span></button><button class="tb pushhdr has">Push live <span class="pushn">3</span></button><button class="tb" style="width:34px;padding:0;justify-content:center"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button></div>
 <div class="rowx"><span class="fpills"><button class="on">All</button><button>Enabled<span class="n">17</span></button><button>Paused<span class="n">8</span></button><button>In draft<span class="n">3</span></button></span></div>
 <div class="rowx" style="background:var(--bg);padding:8px;border-radius:var(--r-md)"><nav class="atabs"><button class="on">Ads</button><button>Email</button><button>SEO</button></nav></div>
 </div></section>

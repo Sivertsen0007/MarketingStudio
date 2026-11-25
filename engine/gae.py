@@ -526,7 +526,21 @@ import shutil, subprocess, time
 
 SCHEMA = 749
 STATE_NEW = 2
-TEMPLATES = Path(__file__).with_name(f"templates_{SCHEMA}.json")
+TEMPLATES_NAME = f"templates_{SCHEMA}.json"
+TEMPLATES = Path(__file__).with_name(TEMPLATES_NAME)  # dev checkouts that carry their own copy
+
+
+def templates_path():
+    """The Editor row templates. They are cloned from one account's own Editor rows, so they are
+    never shipped in the app or the public repo: each Mac keeps its copy in Studio's folder
+    (~/Library/Application Support/MarketingStudio/). Lookup: $GAE_TEMPLATES, next to this file,
+    then that folder."""
+    for cand in (os.environ.get("GAE_TEMPLATES"), TEMPLATES, appconfig.HOME / TEMPLATES_NAME):
+        if cand and Path(cand).is_file():
+            return Path(cand)
+    raise FileNotFoundError(
+        f"{TEMPLATES_NAME} not found. Writing new Editor rows (negatives, keywords, ...) needs it: put a copy in "
+        f"{appconfig.HOME} or point GAE_TEMPLATES at it.")
 BACKUP_DIR = Path(os.environ.get("GAE_BACKUP_DIR", OUT_DIR / "backups"))
 ENTITY_TABLES = ["Campaign", "AdGroup", "Keyword", "KeywordNegative", "GeoTarget", "GeoTargetNegative", "NegativeKeywordListEdge", "Audience",
                  "SitelinkV2Edge", "SitelinkV2", "CalloutV2Edge", "CalloutV2", "StructuredSnippetV2Edge", "StructuredSnippetV2",
@@ -592,7 +606,7 @@ def open_for_write(acct, restart=False):
 
 
 def _tpl(name):
-    raw = json.loads(TEMPLATES.read_text())[name]
+    raw = json.loads(templates_path().read_text())[name]
     return {k: (bytes.fromhex(v["hex"]) if isinstance(v, dict) else v) for k, v in raw.items()}
 
 

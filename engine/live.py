@@ -56,7 +56,8 @@ _LIVE = {
     "ad_group": ("ad_group", "ad_group.status, ad_group.cpc_bid_micros"),
     "keyword": ("ad_group_criterion", "ad_group_criterion.status, ad_group_criterion.cpc_bid_micros"),
     "rsa": ("ad_group_ad", "ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, "
-                           "ad_group_ad.ad.responsive_search_ad.descriptions"),
+                           "ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, "
+                           "ad_group_ad.ad.responsive_search_ad.path2"),
     "sitelink": ("asset", "asset.final_urls, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, "
                           "asset.sitelink_asset.description2"),
 }
@@ -75,7 +76,8 @@ _LISTS = {
     "rsa": ("ad_group_ad.ad.id", "ad_group_ad", "ad_group.id",
             "ad_group_ad.ad.type = RESPONSIVE_SEARCH_AD AND ad_group_ad.status != 'REMOVED'",
             "ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, "
-            "ad_group_ad.ad.responsive_search_ad.descriptions", "rsa"),
+            "ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, "
+            "ad_group_ad.ad.responsive_search_ad.path2", "rsa"),
     "loc": ("campaign_criterion.location.geo_target_constant", "campaign_criterion", "campaign.id",
             "campaign_criterion.type = LOCATION AND campaign_criterion.negative = FALSE AND campaign_criterion.status != 'REMOVED'", "", None),
 }
@@ -440,6 +442,27 @@ class Ids:
             return self._api_one([r["asset"]["id"] for r in rows if r["asset"].get("sitelinkAsset", {}).get("linkText") == text], what)
         return self._first(what, editor=ed, api=api)
 
+    def callout(self, level, camp, text):
+        what = f'callout "{text}"'
+        account = level == "account"
+
+        def ed():
+            parent = gae.ACCOUNT_PARENT if account else (gae.PARENT_CAMPAIGN << 32) | self._ed_campaign(camp)["localId"]
+            rows = self.db.execute("select a.* from CalloutV2Edge e join CalloutV2 a on a.localId = e.sourceId where e.parentId = ? "
+                                   "and e.status != 2 and a.status != 2 and a.displayText = ?", (parent, text)).fetchall()
+            return self._one(rows, what)["remoteId"]
+
+        def api():
+            if account:
+                rows = self._q("co_acct", "SELECT asset.id, asset.callout_asset.callout_text FROM customer_asset "
+                                          "WHERE customer_asset.field_type = CALLOUT AND customer_asset.status != 'REMOVED'")
+            else:
+                cid = self._api_campaign(camp)
+                rows = self._q(f"co{cid}", f"SELECT campaign.id, asset.id, asset.callout_asset.callout_text FROM campaign_asset WHERE campaign.id = {cid} "
+                                           "AND campaign_asset.field_type = CALLOUT AND campaign_asset.status != 'REMOVED'")
+            return self._api_one([r["asset"]["id"] for r in rows if r["asset"].get("calloutAsset", {}).get("calloutText") == text], what)
+        return self._first(what, editor=ed, api=api)
+
     def location_targeted(self, camp, loc_id):
         """True if either source says the location is targeted (positive) in the campaign: a safety check, so both are asked."""
         hit = False
@@ -738,10 +761,37 @@ def ops_for(ids, c, enable_new):
                 before["responsiveSearchAd"] = {"headlines": [_clean(h) for h in rsa.get("headlines", [])],
                                                 "descriptions": [_clean(d) for d in rsa.get("descriptions", [])]}
                 mask += ["responsiveSearchAd.headlines", "responsiveSearchAd.descriptions"]
+            if "path1" in c or "path2" in c:  # G9: display paths (an empty value clears it)
+                rsa = live["ad"].get("responsiveSearchAd", {})
+                fields.setdefault("responsiveSearchAd", {})
+                before.setdefault("responsiveSearchAd", {})
+                for k in ("path1", "path2"):
+                    if k in c and (c[k] or "") != rsa.get(k, ""):
+                        fields["responsiveSearchAd"][k], before["responsiveSearchAd"][k] = c[k] or "", rsa.get(k, "")
+                        mask.append(f"responsiveSearchAd.{k}")
+                if not fields["responsiveSearchAd"]:
+                    del fields["responsiveSearchAd"], before["responsiveSearchAd"]
             if fields:
                 adres = f"customers/{a}/ads/{ad['remoteId']}"
                 out.append(_upd("adOperation", adres, fields, ",".join(mask), before,
-                                f"RSA {ad['remoteId']}: " + ", ".join(mask), "new " + ("text" if c.get("headlines") else "final URL")))
+                                f"RSA {ad['remoteId']}: " + ", ".join(mask),
+                                "new " + ("text" if c.get("headlines") else "final URL" if c.get("final_url") else "display path")))
+        return out
+
+    if t in ("sitelink", "callout") and c.get("remove"):  # G10: unlink from the campaign (or account); undo links it again
+        field = t.upper()
+        account = c.get("level") == "account"
+        camp = None if account else ids.campaign(c["campaign"])[0]
+        where = "the account" if account else f'"{c["campaign"]}"'
+        for txt in c.get("texts", [c.get("text")]):
+            aid = (ids.sitelink if t == "sitelink" else ids.callout)(c.get("level"), c.get("campaign"), txt)
+            asset = f"customers/{a}/assets/{aid}"
+            if account:
+                res, kind, undo = f"customers/{a}/customerAssets/{aid}~{field}", "customerAssetOperation", {"asset": asset, "fieldType": field}
+            else:
+                res, kind, undo = f"customers/{a}/campaignAssets/{_id(camp)}~{aid}~{field}", "campaignAssetOperation", \
+                    {"campaign": camp, "asset": asset, "fieldType": field}
+            out.append(_remove(kind, res, f'unlink {t} "{txt}" from {where}', undo_create=undo))
         return out
 
     if t in ("sitelink", "callout", "snippet") and not c.get("edit"):

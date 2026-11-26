@@ -498,6 +498,8 @@ def summarise(c):
         bits = ([f"final URL -> {c['final_url']}"] if c.get("final_url") else []) + \
                ([f"status -> {c['status']}"] if c.get("status") else []) + \
                ([f"text rewritten ({len(c['headlines'])} headlines)"] if c.get("headlines") else []) + \
+               ([f"display path -> /{'/'.join(p for p in (c.get('path1'), c.get('path2')) if p)}"]
+                if t == "rsa" and ("path1" in c or "path2" in c) else []) + \
                ([f"text -> '{c['new_text']}'"] if c.get("new_text") else [])
         return f"{what}: " + ", ".join(bits)
     if t == "rsa":
@@ -929,6 +931,9 @@ def apply_changes(db, changes, comment, edits=None):
                 fields["finalUrls"] = qstringlist([c["final_url"]])
             if c.get("status") is not None:
                 fields["status"] = EDIT_STATUS[str(c["status"]).lower()]
+            for k in ("path1", "path2"):  # display paths (an empty value clears it)
+                if k in c:
+                    fields[k] = c[k] or ""
             if c.get("headlines"):
                 hl, ds = c["headlines"], c["descriptions"]
                 if not 3 <= len(hl) <= 15 or not 2 <= len(ds) <= 4:

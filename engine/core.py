@@ -687,6 +687,8 @@ def _r_rsa(c, acct, problems, warnings):
             problems.append(f"{k.replace('path', 'Path ')}: emoji are not allowed in a display path")
         if v and " " in v.strip():
             warnings.append(f"{k.replace('path', 'Path ')}: a space in a display path may be refused - use a dash")
+        if v and c.get("edit") and gae.width(v) > 15:  # a new ad's paths go through gae.lint; an edit's only here
+            problems.append(f"{k.replace('path', 'Path ')}: {gae.width(v)} chars > 15")
     hl, ds = c.get("headlines"), c.get("descriptions")
     if c.get("edit") and not hl and not ds:
         return
@@ -1047,9 +1049,9 @@ def add(acct, changes, by="you", note=None):
         for it in items:
             t.put(it["id"], it, by)
     if skipped:  # mixed selection (MCP too): say what was dropped, on the answer only (not stored in the draft)
-        note = (f"Not added: {len(skipped)} negative{'s' if len(skipped) > 1 else ''} in a shared list (edit the shared list "
-                f"itself): " + "; ".join(skipped))
-        items[0] = {**items[0], "warnings": items[0]["warnings"] + [note], "skipped": skipped}
+        msg = (f"Not added: {len(skipped)} negative{'s' if len(skipped) > 1 else ''} in a shared list (edit the shared list "
+               f"itself): " + "; ".join(skipped))
+        items[0] = {**items[0], "warnings": items[0]["warnings"] + [msg], "skipped": skipped}
     return items
 
 
@@ -1168,9 +1170,11 @@ def push(acct, title=None, why=None, only=None):
         d["items"] = [i for i in d["items"] if i["id"] in keep]
     bad = [r for r in results if not r["ok"]]
     if not results:
-        return {"ok": False, "output": "The draft is empty." if only is None else "Nothing in the draft can go to Editor."}
-    if bad:
-        return {"ok": False, "output": "Fix these first:\n" + "\n".join(f"- {r['summary']}: {'; '.join(r['problems'])}" for r in bad)}
+        msg = "The draft is empty." if only is None else "Nothing in the draft can go to Editor."
+        return {"ok": False, "output": msg, "message": msg}
+    if bad:  # G13: "bad" and "message" let Studio show this in words; "output" stays for the MCP tool
+        return {"ok": False, "output": "Fix these first:\n" + "\n".join(f"- {r['summary']}: {'; '.join(r['problems'])}" for r in bad),
+                "message": "Nothing was sent: fix these first.", "bad": [{"id": r["id"], "summary": r["summary"], "problems": r["problems"]} for r in bad]}
     stamp = dt.datetime.now()
     plan = {"title": title or f"Ads Studio {stamp:%d %b %H:%M}", "why": why or "; ".join(sorted({i['note'] for i in d['items'] if i['note']})) or None,
             "changes": [i["change"] for i in d["items"]]}
@@ -1186,7 +1190,10 @@ def push(acct, title=None, why=None, only=None):
             cur["items"] = [i for i in cur["items"] if i not in pushed]
         with open(STUDIO_DIR / f"pushed_{acct}.jsonl", "a") as f:
             f.write(json.dumps({"ts": stamp.isoformat(timespec="seconds"), "plan": str(pfile.name), "items": pushed}, ensure_ascii=False) + "\n")
-    return {"ok": p.returncode == 0, "output": out, "plan": str(pfile)}
+    last = next((ln for ln in reversed(out.splitlines()) if ln.strip()), "")
+    msg = (f"Sent {len(d['items'])} change{'s' if len(d['items']) != 1 else ''} into Google Ads Editor as pending changes."
+           if p.returncode == 0 else re.sub(r"^(Nothing new written|Plan has problems, nothing written):?\s*", "", last) or "Editor did not take the changes.")
+    return {"ok": p.returncode == 0, "output": out, "plan": str(pfile), "message": msg, "sent": [i["id"] for i in d["items"]] if p.returncode == 0 else []}
 
 
 # ---------- draft overlay: show draft values and draft rows inside the grids ----------

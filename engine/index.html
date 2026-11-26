@@ -80,7 +80,7 @@ body.ov .app{grid-template-rows:auto 1fr auto}
 body.area .app{grid-template-rows:auto 1fr auto}
 .areapage{display:none;min-height:0;overflow:hidden}
 body.area:not(.ov) .areapage{display:flex;flex-direction:column}
-body.area main, body.area .subbar, body.area #sideOpen, body.area #acct, body.area #pushHdr{display:none!important}
+body.area main, body.area .subbar, body.area #sideOpen, body.area #acct{display:none!important}  /* U23: Push live stays in the top bar everywhere */
 .spacer{flex:1}
 
 /* ---- top bar: brand, pill tabs (Overview + areas), secondary action buttons ---- */
@@ -204,12 +204,17 @@ body.noside #sideOpen{display:inline-flex;align-items:center;gap:6px}
 .tab .n{font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-bg);border-radius:var(--r-pill);padding:0 7px;margin-left:6px;line-height:18px}
 
 /* ---- toolbar above the grid ---- */
-.toolbar{display:flex;gap:8px;align-items:center;padding:12px 14px;background:var(--panel);border-bottom:1px solid var(--line2);flex-wrap:wrap}
-.toolbar .crumb{color:var(--text);font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;margin-right:4px}
+.toolbar{display:flex;gap:8px;align-items:center;padding:12px 14px;background:var(--panel);border-bottom:1px solid var(--line2);flex-wrap:nowrap;min-width:0;overflow:hidden}  /* U20: one line; tbFit() moves what does not fit into More */
+.toolbar .crumb{color:var(--text);font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;margin-right:4px;flex:0 1 auto;min-width:40px}
+.toolbar input#search{flex:0 1 200px;width:200px;min-width:110px}
+.toolbar .fpills{flex-wrap:nowrap;flex:none}
 .toolbar input#search{height:34px;padding-left:32px;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24'%3E%3Cpath fill='%238a8e98' d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E") no-repeat 11px center}
 .toolbar select{height:34px;font-size:12.5px;font-weight:600}
 .toolbar>button,.tb-right>button,.tb-keep>button,.bulk button{height:34px;padding:0 12px;font-size:12.5px}
-.tb-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
+.tb-right{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;justify-content:flex-end;margin-left:auto;flex:none}
+#tbMore{display:none} #tbMore.on{display:inline-flex;align-items:center;gap:6px}
+.tbmenu{position:fixed;z-index:60;display:none;flex-direction:column;gap:8px;align-items:stretch;padding:10px;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-pop);max-width:min(440px,90vw)}
+.tbmenu.on{display:flex} .tbmenu .fpills{flex-wrap:wrap} .tbmenu select,.tbmenu button{height:34px;font-size:12.5px}
 .tb-keep{display:flex;gap:8px;align-items:center;flex-wrap:nowrap} /* the add button and the panel toggle wrap together */
 .grid-wrap{overflow:auto;flex:1;background:var(--panel)}
 
@@ -235,6 +240,12 @@ th.stk,td.stk{position:sticky;z-index:1;background:var(--panel)} th.stk{z-index:
 .stk0{left:var(--l0,0)} .stk1{left:var(--l1,0)} .stk2{left:var(--l2,0)} .stk3{left:var(--l3,0)}
 :where(th.stk-end,td.stk-end){box-shadow:inset -1px 0 0 var(--line)}
 th.stk-name,td.stk-name{max-width:260px}
+td.cb input{min-width:0;width:15px}  /* U8: the tick box column stays narrow (td input has min-width:70px) */
+th.capw,td.capw{max-width:240px}  /* U8: other text columns are capped so the name column stays in view */
+.selbar{position:sticky;left:0;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;padding:8px 14px;background:var(--accent-bg);color:var(--text);font-size:12.5px;font-weight:500;width:100%;box-sizing:border-box}
+.selbar:empty{display:none}
+.gskel{padding:16px 14px}
+.gskel .skel{margin:0 0 16px;height:14px}
 td.changed{background:var(--draft-bg)!important;color:var(--text);font-weight:600}
 td.changed .old{color:var(--muted);text-decoration:line-through;font-weight:500;margin-right:6px}
 td.edit{cursor:text}
@@ -272,6 +283,9 @@ tr.focus td.stk-name,tr.focus td.stk-name *{font-weight:700}
 .item .sum{margin:4px 0 0;color:var(--text);font-weight:600;word-break:break-word}
 .item .note{font-size:12px;color:var(--muted);margin-top:3px}
 .item .prob,.item .warnl{margin:8px 0 0}
+.item .ednote{font-size:11.5px;font-weight:500;color:var(--muted);background:var(--sunken);border-radius:var(--r-sm);padding:5px 10px;margin:8px 0 0}  /* Editor-only refusal: never blocks Push live */
+.geoout{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px;font-size:12.5px}
+.geoout .prob{margin:0;flex:1 1 100%}
 .draft-actions{display:grid;grid-template-columns:auto 1fr;gap:8px;padding:12px;border-top:1px solid var(--line2)}
 button.live{background:var(--accent);color:var(--on-accent);box-shadow:0 1px 3px rgba(10,70,224,.25)}
 button.live:hover{background:var(--accent-2)}
@@ -305,6 +319,7 @@ button.live:disabled{opacity:.45;cursor:default}
 /* ---- bulk actions ---- */
 .bulk{display:flex;gap:6px;align-items:center}
 .bulk.off{display:none}
+.bulk #bulkN:empty{display:none}
 .bulk #bulkN{display:inline-block;min-width:92px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted)}
 .bulk button:disabled{opacity:.45;cursor:not-allowed}
 .bulk .bsep{width:1px;height:20px;background:var(--line-strong);margin:0 6px}
@@ -321,6 +336,14 @@ dialog::backdrop{background:var(--scrim);-webkit-backdrop-filter:blur(2px);backd
 .dlg-b{padding:6px 24px 18px;overflow:auto;max-height:calc(90vh - 140px)}
 .dlg-f{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:14px 24px 20px;border-top:1px solid var(--line2)}
 .dlg-f:empty{display:none}
+/* T03: Send to Editor lives in an Advanced menu next to Push live */
+.dlg-f details.adv{margin-right:auto;position:relative}
+.dlg-f details.adv>summary{list-style:none;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--muted);padding:7px 10px;border-radius:var(--r)}
+.dlg-f details.adv>summary::-webkit-details-marker{display:none}
+.dlg-f details.adv>summary:hover,.dlg-f details.adv[open]>summary{background:var(--hover);color:var(--text)}
+.advm{position:absolute;bottom:calc(100% + 6px);left:0;width:360px;padding:12px 14px;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-pop);z-index:2}
+.advm .hint{margin:8px 0 0}
+.advm ul{margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--text2)}
 /* country picker for Meta ad sets (static/geo_picker.js): a summary + button in the form, a second dialog over it */
 .gp-sum{display:flex;align-items:center;gap:10px}
 .gp-sumtxt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--text)}
@@ -575,13 +598,14 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
   <section>
     <div class="toolbar">
       <span id="crumb" class="crumb"></span>
-      <input id="search" placeholder="Search this view" style="width:200px">
+      <input id="search" placeholder="Search this view">
       <span id="fpills" class="fpills"></span>
       <span id="gridNote" class="chip warn" style="display:none"></span>
       <span class="tb-right">
       <select id="rangeSel" title="Date range for the stats columns"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="custom">Custom range ...</option></select>
       <select id="viewSel" title="Saved views"></select>
       <button id="colBtn" title="Choose and order columns">Columns</button>
+      <button id="tbMore" title="More controls: they don't fit on this line" aria-haspopup="true" aria-expanded="false">More<svg class="chev" viewBox="0 0 10 6" aria-hidden="true" width="9" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <span id="bulk" class="bulk" title="Select rows first"><span id="bulkN">None selected</span>
         <button data-bulk="enabled" disabled>Enable</button><button data-bulk="paused" disabled>Pause</button><span class="bsep" aria-hidden="true"></span><button data-bulk="removed" class="danger" disabled>Remove</button></span>
       <span class="tb-keep"><button id="addBtn" class="primary">New campaign</button>
@@ -597,7 +621,7 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
       <div id="draft" class="draft-list" style="padding-top:12px"></div>
       <div class="draft-actions">
         <button id="clearBtn" class="ghost danger" title="Empty the draft">Clear draft</button>
-        <button id="valBtn" class="blue" title="Check every change in the draft before you push it">Check draft</button>
+        <button id="valBtn" class="blue" title="Check every change in the draft against Editor's copy of the account">Check draft</button>
       </div>
     </div>
   </aside>
@@ -611,6 +635,7 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
 <div id="toast" class="toast"></div>
 <div id="menu" class="menu" style="display:none"></div>
 <div id="dataMenu" class="dmenu" style="display:none"></div>
+<div id="tbMoreMenu" class="tbmenu" role="group" aria-label="More controls"></div>
 <div id="hoverPrev" class="hoverprev"></div>
 <script>
 const $ = s => document.querySelector(s);
@@ -671,7 +696,7 @@ const VIEWS = {
   campaigns:{label:"Campaigns", cols:[{...ST, edit:"status3"}, CA, {key:"type",label:"Type"}, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money"},
     {key:"shared_budget",label:"Shared budget"}, {key:"bidding",label:"Bid strategy"}, {key:"max_cpc_cap",label:"Max CPC cap",num:1,fmt:money},
     {key:"target_cpa",label:"Target CPA",num:1,fmt:money}, {key:"ad_groups",label:"Ad groups",num:1}, {key:"keywords",label:"Keywords",num:1},
-    {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED]},
+    {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED], bulk:1},
   ad_groups:{label:"Ad groups", cols:[{...ST, edit:"status"}, CA, AG, {key:"max_cpc",label:"Default max CPC",num:1,fmt:money,edit:"money"},
     {key:"keywords",label:"Keywords",num:1}, {key:"ads",label:"Ads",num:1}, ED], bulk:1},
   keywords:{label:"Keywords", cols:[{...ST, edit:"status"}, CA, AG, {key:"keyword",label:"Keyword"}, {key:"match",label:"Match"},
@@ -684,14 +709,14 @@ const VIEWS = {
   asset_groups:{label:"Asset groups", cols:[ST, CA, {key:"asset_group",label:"Asset group"}, {key:"headlines",label:"Headlines",num:1},
     {key:"long_headlines",label:"Long headlines",num:1}, {key:"descriptions",label:"Descriptions",num:1}, {key:"final_url",label:"Final URL"}, {key:"ad_strength",label:"Ad strength"}, ED]},
   sitelinks:{label:"Sitelinks", cols:[LV, CA, AG, ST, {key:"text",label:"Link text"}, {key:"line1",label:"Description 1"}, {key:"line2",label:"Description 2"},
-    {key:"final_url",label:"Final URL"}, {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED], open:r => r.level !== "Ad group" && sitelinkDialog(r)},
-  callouts:{label:"Callouts", cols:[LV, CA, AG, ST, {key:"text",label:"Callout text"}, {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED]},
+    {key:"final_url",label:"Final URL"}, {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED], bulk:1, open:r => r.level !== "Ad group" && sitelinkDialog(r)},
+  callouts:{label:"Callouts", cols:[LV, CA, AG, ST, {key:"text",label:"Callout text"}, {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED], bulk:1},
   snippets:{label:"Snippets", cols:[LV, CA, AG, ST, {key:"header",label:"Header"}, {key:"values",label:"Values"}, ED]},
   prices:{label:"Prices", cols:[LV, CA, AG, ST, {key:"price_type",label:"Type"}, {key:"qualifier",label:"Qualifier"}, {key:"items",label:"Items"}, ED]},
   promotions:{label:"Promotions", cols:[LV, CA, ST, {key:"occasion",label:"Occasion"}, {key:"target",label:"Item"}, {key:"discount",label:"Discount"}, {key:"final_url",label:"Final URL"}, ED]},
   locations:{label:"Locations", cols:[CA, AG, {key:"targeting",label:"Targeting"}, {key:"location",label:"Location"}, {key:"country",label:"Country"},
     {key:"location_id",label:"ID",num:1}, {key:"bid_modifier",label:"Bid adj.",num:1}, ED]},
-  audiences:{label:"Audiences", cols:[LV, CA, AG, ST, {key:"audience",label:"Audience"}, {key:"bid_modifier",label:"Bid adj.",num:1}, ED]},
+  audiences:{label:"Audience targeting", tip:"Which audiences each campaign and ad group targets or observes", cols:[LV, CA, AG, ST, {key:"audience",label:"Audience"}, {key:"bid_modifier",label:"Bid adj.",num:1}, ED]},
   shared_lists:{label:"Shared negative lists", cols:[{key:"list",label:"List"}, {key:"keywords",label:"Keywords",num:1}, {key:"campaigns",label:"Campaigns",num:1}, {key:"attached_to",label:"Used by"}]},
 };
 
@@ -704,9 +729,10 @@ for (const [k, v] of Object.entries(VIEWS)) if (!["negatives", "shared_lists"].i
 Object.assign(VIEWS, {
   asset_group_assets:{label:"PMax assets", cols:[{...ST}, CA, {key:"asset_group",label:"Asset group"}, {key:"field",label:"Field"}, {key:"text",label:"Text / asset"},
     {key:"asset_type",label:"Type",hide:1}, {key:"source",label:"Source",hide:1}, {key:"primary_status",label:"Primary status"}, {key:"approval",label:"Approval"}, ...GSTATS], bulk:1, api:1},
-  user_lists:{label:"Audience lists", cols:[], ro:1, custom:"Audiences", api:1}, // [audiences] static/audiences.js draws this tab
-  recommendations:{label:"Recommendations", cols:[{key:"type",label:"Recommendation"}, LV, CA, AG, {key:"impact_clicks",label:"+ Clicks",num:1}, {key:"impact_cost",label:"+ Cost",num:1,fmt:money},
-    {key:"impact_conversions",label:"+ Conv.",num:1}, {key:"dismissed",label:"Dismissed",hide:1}], api:1},
+  user_lists:{label:"Audience lists", tip:"The account's own audience lists (website visitors, customer lists, combined lists)", cols:[], ro:1, custom:"Audiences", api:1}, // [audiences] static/audiences.js draws this tab
+  recommendations:{label:"Recommendations", cols:[{key:"type",label:"Recommendation"}, LV, CA, AG, {key:"current",label:"Now"}, {key:"recommended",label:"Recommended"},
+    {key:"impact_clicks",label:"+ Clicks",num:1}, {key:"impact_cost",label:"+ Cost",num:1,fmt:money},
+    {key:"impact_conversions",label:"+ Conv.",num:1}, {key:"dismissed",label:"Dismissed",hide:1}], api:1, open:r => r.recommended_budget != null && recBudget(r)},
   videos:{label:"Videos", cols:[], ro:1, custom:1, api:1}, // [videos] static/videos.js: YouTube videos, uploads, Demand Gen
 });
 // Meta stats for the picked date range (meta.grid puts them on these generic keys)
@@ -840,7 +866,7 @@ $("#tree").onclick = e => {
     if (S.ag && ["campaigns"].includes(S.kind)) S.kind = "keywords";
     if (S.camp && !S.ag && S.kind === "campaigns") S.kind = "ad_groups";
   }
-  renderTree(); renderTabs(); loadGrid();
+  renderTree(); renderTabs(); loadGrid({reset:true});
 };
 $("#treeSearch").oninput = renderTree;
 
@@ -850,22 +876,43 @@ const ADD_LABEL = {google:{campaigns:"New campaign", ad_groups:"New ad group", k
   sitelinks:"New sitelink", callouts:"New callouts", locations:"Exclude locations", asset_group_assets:"New PMax assets", user_lists:"Add audiences",
   shared_lists:"Attach shared lists", videos:"Add video"},
   meta:{campaigns:"New campaign", adsets:"New ad set", ads:"New ad", audiences:"New audience", tests:"New test"}};
+const canAdd = () => !!(isMeta() ? META_ADD[S.kind] : ADD[S.kind]);  // G10: no Add button where Studio can't add anything
 function renderTabs(){
   $("#addBtn").textContent = (ADD_LABEL[chan()] || {})[S.kind] || "Add";
-  $("#tabs").innerHTML = Object.entries(V()).filter(([k, v]) => !v.api || S.gsrc !== "editor").map(([k, v]) => `<button class="tab ${k === S.kind ? "on" : ""}" data-k="${k}">${v.label}${k === S.kind ? `<span class="n">${S.rows.length}</span>` : ""}</button>`).join("");
+  $("#addBtn").style.display = canAdd() ? "" : "none";
+  $("#tabs").innerHTML = Object.entries(V()).filter(([k, v]) => !v.api || S.gsrc !== "editor").map(([k, v]) => `<button class="tab ${k === S.kind ? "on" : ""}" data-k="${k}" ${v.tip ? `title="${esc(v.tip)}"` : ""}>${v.label}${k === S.kind ? `<span class="n">${S.loading ? "" : S.rows.length}</span>` : ""}</button>`).join("");
 }
-$("#tabs").onclick = e => { const b = e.target.closest(".tab"); if (!b) return; $("#grid").scrollLeft = 0; S.kind = b.dataset.k; localSet("kind", S.kind); S.sort = null; S.focus = null; renderTabs(); renderViews(); loadGrid() };
+$("#tabs").onclick = e => { const b = e.target.closest(".tab"); if (!b) return; $("#grid").scrollLeft = 0; const was = S.kind; S.kind = b.dataset.k; localSet("kind", S.kind); S.sort = null; S.focus = null;
+  if (was !== S.kind) resetGrid(); renderTabs(); renderViews(); loadGrid() };
+// G3 / U4: the old rows go at once (no clicks on a grid of another tab), a skeleton shows while the new one loads, bulk is off
+function resetGrid(){
+  S.rows = []; S.sel.clear(); S.selAll = false; S.loading = true; S.gridScope = null; S.shown = [];
+  $("#grid").innerHTML = `<div class="gskel" aria-busy="true" aria-label="Loading">${[42, 64, 52, 70, 48, 60, 38, 56].map(w => `<span class="skel" style="width:${w}%"></span>`).join("")}</div>`;
+  updBulk();
+}
+// selection is kept by row (G16), not by position: the same row after a reload, a sort or a filter
+const rowKey = r => [r.id, r.level, r.campaign, r.ad_group].map(x => x ?? "").join("\u0001");
+const selectable = r => !r._new && !isTrial(r);
 function scopeNames(){
   const c = S.tree.find(c => String(c.id) === S.camp), g = c && c.ad_groups.find(g => String(g.id) === S.ag);
   return {campaign: c ? c.name : null, ad_group: g ? g.name : null};
 }
-async function loadGrid(){
+async function loadGrid(opt){
   if (!V()[S.kind]) S.kind = "campaigns";
-  if (V()[S.kind].custom){ S.rows = []; S.sel.clear(); $("#gridNote").style.display = "none"; renderTabs(); return renderGrid() } // [meta tests]
-  const kind = S.kind, seq = S.gridSeq = (S.gridSeq || 0) + 1;
-  const rows = await api("/api/grid?" + qs({acct:S.acct, kind, campaign_id:S.camp, ad_group_id:S.ag, status:srvStatus(), search:$("#search").value, ...rangeQ()}));
+  if (opt && opt.reset) resetGrid();
+  if (V()[S.kind].custom){ S.rows = []; S.sel.clear(); S.loading = false; $("#gridNote").style.display = "none"; renderTabs(); return renderGrid() } // [meta tests]
+  const kind = S.kind, seq = S.gridSeq = (S.gridSeq || 0) + 1, scope = [S.acct, kind, S.camp, S.ag, srvStatus()].join("|");
+  if (S.gridScope !== scope && !S.loading) resetGrid();  // another scope: never act on the old rows meanwhile
+  S.loading = true; updBulk();
+  let rows;
+  try { rows = await api("/api/grid?" + qs({acct:S.acct, kind, campaign_id:S.camp, ad_group_id:S.ag, status:srvStatus(), search:$("#search").value, ...rangeQ()})) }
+  catch(e) { if (kind === S.kind && seq === S.gridSeq){ S.loading = false; if (!S.rows.length) $("#grid").innerHTML = `<div class="prob" style="margin:14px">${esc(friendlyErr(e))}</div>`; updBulk() } throw e }
   if (kind !== S.kind || seq !== S.gridSeq) return; // a newer request (other range, scope or tab) is on its way
-  S.rows = rows; S.sel.clear();
+  rows.forEach((r, i) => { r._i = i });  // U27: the row knows its index (no indexOf per row)
+  S.loading = false;
+  if (S.gridScope !== scope){ S.sel.clear(); S.selAll = false }
+  else { const have = new Set(rows.filter(selectable).map(rowKey)); for (const k of [...S.sel]) if (!have.has(k)) S.sel.delete(k) }  // G16
+  S.gridScope = scope; S.rows = rows;
   const note = isMeta() && ["leadforms", "audiences"].includes(kind) ? ((rows[0] && rows[0].note) || GDPR_HINT) : "";
   $("#gridNote").textContent = note; $("#gridNote").title = note; $("#gridNote").style.display = note ? "" : "none";
   const sc = scopeNames();
@@ -898,6 +945,7 @@ function passFilter(r){
 }
 function renderPills(){
   const fs = FILTERS(); if (!fs.some(f => f[0] === S.filter)) S.filter = "all";
+  requestAnimationFrame(tbFit);
   $("#fpills").innerHTML = fs.map(([k, l]) => `<button data-f="${k}" class="${k === S.filter ? "on" : ""}" title="${k === "live" ? "Actually delivering: the ad, its ad set and its campaign are all on" : ""}">${l}${k !== "all" ? `<span class="n">${S.rows.filter(r => { const o = S.filter; S.filter = k; const p = passFilter(r); S.filter = o; return p }).length}</span>` : ""}</button>`).join("");
 }
 $("#fpills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; const was = S.filter; S.filter = b.dataset.f; localSet("filter", S.filter);
@@ -905,24 +953,31 @@ $("#fpills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) re
 function renderGrid(){
   if (V()[S.kind] && V()[S.kind].custom){ $("#fpills").innerHTML = ""; const cu = V()[S.kind].custom; const R = typeof cu === "string" ? window[cu] : (S.kind === "videos" && !isMeta() ? window.Videos : window.MetaTests); // [meta tests] [videos] [audiences]
     return R ? R.render($("#grid")) : ($("#grid").innerHTML = `<div class="empty">Loading ...</div>`) }
-  const v = V()[S.kind], cols = colsFor();
-  let rows = S.rows.filter(passFilter);
+  const v = V()[S.kind];
+  let cols = colsFor(), rows = S.rows.filter(passFilter);
+  // U8: on Google tabs the column that names the row comes first (after Status) and stays in view; the saved order is unchanged
+  const nk = !isMeta() && NAME_COL[S.kind], nTo = cols[0] && cols[0].key === "status" ? 1 : 0, nFrom = nk ? cols.findIndex(c => c.key === nk) : -1;
+  if (nFrom > nTo){ cols = [...cols]; cols.splice(nTo, 0, cols.splice(nFrom, 1)[0]) }
   if (S.sort){ const {key, dir} = S.sort, mc = cols.find(c => c.key === key && isMoney(c)), sv = r => { const x = r[key]; return mc && dispCur() && x != null && x !== "" ? toDisp(x) : x };
     rows = [...rows].sort((a, b) => { const x = sv(a) ?? "", y = sv(b) ?? ""; return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y))) * dir }) }
   renderPills();
+  S.passed = rows; S.shown = rows.slice(0, GRID_MAX);
   if (!rows.length) { $("#grid").innerHTML = `<div class="empty">Nothing here${S.camp ? " for this selection" : ""}${S.filter !== "all" ? " with this filter" : ""}.</div>`; updBulk(); return }
-  const MAX = 2000;
-  // sticky leading columns (tick box, Status, then up to the name column) so a wide grid scrolls under them
-  const ni = cols.slice(0, 3).findIndex(c => STK_NAME.includes(c.key)), nStk = ni >= 0 ? ni + 1 : cols[0] && cols[0].key === "status" ? 1 : 0;
-  const off = v.bulk ? 1 : 0, stkC = (i, name) => i < nStk ? `stk stk${i + off}${i === nStk - 1 ? " stk-end" : ""}${name ? " stk-name" : ""}` : "";
-  const SK = {}; cols.forEach((c, i) => { SK[c.key] = stkC(i, i === ni) });
-  const cbC = v.bulk && nStk ? "stk stk0" : "";
-  let h = `<table><thead><tr>${v.bulk ? `<th class="cb ${cbC}"><input type="checkbox" id="selAll"></th>` : ""}${cols.map(c => `<th data-s="${c.key}" draggable="true" title="Click to sort, drag to move" class="${SK[c.key]} ${S.sort && S.sort.key === c.key ? "sorted" : ""}">${esc(colLabel(c))}${S.sort && S.sort.key === c.key ? (S.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>`;
-  rows.slice(0, MAX).forEach(r => {
-    const i = S.rows.indexOf(r);
+  const MAX = GRID_MAX;
+  // sticky columns: tick box, Status (when first) and this type's name column (U8), so a wide grid scrolls under them
+  const nAt = nk ? cols.findIndex(c => c.key === nk) : -1;
+  const ni = nAt >= 0 ? nAt : cols.slice(0, 3).findIndex(c => STK_NAME.includes(c.key));
+  const stkIdx = Array.from({length:ni >= 0 ? ni + 1 : cols[0] && cols[0].key === "status" ? 1 : 0}, (_, i) => i);
+  const off = v.bulk ? 1 : 0, last = stkIdx[stkIdx.length - 1];
+  const SK = {}; cols.forEach((c, i) => { const k = stkIdx.indexOf(i);
+    SK[c.key] = k >= 0 ? `stk stk${k + off}${i === last ? " stk-end" : ""}${i === ni ? " stk-name" : ""}` : !c.num && !c.thumb && c.key !== "status" ? "capw" : "" });
+  const cbC = v.bulk && stkIdx.length ? "stk stk0" : "";
+  let h = `<div id="selBar" class="selbar" role="status"></div><table data-kind="${esc(S.kind)}"><thead><tr>${v.bulk ? `<th class="cb ${cbC}"><input type="checkbox" id="selAll" title="Select the rows shown" aria-label="Select the rows shown"></th>` : ""}${cols.map(c => `<th data-s="${c.key}" draggable="${c.key !== nk}" title="${c.key === nk ? "Click to sort. This column stays first" : "Click to sort, drag to move"}" class="${SK[c.key]} ${S.sort && S.sort.key === c.key ? "sorted" : ""}">${esc(colLabel(c))}${S.sort && S.sort.key === c.key ? (S.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>`;
+  S.shown.forEach(r => {
+    const i = r._i, picked = S.sel.has(rowKey(r));
     const removed = r.status === "Removed" || (r._draft && r._draft.status && r._draft.status.value === "Removed");
-    h += `<tr data-i="${i}" class="${r._new ? "new" : ""} ${removed ? "removed" : ""} ${S.focus && String(r.id) === S.focus ? "focus" : ""} ${S.sel.has(i) ? "picked" : ""}">`;
-    if (v.bulk) h += `<td class="cb ${cbC}">${r._new || isTrial(r) ? "" : `<input type="checkbox" data-sel="${i}" ${S.sel.has(i) ? "checked" : ""}>`}</td>`;
+    h += `<tr data-i="${i}" class="${r._new ? "new" : ""} ${removed ? "removed" : ""} ${S.focus && String(r.id) === S.focus ? "focus" : ""} ${picked ? "picked" : ""}">`;
+    if (v.bulk) h += `<td class="cb ${cbC}">${selectable(r) ? `<input type="checkbox" data-sel="${i}" ${picked ? "checked" : ""}>` : ""}</td>`;
     for (const c of cols){
       if (c.thumb){ const mu = r.media_id && mediaUrl(r.media_id);
         h += `<td class="thumbc ${SK[c.key]}">${mu ? (r.format === "Video" ? `<span class="chip draft" title="Uploaded video, stored on this Mac until you push">Video</span>` : `<img class="thumb" src="${esc(mu)}" data-big="${esc(mu)}" alt="" loading="lazy">`)
@@ -938,10 +993,31 @@ function renderGrid(){
     h += "</tr>";
   });
   h += "</tbody></table>";
-  if (rows.length > MAX) h += `<div class="empty">Showing ${MAX} of ${rows.length}. Pick a campaign or search to narrow it down.</div>`;
-  $("#grid").innerHTML = h; stickLefts(); updBulk(); refreshFocus();
+  if (rows.length > MAX) h += `<div class="empty">Showing ${numGB(MAX)} of ${numGB(rows.length)}. Pick a campaign or search to narrow it down.</div>`;
+  $("#grid").innerHTML = h; stickLefts(); updBulk(); selSync(); refreshFocus();
 }
+const GRID_MAX = 2000;
 const STK_NAME = ["campaign", "ad", "list", "lead_form", "type"];
+// U8: the column that names a row, per Google tab: it stays in view while the grid scrolls sideways
+const NAME_COL = {campaigns:"campaign", ad_groups:"ad_group", keywords:"keyword", negatives:"keyword", ads:"headline", asset_groups:"asset_group",
+  sitelinks:"text", callouts:"text", snippets:"header", prices:"price_type", promotions:"target", locations:"location", audiences:"audience",
+  shared_lists:"list", asset_group_assets:"text", recommendations:"type"};
+// U3 / U27: ticks are set in place. "Select all" takes the rows shown; a second step (as in Gmail) takes every row that passes the
+// filter, and the bar says how many of those are not shown.
+function selSync(){
+  const all = $("#selAll"), bar = $("#selBar"); if (!bar) return;
+  document.querySelectorAll("#grid input[data-sel]").forEach(cb => { const r = S.rows[+cb.dataset.sel], on = !!r && S.sel.has(rowKey(r));
+    if (cb.checked !== on) cb.checked = on; const tr = cb.closest("tr"); if (tr) tr.classList.toggle("picked", on) });
+  const shown = (S.shown || []).filter(selectable), passed = (S.passed || []).filter(selectable);
+  const nShown = shown.filter(r => S.sel.has(rowKey(r))).length, nAll = passed.filter(r => S.sel.has(rowKey(r))).length;
+  if (all){ all.checked = !!shown.length && nShown === shown.length; all.indeterminate = nShown > 0 && nShown < shown.length }
+  const hidden = passed.length - shown.length;
+  bar.innerHTML = hidden > 0 && shown.length && nShown === shown.length
+    ? nAll < passed.length ? `All ${numGB(shown.length)} rows shown are selected. <button class="link" data-selall>Select all ${numGB(passed.length)}</button> <span class="hint" style="margin:0">(${numGB(hidden)} not shown)</span>`
+      : `All ${numGB(passed.length)} rows are selected, ${numGB(hidden)} of them not shown. <button class="link" data-selnone>Clear selection</button>`
+    : "";
+  updBulk();
+}
 // left offset of each sticky column = the widths of the sticky columns before it (measured on the header row)
 function stickLefts(){
   const t = $("#grid table"); if (!t) return; let x = 0;
@@ -964,10 +1040,13 @@ function stickLefts(){
     localSet(layoutKey(S.kind), JSON.stringify(keys)); localSet("view." + chan() + "." + S.kind, ""); renderViews(); renderGrid() });
 }
 $("#grid").onclick = e => {
+  const tbl = e.target.closest("table[data-kind]"); if (tbl && tbl.dataset.kind !== S.kind) return;  // G3: a grid of the tab before
+  if (e.target.closest("[data-selall]")){ (S.passed || []).filter(selectable).forEach(r => S.sel.add(rowKey(r))); return selSync() }
+  if (e.target.closest("[data-selnone]")){ S.sel.clear(); return selSync() }
   const th = e.target.closest("th[data-s]");
   if (th){ const k = th.dataset.s; S.sort = S.sort && S.sort.key === k ? {key:k, dir:-S.sort.dir} : {key:k, dir:1}; return renderGrid() }
-  if (e.target.id === "selAll"){ S.rows.forEach((r, i) => !r._new && !isTrial(r) && passFilter(r) && (e.target.checked ? S.sel.add(i) : S.sel.delete(i))); renderGrid(); return }
-  if (e.target.dataset.sel !== undefined){ const i = +e.target.dataset.sel; e.target.checked ? S.sel.add(i) : S.sel.delete(i); const tr = e.target.closest("tr"); if (tr) tr.classList.toggle("picked", e.target.checked); return updBulk() }
+  if (e.target.id === "selAll"){ if (e.target.checked) (S.shown || []).filter(selectable).forEach(r => S.sel.add(rowKey(r))); else S.sel.clear(); return selSync() }
+  if (e.target.dataset.sel !== undefined){ const r = S.rows[+e.target.dataset.sel]; if (!r) return; e.target.checked ? S.sel.add(rowKey(r)) : S.sel.delete(rowKey(r)); return selSync() }
   const st = e.target.closest("td.st-edit");
   if (st) return statusMenu(st);
   const td = e.target.closest("td.edit");
@@ -991,22 +1070,25 @@ document.addEventListener("keydown", e => {
   trs[i].scrollIntoView({block:"nearest"});
 });
 $("#grid").ondblclick = e => {
+  const tbl = e.target.closest("table[data-kind]"); if (tbl && tbl.dataset.kind !== S.kind) return;
   const tr = e.target.closest("tr[data-i]"); if (!tr || e.target.closest("td.edit, td.st-edit")) return;
   const r = S.rows[+tr.dataset.i], v = V()[S.kind];
   if (isTrial(r)) return toast(EXP_MSG);
   if (v.open && !r._new) v.open(r);
 };
 // ---- status menu: click the status pill, pick the new status ----
+const REMOVE_NOTE = "Draft only. Nothing changes until you push it live (a removal is permanent in Google Ads).";  // G14
 function statusMenu(td){
-  const r = S.rows[+td.closest("tr").dataset.i], col = colsFor().find(c => c.key === "status");
+  const kind = (td.closest("table[data-kind]") || {dataset:{}}).dataset.kind; if (kind !== S.kind) return;
+  const r = S.rows[+td.closest("tr").dataset.i], col = colsFor(kind).find(c => c.key === "status");
   const cur = cellVal(r, col);
   const opts = col.edit === "mstatus" ? [["Active", "Turn on"], ["Paused", "Pause"]] : col.edit === "status3" ? [["Enabled", "Enable"], ["Paused", "Pause"]] : [["Enabled", "Enable"], ["Paused", "Pause"], ["Removed", "Remove"]];
   const inDraft = r._draft && r._draft.status;
   openMenu(td, opts.map(([v, l]) => [`<span class="pill ${v}"><i></i>${v}</span> ${v === r.status ? "<span class='hint' style='margin:0'>(live now)</span>" : l}`, async () => {
     if (inDraft) await api("/api/draft/remove", {ids:[r._draft.status.draft_id]});
     if (v === r.status){ if (inDraft) { toast("Back to the live status"); poll(true) } return }
-    if (v === "Removed" && !confirm("Remove it? (Draft only - nothing changes until you send to Editor and Post.)")) return;
-    addChanges([changeFor(r, "status", v)], "");
+    if (v === "Removed" && !confirm("Remove it?\n\n" + REMOVE_NOTE)) return;
+    addChanges([changeFor(r, "status", v, kind)], "");
   }, v === cur]).concat(inDraft ? [["sep"], ["Keep it as it is live (drop from draft)", async () => { await api("/api/draft/remove", {ids:[r._draft.status.draft_id]}); poll(true) }]] : []));
 }
 function openMenu(anchor, items){
@@ -1028,18 +1110,50 @@ document.addEventListener("mouseover", e => {
   hp.style.top = Math.max(8, Math.min(b.top - 40, innerHeight - 440)) + "px";
 });
 // The bulk bar is always laid out (no jump when rows are ticked); buttons are disabled until something is selected.
+const BULK_ONLY = {campaigns:["enabled", "paused"], negatives:["removed"], sitelinks:["removed"], callouts:["removed"], asset_group_assets:["removed"]};
 function updBulk(){
-  const n = S.sel.size, b = $("#bulk"), has = !!(V()[S.kind] || {}).bulk;
-  b.classList.toggle("off", !has); b.title = n ? "" : "Select rows first";
-  b.querySelectorAll("button").forEach(x => { x.disabled = !n; x.title = n ? "" : "Select rows first" });
-  $("#bulkN").textContent = n ? n + " selected" : "None selected";
+  const n = S.sel.size, b = $("#bulk"), has = !!(V()[S.kind] || {}).bulk, only = !isMeta() && BULK_ONLY[S.kind];
+  b.classList.toggle("off", !has); b.title = S.loading ? "Loading ..." : n ? "" : "Select rows first";
+  b.querySelectorAll("button").forEach(x => { x.style.display = !only || only.includes(x.dataset.bulk) ? "" : "none"; x.disabled = !n || !!S.loading; x.title = S.loading ? "Loading ..." : n ? "" : "Select rows first" });
+  b.querySelector(".bsep").style.display = only && (only.length === 1 || !only.includes("removed")) ? "none" : "";
+  $("#bulkN").textContent = n ? numGB(n) + " selected" : "";  // empty until something is ticked (the buttons say "Select rows first")
+  tbFit();
 }
 let searchT; $("#search").oninput = () => { clearTimeout(searchT); searchT = setTimeout(loadGrid, 250) };
+const TB_OVF = ["viewSel", "colBtn", "rangeSel", "fpills", "bulk"];  // moved into More in this order when the line is full
+TB_OVF.forEach(id => { const el = document.getElementById(id), ph = document.createElement("i"); ph.id = "ph_" + id; ph.hidden = true; el.before(ph) });
+function tbFit(){
+  const tb = document.querySelector(".toolbar"), menu = $("#tbMoreMenu"), more = $("#tbMore"); if (!tb || !menu) return;
+  for (const id of TB_OVF){ const el = document.getElementById(id); if (el.parentElement === menu) document.getElementById("ph_" + id).after(el) }
+  more.classList.remove("on");
+  const full = () => tb.scrollWidth > tb.clientWidth + 1;
+  if (tb.offsetWidth){
+    const moved = [];
+    for (const id of TB_OVF){ if (!full()) break; const el = document.getElementById(id); if (!el.offsetWidth) continue; more.classList.add("on"); menu.appendChild(el); moved.push(id) }
+    // a big item (the filter pills) may have made room for a smaller one moved before it: put back what fits
+    for (const id of moved.slice(0, -1).reverse()){ const el = document.getElementById(id); document.getElementById("ph_" + id).after(el); if (full()) menu.appendChild(el) }
+    [...menu.children].sort((a, b) => TB_OVF.indexOf(a.id) - TB_OVF.indexOf(b.id)).forEach(el => menu.appendChild(el));
+    if (!menu.children.length) more.classList.remove("on");
+  }
+  if (!menu.children.length && menu.classList.contains("on")) tbMenu(false);
+}
+function tbMenu(on){
+  const menu = $("#tbMoreMenu"), more = $("#tbMore"); menu.classList.toggle("on", on); more.setAttribute("aria-expanded", on);
+  if (!on) return;
+  const b = more.getBoundingClientRect();
+  menu.style.top = b.bottom + 4 + "px"; menu.style.left = Math.max(8, Math.min(b.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8)) + "px";
+  const first = menu.querySelector("select, button"); if (first) first.focus();
+}
+$("#tbMore").onclick = e => { e.stopPropagation(); tbMenu(!$("#tbMoreMenu").classList.contains("on")) };
+document.addEventListener("click", e => { const m = $("#tbMoreMenu"); if (m.classList.contains("on") && !m.contains(e.target) && !e.target.closest("#tbMore")) tbMenu(false) });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#tbMoreMenu").classList.contains("on")){ tbMenu(false); $("#tbMore").focus() } });
+if (window.ResizeObserver) new ResizeObserver(() => tbFit()).observe(document.querySelector("main > section"));
 
 
 // ---- inline edits -> draft changes (gae plan format) ----
 function startEdit(td){
-  const r = S.rows[+td.closest("tr").dataset.i], col = V()[S.kind].cols.find(c => c.key === td.dataset.k);
+  const kind = (td.closest("table[data-kind]") || {dataset:{}}).dataset.kind; if (kind !== S.kind) return;
+  const r = S.rows[+td.closest("tr").dataset.i], col = V()[kind].cols.find(c => c.key === td.dataset.k);
   const cur = cellVal(r, col);
   if (col.edit.startsWith("status") || col.edit === "mstatus"){
     const opts = col.edit === "mstatus" ? ["Active", "Paused"] : col.edit === "status3" ? ["Enabled", "Paused"] : ["Enabled", "Paused", "Removed"];
@@ -1051,7 +1165,7 @@ function startEdit(td){
     if (done) return; done = true;
     const nv = inp.value;
     if (!save || nv === "" || String(nv) === String(cur)) return renderGrid();
-    try { await addChanges([changeFor(r, col.key, nv)], "") } catch(err) { toast(err.message); renderGrid() }
+    try { await addChanges([changeFor(r, col.key, nv, kind)], "") } catch(err) { toast(err.message); renderGrid() }
   };
   inp.onkeydown = e => { if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false) };
   inp.onblur = () => finish(true);
@@ -1073,7 +1187,9 @@ function changeFor(r, key, value, kind = S.kind){
   if (kind === "negatives") return {type:"negative", remove:true, campaign:r.campaign, ...(r.ad_group ? {ad_group:r.ad_group} : {}), match:r.match.toLowerCase(), keywords:[r.keyword]};
 }
 document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
-  const st = b.dataset.bulk, rows = [...S.sel].map(i => S.rows[i]);
+  if (S.loading) return;
+  const st = b.dataset.bulk, rows = S.rows.filter(r => selectable(r) && S.sel.has(rowKey(r)));
+  if (!rows.length) return;
   if (isMeta()){
     if (st === "removed") return toast("Studio never deletes on Meta - pause instead");
     return addChanges(rows.map(r => changeFor(r, "status", st === "enabled" ? "active" : "paused")), "");
@@ -1085,6 +1201,17 @@ document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
     if (!txt.length || !confirm(`Remove ${txt.length} text asset(s) from their asset groups? Removal is permanent in Google Ads once pushed.`)) return;
     return addChanges(txt.map(r => ({type:"pmax_asset", remove:true, campaign:r.campaign, asset_group:r.asset_group, field:r.field_type.toLowerCase(), texts:[r.text]})), "");
   }
+  if (["sitelinks", "callouts"].includes(S.kind)){  // G10: unlink them (Push live can link them again from Push history)
+    if (st !== "removed") return toast(`${V()[S.kind].label} can only be removed here`);
+    const ok = rows.filter(r => r.level !== "Ad group"), nAg = rows.length - ok.length, what = S.kind === "sitelinks" ? "sitelink" : "callout";
+    if (!ok.length) return toast(`${V()[S.kind].label} on an ad group can't be removed from Studio yet: use Google Ads`);
+    if (!confirm(`Remove ${numGB(ok.length)} ${what}${ok.length === 1 ? "" : "s"} from ${ok.length === 1 ? "its campaign" : "their campaigns"}?` + (nAg ? ` (${nAg} on an ad group will be skipped.)` : "") +
+      "\n\nDraft only. Nothing changes until you push it live; Push history can link them again.")) return;
+    const by = {};
+    for (const r of ok){ const acc = r.level === "Account", k = acc ? "\u0001" : r.campaign; (by[k] = by[k] || {acc, campaign:acc ? "(account)" : r.campaign, texts:[]}); if (!by[k].texts.includes(r.text)) by[k].texts.push(r.text) }
+    return addChanges(Object.values(by).map(g => ({type:what, remove:true, campaign:g.campaign, ...(g.acc ? {level:"account"} : {}), texts:g.texts})), "",
+      nAg ? `skipped ${nAg} on an ad group (use Google Ads for those)` : "");
+  }
   if (S.kind === "negatives" && st !== "removed") return toast("Negatives can only be removed");
   if (S.kind === "ads" && rows.some(r => r.ad_type !== "Responsive search ad")) return toast("Only responsive search ads can change status here");
   // G15: negatives in a shared list are edited in the list itself, never one by one from this grid
@@ -1092,58 +1219,94 @@ document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
   const inList = S.kind === "negatives" ? rows.filter(r => r.level === "Shared list").length : 0;
   if (inList && inList === rows.length) return toast(SHARED_MSG);
   const todo = S.kind === "negatives" ? rows.filter(r => r.level !== "Shared list") : rows;
-  if (st === "removed" && !confirm(`Remove ${todo.length} item(s)?` + (inList ? ` (${inList} in a shared list will be skipped.)` : "") +
-    " (Draft only - nothing changes until you send to Editor and Post.)")) return;
-  const changes = S.kind === "negatives" ? todo.map(r => changeFor(r, "remove")) : todo.map(r => changeFor(r, "status", st));
-  await addChanges(changes, "");
-  if (inList) toast(`Added ${todo.length} change${todo.length === 1 ? "" : "s"}; skipped ${inList} negative${inList === 1 ? "" : "s"} in a shared list (edit the shared list itself)`);
+  if (st === "removed" && !confirm(`Remove ${numGB(todo.length)} item${todo.length === 1 ? "" : "s"}?` + (inList ? ` (${inList} in a shared list will be skipped.)` : "") + "\n\n" + REMOVE_NOTE)) return;
+  const kind = S.kind, changes = kind === "negatives" ? todo.map(r => changeFor(r, "remove", null, kind)) : todo.map(r => changeFor(r, "status", st, kind));
+  // one toast: what was added, what needs fixing and what was skipped (follow-up S1)
+  await addChanges(changes, "", inList ? `skipped ${inList} negative${inList === 1 ? "" : "s"} in a shared list (edit the shared list itself)` : "");
 });
 
 // ---- draft panel ----
-async function addChanges(changes, note){
+async function addChanges(changes, note, extra){
   const items = await api("/api/draft/add", {changes, note, by:"you"});
   const bad = items.filter(i => i.problems.length);
-  toast(bad.length ? `Added, but ${bad.length} need fixing` : `Added ${items.length} change${items.length > 1 ? "s" : ""} to the draft`);
+  const msg = bad.length ? `Added ${items.length} change${items.length === 1 ? "" : "s"}, but ${bad.length} need${bad.length === 1 ? "s" : ""} fixing` : `Added ${items.length} change${items.length === 1 ? "" : "s"} to the draft`;
+  toast(extra ? `${msg}; ${extra}` : msg);
   await poll(true);
+  return items;
 }
 function renderDraft(d){
   const n = d.items.length;
   $("#draftN").textContent = n || "0"; $("#draftN2").textContent = n ? `(${n})` : "";
   S.draftItems = d.items;
   $("#draft").innerHTML = n ? d.items.slice().reverse().map(i => `<div class="item">
-    <div class="who"><span><b>${i.by === "claude" ? "Claude" : "You"}</b> · ${esc(i.ts.slice(11, 16))}</span><button class="link danger" data-rm="${i.id}">Undo</button></div>
+    <div class="who"><span><b>${i.by === "claude" ? "Claude" : "You"}</b> · ${esc(i.ts.slice(11, 16))}</span><button class="link danger" data-rm="${i.id}" title="Take this change out of the draft (nothing live changes)">Remove from draft</button></div>
     <div class="sum">${esc(i.summary)}</div>
     ${i.note ? `<div class="note">${esc(i.note)}</div>` : ""}
     ${i.problems.map(p => `<div class="prob">${esc(p)}</div>`).join("")}
-    ${i.warnings.map(p => `<div class="warnl">${esc(p)}</div>`).join("")}
+    ${i.warnings.filter(p => !isEdNote(p)).map(p => `<div class="warnl">${esc(p)}</div>`).join("")}
+    ${i.warnings.some(isEdNote) ? `<div class="ednote" title="Only Send to Editor (Advanced, in the Push live window) is affected. Push live is not.">Editor: ${esc(i.warnings.filter(isEdNote).map(p => p.replace(ED_NOTE, "")).join("; "))}</div>` : ""}
   </div>`).join("") : `<div class="empty">No changes yet.<br><br>Edit a cell, use the New button above the grid, or ask Claude (MCP: marketing-studio).</div>`;
   const blocked = d.items.some(i => i.problems.length);
   $("#pushN").textContent = n || ""; $("#pushHdr").classList.toggle("has", n > 0);
-  $("#pushHdr").title = n ? `${n} change${n > 1 ? "s" : ""} in the draft${blocked ? " (some need fixing)" : ""}. Review and push them live.` : "Nothing in the draft. Push history is in here too.";
+  $("#pushHdr").title = n ? `${n} change${n > 1 ? "s" : ""} in the draft for ${acctName(S.acct)}${blocked ? " (some need fixing)" : ""}. Review and push them live.` : `Nothing in the draft for ${acctName(S.acct)}. Push history is in here too.`;
+  $("#valBtn").disabled = !n; $("#valBtn").title = n ? "Check every change in the draft against Editor's copy of the account" : "Nothing in the draft to check";
+  $("#clearBtn").disabled = !n;
 }
+// core.validate files what only Editor's dry run refused as warnings "Send to Editor: ...": a quiet note, never a problem
+const ED_NOTE = /^Send to Editor: /, isEdNote = p => ED_NOTE.test(p);
 $("#draft").onclick = async e => { const b = e.target.closest("[data-rm]"); if (!b) return; await api("/api/draft/remove", {ids:[b.dataset.rm]}); poll(true) };
 $("#clearBtn").onclick = async () => { if (confirm("Empty the whole draft?")) { await api("/api/draft/clear", {}); poll(true) } };
 $("#valBtn").onclick = async () => {
   await asFlush();
+  if (!(S.draftItems || []).length) return toast("Nothing in the draft to check");
   const res = await api("/api/validate", {});
-  const bad = res.filter(r => !r.ok);
-  toast(!res.length ? "Draft is empty" : bad.length ? `${bad.length} of ${res.length} can't be written - see red notes` : `All ${res.length} changes check out against Editor's data`);
-  poll(true);
+  await poll(true);
+  const its = S.draftItems || [], own = its.filter(i => i.problems.length).length, ed = its.filter(i => !i.problems.length && (i.editor_problems || []).length).length;
+  toast(!res.length ? "Nothing in the draft to check" : own ? `${own} of ${res.length} need fixing: see the red notes` + (ed ? `; ${ed} can't go to Editor (Push live is fine)` : "")
+    : ed ? `All ${res.length} can be pushed live; ${ed} can't go to Editor (see the Editor notes)` : `All ${res.length} changes check out`);
 };
+// Which draft items Editor can't take (own problems, or what Editor's dry run refused): Send to Editor waits for them (U19)
+const editorBlocked = () => (S.draftItems || []).filter(i => (i.change || {}).type !== "video_upload" && (i.problems.length || (i.editor_problems || []).length));
 async function sendToEditor(){
   await asFlush();
   const st = await api("/api/state?acct=" + S.acct);
+  const items = (st.draft.items || []).filter(i => (i.change || {}).type !== "video_upload"), n = items.length;
+  if (!n) return toast("Nothing in the draft to send");
   const msg = (st.editor_running ? "Google Ads Editor will close and reopen (about 15 seconds). Any half-typed edit in Editor is lost.\n\n" : "") +
-    `Send ${st.draft.items.length} change(s) into Editor as pending changes? Nothing goes live until you Post in Editor.`;
+    `Send ${n} change${n === 1 ? "" : "s"} into Google Ads Editor as pending changes? Nothing goes live until you Post in Editor.`;
   if (!confirm(msg)) return;
   const TR = window.TeamReviews; // [team reviews] in a team: the why note, and only approved changes when required
   if (TR && TR.joined && !(TR.extra().why || "").trim()){ const w = prompt("Why are you sending this? (one line, your team sees it)"); if (!w || !w.trim()) return; TR.setWhy(w) }
   showDialog("Sending to Google Ads Editor", `<div class="prog-h"><span class="spin"></span>Sending ...</div>`, []);
+  const done = ["Done", () => dlg.close(), "primary"];
   try {
     const r = await api("/api/push", TR ? TR.extra() : {});
-    showDialog(r.ok ? "Sent to Google Ads Editor" : "Not sent", `<pre class="out">${esc(r.output)}</pre>${r.ok ? `<p class="hint">Review the changes in Editor (they carry the comment shown above), then Post.</p>` : ""}`, []);
-  } catch(err) { toast(err.message) }
+    if (r.ok){
+      const sent = new Set(r.sent || items.map(i => i.id)), counts = pushCounts(items.filter(i => sent.has(i.id)));
+      showDialog("Sent to Google Ads Editor", `<p class="pushok plain"><b>${esc(r.message || `Sent ${sent.size} change${sent.size === 1 ? "" : "s"} into Google Ads Editor.`)}</b></p>
+        <table class="tally">${counts.map(([l, k]) => `<tr><td>${esc(l)}</td><td>${k}</td></tr>`).join("")}</table>
+        <p class="hint">In Google Ads Editor: review the pending changes, then Post. Nothing is live until you Post there.</p>`, [done]);
+    } else {
+      const bad = r.bad || [];
+      showDialog("Not sent to Editor", `<div class="prob">${esc(r.message || "Nothing was sent to Editor.")}</div>
+        ${bad.map(b => `<div class="pv"><div><b>${esc(b.summary)}</b></div>${b.problems.map(x => `<div class="prob">${esc(x)}</div>`).join("")}</div>`).join("")}
+        <p class="hint">Nothing changed in Editor. Push live is not affected.</p>`, [done]);
+    }
+  } catch(err) { showDialog("Not sent to Editor", `<div class="prob">${esc(friendlyErr(err))}</div><p class="hint">Nothing changed in Editor.</p>`, [done]) }
   poll(true);
+}
+// T03: Send to Editor sits in an "Advanced" menu at the left of the Push live footer (never the main path)
+function advancedEditor(){
+  const f = $("#dlgF"); if (!f) return;
+  const blocked = editorBlocked();
+  f.insertAdjacentHTML("afterbegin", `<details class="adv"><summary aria-label="Advanced: Send to Editor">Advanced</summary><div class="advm">
+    <button id="advEd" ${blocked.length ? "disabled" : ""}>Send to Editor instead ...</button>
+    <p class="hint">Writes the draft into Google Ads Editor as pending changes. Nothing goes live until you Post in Editor.</p>
+    ${blocked.length ? `<p class="hint" style="color:var(--bad-text)">Off until ${blocked.length === 1 ? "this change is" : `these ${blocked.length} changes are`} fixed or removed from the draft:</p><ul>${blocked.slice(0, 6).map(i => `<li>${esc(i.summary)}</li>`).join("")}${blocked.length > 6 ? `<li>and ${blocked.length - 6} more</li>` : ""}</ul>` : ""}
+  </div></details>`);
+  const d = f.querySelector("details.adv");
+  $("#advEd").onclick = () => { d.open = false; sendToEditor() };
+  d.addEventListener("keydown", e => { if (e.key === "Escape" && d.open){ e.preventDefault(); e.stopPropagation(); d.open = false; d.querySelector("summary").focus() } });
 }
 
 // ---- push live: straight to the Google Ads API, after Google has checked it (validateOnly) ----
@@ -1361,21 +1524,23 @@ function renderPreview(p, acct){
     ${(i.warnings || []).map(x => `<div class="warnl">${esc(x)}</div>`).join("")}</div>`).join("");
   const spendTick = was => { const n = spendN(); return n ? `<label class="tick"><input type="checkbox" id="lv_spend" ${was ? "checked" : ""}> <span>${n} change${n > 1 ? "s" : ""} can raise spend. I know.</span></label>` : "" };
   const body = `<table class="tally">${counts.map(([l, n]) => `<tr><td>${esc(l)}</td><td>${n}</td></tr>`).join("")}</table>
-    ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then Undo or fix ${bad.length > 1 ? "them" : "it"} in the Draft tab.</div>` : ""}
+    ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then fix ${bad.length > 1 ? "them" : "it"} or remove ${bad.length > 1 ? "them" : "it"} from the draft (Draft tab).</div>` : ""}
     ${meta ? `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.meta_new ? "checked" : ""}> <span>Create new ads as <b>Active</b> (they deliver once Meta approves them; new campaigns and ad sets stay Paused)</span></label>`
-      : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
+      : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused). Changing this checks the draft with Google again.</span></label>`}
     <div id="lv_spendBox">${spendTick(false)}</div>
     ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (${isMeta() ? "permanent changes" : "removals"}). I know.</span></label>` : ""}
     <details class="pdet" ${bad.length ? "open" : ""}><summary>Details</summary><div id="lv_det">${details()}</div></details>${TR ? TR.section(p.team) : ""}`;
-  showDialog(jobTitle("Push to", acct), body, [histLink(), ...(meta ? [] : [["Send to Editor instead", sendToEditor]]), ["Push live", () => livePush(acct), "live"]]);
+  showDialog(jobTitle("Push to", acct), body, [histLink(), ["Push live", () => livePush(acct), "live"]]);
+  if (!meta) advancedEditor();
   const btn = $("#dlgF .live");
   const upd = () => { btn.disabled = !p.ok || (spendN() && !($("#lv_spend") && $("#lv_spend").checked)) || (p.permanent && !$("#lv_perm").checked) || (TR && !TR.ready(p.team)) };
   const wireSpend = () => { if ($("#lv_spend")) $("#lv_spend").onchange = upd };
   wireSpend(); if ($("#lv_perm")) $("#lv_perm").onchange = upd; upd();
   if (TR) TR.wire($("#dlgB"), livePreview, upd);
   $("#lv_new").onchange = e => {
-    if (meta) { LIVE.meta_new = e.target.checked; try { localStorage.setItem("studio.metaNewActive", e.target.checked ? "1" : "0") } catch(err) {} }
-    else LIVE.enable_new = e.target.checked;
+    // G17: Google checks the draft again with the new status (new rows' status, spend and Google's own answer can change)
+    if (!meta){ LIVE.enable_new = e.target.checked; btn.disabled = true; return livePreview() }
+    LIVE.meta_new = e.target.checked; try { localStorage.setItem("studio.metaNewActive", e.target.checked ? "1" : "0") } catch(err) {}
     // more changes can raise spend now: the earlier "I know" no longer covers them, so it is unticked
     const n = spendN(), was = n <= spendShown && !!($("#lv_spend") && $("#lv_spend").checked);
     spendShown = n;
@@ -1513,7 +1678,9 @@ async function liveHistory(){
     ${r.can_undo ? `<button class="danger" data-undo="${r.id}" style="margin-top:6px">Undo</button>` : ""}</div>`).join("") : `<div class="empty">No live pushes yet.</div>`, [["Back to push", livePreview]]);
   document.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => liveUndo(b.dataset.undo));
 }
-$("#pushHdr").onclick = async () => { await asFlush(); await poll(true); livePreview() };  // a running push opens its progress instead
+$("#pushHdr").onclick = async () => {  // a running push opens its progress instead
+  if (S.area !== "ads" || document.body.classList.contains("ov")) setArea("ads");  // U23: from Overview, Email, SEO ... back to Ads
+  await asFlush(); await poll(true); livePreview() };
 
 // ---- live sync: picks up Claude's MCP edits and Editor changes ----
 async function poll(force){
@@ -1597,6 +1764,32 @@ async function prepareForMeta(mediaId, out, onReady, onFail){
 }
 async function submit(changes, note){ try { await addChanges(changes, note); dlg.close() } catch(e) { toast(e.message) } }
 const noteRow = `<div class="row"><label>Why (optional)</label><input id="f_note" placeholder="Shown in the draft and the changelog"></div>`;
+const geoRow = `<div class="row"><label for="f_geo">Find location</label><div><input id="f_geo" placeholder="type a country or region" autocomplete="off"><div id="geoOut" class="geoout" aria-live="polite"></div></div></div>`;
+// G12: search Google's locations (Editor's table when Studio has no Google sign-in); a click adds the ID to Location IDs
+function wireGeo(){
+  const out = $("#geoOut"); let t = null, seq = 0;
+  $("#f_geo").oninput = e => {
+    clearTimeout(t); const q = e.target.value.trim(), my = ++seq;
+    if (q.length < 2){ out.innerHTML = ""; return }
+    t = setTimeout(async () => {
+      out.innerHTML = `<span class="hint" style="margin:0"><span class="spin"></span> Searching ...</span>`;
+      let r; try { r = await api("/api/geo?" + qs({acct:S.acct, q})) } catch(err) { if (my === seq) out.innerHTML = `<div class="prob">${esc(friendlyErr(err))}</div>`; return }
+      if (my !== seq) return;
+      out.innerHTML = r.length ? r.slice(0, 8).map(g => `<button type="button" class="link" data-gid="${esc(g.id)}" title="Add ${esc(g.id)} to Location IDs">${esc(g.location)} <b>${esc(g.id)}</b></button>`).join("")
+        : `<span class="hint" style="margin:0">No location matches "${esc(q)}".</span>`;
+    }, 250);
+  };
+  out.onclick = e => { const b = e.target.closest("[data-gid]"); if (!b) return;
+    const f = $("#f_loc"), ids = f.value.split(/[ ,]+/).filter(Boolean);
+    if (!ids.includes(b.dataset.gid)) ids.push(b.dataset.gid);
+    f.value = ids.join(", "); b.disabled = true; b.title = "Added to Location IDs" };
+}
+// G11: a budget recommendation goes into the draft as an ordinary budget change
+function recBudget(r){
+  if (!r || r.recommended_budget == null || !r.campaign) return toast("Only budget recommendations can be added to the draft here");
+  if (!confirm(`Add Google's budget recommendation to the draft?\n\n${r.campaign}: ${r.current || "now"} -> ${r.recommended}\n\nDraft only: nothing changes until you push it live.`)) return;
+  addChanges([{type:"campaign", campaign:r.campaign, budget:r.recommended_budget}], `Google recommendation (${r.type})`).catch(e => toast(e.message));
+}
 const ADD = {
   campaigns(){
     showDialog("New campaign", `<p class="hint">New campaigns are created Paused in Editor.</p>
@@ -1605,10 +1798,10 @@ const ADD = {
       <div class="row"><label>Bid strategy</label><select id="f_bid"><option>Manual CPC</option><option>Maximize clicks</option></select></div>
       <div class="row"><label>${esc(curLabel("Max CPC cap"))}</label><input id="f_cap" type="number" step="0.01" placeholder="for Maximize clicks"></div>
       <div class="row"><label>Location IDs</label><input id="f_loc" placeholder="2826, 2276"></div>
-      <div class="row"><label>Find location</label><span><input id="f_geo" placeholder="type a country or region"> <span id="geoOut" class="hint"></span></span></div>${noteRow}`,
+      ${geoRow}${noteRow}`,
       [["Add to draft", () => submit([{type:"campaign", new:true, campaign:val("f_name"), budget:+val("f_budget"), bid_strategy:val("f_bid"),
         ...(val("f_cap") ? {max_cpc_cap:+val("f_cap")} : {}), languages:"en", locations:val("f_loc").split(/[ ,]+/).filter(Boolean).map(id => ({id:+id}))}], val("f_note")), "primary"]]);
-    $("#f_geo").oninput = async e => { const r = await api("/api/geo?" + qs({acct:S.acct, q:e.target.value})); $("#geoOut").innerHTML = r.slice(0, 5).map(g => `${esc(g.location)} <b>${g.id}</b>`).join(" · ") };
+    wireGeo();
   },
   ad_groups(){
     const sc = needScope("campaign"); if (!sc) return;
@@ -1640,9 +1833,9 @@ const ADD = {
   locations(){
     const sc = needScope("campaign"); if (!sc) return;
     showDialog("Exclude locations from " + sc.campaign, `<div class="row"><label>Location IDs</label><input id="f_loc" placeholder="2356, 2586"></div>
-      <div class="row"><label>Find location</label><span><input id="f_geo" placeholder="type a country or region"> <span id="geoOut" class="hint"></span></span></div>${noteRow}`,
+      ${geoRow}${noteRow}`,
       [["Add to draft", () => submit([{type:"excluded_location", campaign:sc.campaign, locations:val("f_loc").split(/[ ,]+/).filter(Boolean).map(id => ({id:+id}))}], val("f_note")), "primary"]]);
-    $("#f_geo").oninput = async e => { const r = await api("/api/geo?" + qs({acct:S.acct, q:e.target.value})); $("#geoOut").innerHTML = r.slice(0, 5).map(g => `${esc(g.location)} <b>${g.id}</b>`).join(" · ") };
+    wireGeo();
   },
   async asset_group_assets(){
     const sc = needScope("campaign"); if (!sc) return;
@@ -1682,7 +1875,7 @@ function rsaDialog(r, isNew){
     <select class="${kind}-pin">${[0, ...Array.from({length:pins}, (_, k) => k + 1)].map(p => `<option value="${p}" ${+x.pin === p ? "selected" : ""}>${p ? "Pin " + p : "-"}</option>`).join("")}</select>
     <button class="link danger" onclick="this.parentElement.remove()">✕</button></div>`;
   showDialog((isNew ? "New responsive search ad" : "Edit ad") + " · " + r.ad_group, `
-    ${isNew ? `<p class="hint">New ads are created Paused.</p>` : `<p class="hint">Saving replaces all headlines and descriptions of this ad.</p>`}
+    ${isNew ? `<p class="hint">New ads are created Paused.</p>` : `<p class="hint">Only what you change is saved. A change to any headline or description replaces all of this ad's text.</p>`}
     <div class="row"><label>Final URL</label><input id="f_url" value="${esc(r.final_url)}"></div>
     <div class="row"><label>Path 1 / Path 2</label><span><input id="f_p1" value="${esc(r.path1)}" maxlength="15" style="width:45%"> / <input id="f_p2" value="${esc(r.path2)}" maxlength="15" style="width:45%"></span></div>
     <b>Headlines</b> <span class="hint">(3-15, max 30)</span><div class="lines" id="hl">${hl.map((x, i) => ln("h", x, i, 30, 3)).join("")}</div>
@@ -1692,7 +1885,14 @@ function rsaDialog(r, isNew){
     [[isNew ? "Add to draft" : "Save to draft", () => {
       const get = (sel, max) => [...document.querySelectorAll(sel + " .ln")].map(l => ({text:l.querySelector("input").value.trim(), pin:+l.querySelector("select").value})).filter(x => x.text);
       const c = {type:"rsa", campaign:r.campaign, ad_group:r.ad_group, final_url:val("f_url"), path1:val("f_p1"), path2:val("f_p2"), headlines:get("#hl"), descriptions:get("#ds")};
-      if (!isNew){ Object.assign(c, {edit:true, local_id:r.id}, r.ad_id ? {ad_id:r.ad_id} : {}); if (c.final_url === r.final_url) delete c.final_url; delete c.path1; delete c.path2 }
+      if (!isNew){
+        const same = (a, b) => JSON.stringify((a || []).map(x => [String(x.text || "").trim(), +x.pin || 0])) === JSON.stringify((b || []).map(x => [String(x.text || "").trim(), +x.pin || 0]));
+        Object.assign(c, {edit:true, local_id:r.id}, r.ad_id ? {ad_id:r.ad_id} : {});
+        if (c.final_url === (r.final_url || "")) delete c.final_url;
+        if (c.path1 === (r.path1 || "") && c.path2 === (r.path2 || "")){ delete c.path1; delete c.path2 }  // paths go as a pair
+        if (same(c.headlines, r.headlines) && same(c.descriptions, r.descriptions)){ delete c.headlines; delete c.descriptions }
+        if (!["final_url", "path1", "headlines"].some(k => k in c)) return toast("Nothing changed");
+      }
       submit([c], val("f_note"));
     }, "primary"]]);
   const wire = () => { document.querySelectorAll("#hl input.h").forEach(i => counter(i, 30)); document.querySelectorAll("#ds input.d").forEach(i => counter(i, 90)) };
@@ -1713,6 +1913,7 @@ function sitelinkDialog(r, isNew){
       if (val("f_l1") !== r.line1) c.line1 = val("f_l1");
       if (val("f_l2") !== r.line2) c.line2 = val("f_l2");
       if (val("f_url") !== r.final_url) c.final_url = val("f_url");
+      if (!["new_text", "line1", "line2", "final_url"].some(k => k in c)) return toast("Nothing changed");
       submit([c], val("f_note"));
     }, "primary"]]);
   counter($("#f_t"), 25); counter($("#f_l1"), 35); counter($("#f_l2"), 35);
@@ -2073,12 +2274,12 @@ function showPane(p){ $("#rtEdit").classList.toggle("on", p === "edit"); $("#rtD
 $("#rtEdit").onclick = () => showPane("edit");
 $("#rtDraft").onclick = () => showPane("draft");
 // close / open the right panel (remembered on this Mac)
-const sideShow = on => { document.querySelector("main").classList.toggle("noside", !on); document.body.classList.toggle("noside", !on) };
+const sideShow = on => { document.querySelector("main").classList.toggle("noside", !on); document.body.classList.toggle("noside", !on); requestAnimationFrame(tbFit) };
 const sideOpen = on => { sideShow(on); localSet("side", on ? "open" : "closed") };
 $("#sideClose").onclick = () => sideOpen(false);
 $("#sideOpen").onclick = () => sideOpen(true);
-// below 1360px the grid needs the room: the panel starts closed unless it was opened on purpose (opening a row opens it)
-if (localGet("side") === "closed" || (!localGet("side") && innerWidth < 1360)) sideShow(false);
+// below 1500px the grid needs the room (U20): the panel starts closed unless it was opened on purpose (opening a row opens it)
+if (localGet("side") === "closed" || (!localGet("side") && innerWidth < 1500)) sideShow(false);
 const fld = (id, label, val, live, opt = {}) => {
   const chg = String(val ?? "") !== String(live ?? "");
   const inner = opt.area ? `<textarea id="${id}" rows="${opt.area}">${esc(val)}</textarea>`
@@ -2093,7 +2294,7 @@ function focusRow(r){
   if (!r) return;
   S.focus = String(r.id);
   document.querySelectorAll("tr.focus").forEach(t => t.classList.remove("focus"));
-  const tr = document.querySelector(`tr[data-i="${S.rows.indexOf(r)}"]`); if (tr) tr.classList.add("focus");
+  const tr = document.querySelector(`tr[data-i="${r._i ?? S.rows.indexOf(r)}"]`); if (tr) tr.classList.add("focus");
   renderEdit(r); showPane("edit");
   if (document.body.classList.contains("noside") && localGet("side") !== "closed") sideShow(true); // closed only by the narrow-window default
 }
@@ -2151,9 +2352,11 @@ function renderEdit(r){
       ${colsFor().filter(c => !c.thumb).map(c => { const v = cellVal(r, c), mon = isMoney(c) ? moneyCell(c, v) : null;
         return `<div class="fld"><label><span>${esc(isMoney(c) && acctCur() && c.edit === "money" ? curLabel(c.label) : colLabel(c))}</span></label><div ${mon ? `title="${esc(mon[1])}"` : ""}>${mon ? mon[0] || "-" : c.fmt ? c.fmt(v) : esc(v) || "-"}</div></div>` }).join("")}
       ${isTrial(r) ? `<div class="warnl">${esc(EXP_MSG)}${r.experiment_base ? ` (base campaign: ${esc(r.experiment_base)})` : ""}. Studio shows it read-only.</div>`
+        : S.kind === "recommendations" ? `<p class="hint">${r.recommended_budget != null ? "Add this budget to the draft below, then push it live like any change." : "Studio can add budget recommendations to the draft. Apply other recommendations in Google Ads."}</p>`
         : `<p class="hint">${v.open ? "Use Edit below to change this." : "Change status and amounts straight in the grid."}</p>`}
       ${r.experiment === "base" ? `<div class="warnl">This campaign has a running experiment: Google copies only some changes into its trial campaign.</div>` : ""}`;
-    editFoot(v.open && !r._new && !isTrial(r) ? [["Edit", () => v.open(r), "primary"]] : []);
+    editFoot(S.kind === "recommendations" ? (r.recommended_budget != null ? [["Add budget to draft", () => recBudget(r), "primary"]] : [])
+      : v.open && !r._new && !isTrial(r) ? [["Edit", () => v.open(r), "primary"]] : []);
     return;
   }
   if (r._new && S.kind === "ads") return editNewAd(r);
@@ -2521,7 +2724,7 @@ async function switchAcct(key){
   S.acct = key; localSet("acct", key); $("#acct").value = key; $("#grid").scrollLeft = 0; S.camp = S.ag = null; S.open.clear(); S.draftV = -1; S.sort = null; S.focus = null;
   $("#editBody").innerHTML = `<div class="empty">Click a row to see and edit it here.</div>`; editFoot([]);
   dropOtherPreview(); jobPill();
-  renderTabs(); renderViews(); noteFetch(); loadTree(); loadGrid(); await poll(true); resumeJobs();
+  renderTabs(); renderViews(); noteFetch(); loadTree(); loadGrid({reset:true}); await poll(true); resumeJobs();
 }
 async function reloadAccounts(){
   const accts = await api("/api/accounts");
@@ -2620,10 +2823,11 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
 </script>
 <!-- [mac-app updater] begin: version in the footer + "Update available" banner (only inside the Mac app, MSTUDIO_APP=1). Self-contained; see updater.py -->
 <style>
-#msUpd{position:fixed;right:20px;bottom:44px;z-index:9999;display:none;align-items:center;gap:10px;padding:10px 12px 10px 16px;border-radius:var(--r-lg);background:var(--panel);color:var(--text);box-shadow:var(--sh-pop);font-size:13px;font-weight:600}
+/* U11: the banner sits in the footer row (its own space), so it never covers Check draft / Clear draft */
+#msUpd{display:none;align-items:center;gap:10px;padding:4px 6px 4px 12px;border-radius:var(--r-lg);background:var(--panel);color:var(--text);box-shadow:var(--sh-1),0 0 0 1px var(--line);font-size:12.5px;font-weight:600}
 #msUpd::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-bg);flex:none}
 #msUpd.on{display:flex;animation:popIn .2s var(--ease)}
-#msUpd button{font:inherit;font-size:12.5px;cursor:pointer;border:0;border-radius:var(--r);height:32px;padding:0 12px;background:var(--accent);color:var(--on-accent);box-shadow:var(--sh-1)}
+#msUpd button{font:inherit;font-size:12px;cursor:pointer;border:0;border-radius:var(--r);height:28px;padding:0 12px;background:var(--accent);color:var(--on-accent);box-shadow:var(--sh-1)}
 #msUpd button:hover{background:var(--accent-2)}
 #msUpd button.ghost{background:transparent;color:var(--muted);box-shadow:none}
 #msUpd button.ghost:hover{background:var(--hover);color:var(--text)}
@@ -2635,6 +2839,7 @@ function reshowMoney(){ if (document.body.classList.contains("ov")) overviewPage
   const box = document.getElementById("msUpd"), msg = document.getElementById("msUpdMsg"),
         go = document.getElementById("msUpdGo"), later = document.getElementById("msUpdX");
   const press = (document.querySelector('meta[name="studio-press"]') || {}).content || "";
+  const foot = document.querySelector("footer"); if (foot) foot.insertBefore(box, foot.querySelector(".spacer"));  // U11
   const getJ = async u => { try { const r = await fetch(u); return r.ok ? await r.json() : null } catch(e) { return null } };
   let poll = null;
   later.onclick = () => box.classList.remove("on");

@@ -910,6 +910,22 @@ def _page_label(path):
     return parts[-1] if parts else "Homepage"
 
 
+def _cached_titles():
+    """url key -> post title from the WordPress list Studio already has (seo_cache/posts.json). Never fetches: the Overview
+    must not wait on WordPress. {} when nothing is cached yet."""
+    try:
+        rows = json.loads((c.cache_dir() / "posts.json").read_text()).get("posts") or []
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {p.get("key"): p.get("title") for p in rows if isinstance(p, dict) and p.get("key") and p.get("title")}
+
+
+def _mover_label(key, titles=None):
+    """C25: the post's title for a Search Console page key (the slug or "Homepage" when the post isn't in the list)."""
+    t = (titles if titles is not None else _cached_titles()).get(key)
+    return str(t).strip() if t and str(t).strip() else _page_label(key)
+
+
 def overview(days="7"):
     n = int(days) if str(days) in ("7", "14", "30") else 7
     s, e, ps, pe = g.date_range({"range": n})
@@ -925,7 +941,8 @@ def overview(days="7"):
         {"k": "Impressions", "v": f"{t['impressions']:,}"},
         {"k": "Avg position", "v": f"{t['position']:.1f}"},
         {"k": "Select Cabin (organic)", "v": f"{ga['select_cabin']:,}", "hi": True},
-        {"k": "Top mover", "v": f"{_page_label(top[0])} ({'+' if top[1] >= 0 else ''}{top[1]})" if top else "None"}],
+        {"k": "Top mover", "v": f"{_mover_label(top[0])} ({'+' if top[1] >= 0 else ''}{top[1]})" if top else "None",
+         "title": f"{_mover_label(top[0])} ({top[0]}): {'+' if top[1] >= 0 else ''}{top[1]} clicks vs the {n} days before" if top else ""}],
         "note": f"Search Console {s} to {e} (data lags 2 days) vs the {n} days before. Select Cabin: GA4 select_cabin events in organic search sessions."}
 
 

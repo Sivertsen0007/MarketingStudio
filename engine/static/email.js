@@ -19,7 +19,7 @@ if (!document.getElementById("em-css")){
 .em-banner .link{min-height:32px;padding:0 6px;display:inline-flex;align-items:center}
 .em-banner{display:flex;gap:10px;align-items:center;margin:0 28px 14px;padding:10px 14px;border-radius:var(--r-md);background:var(--warn-bg);color:var(--text2);font-size:13px;font-weight:500;flex-wrap:wrap}
 .em-banner b{color:var(--warn);font-weight:600}
-.em-banner.ok{background:var(--ok-bg)} .em-banner.ok b{color:var(--ok)}
+.em-banner.ok{background:var(--ok-bg)} .em-banner.ok b{color:var(--ok-text)}
 .em-banner.info{background:var(--accent-bg)} .em-banner.info b{color:var(--accent)}
 .em-banner.load{background:transparent;color:var(--muted);padding:22px 0 0}
 .em-note{color:var(--muted);font-size:12px}
@@ -30,7 +30,7 @@ if (!document.getElementById("em-css")){
 .em-root .toolbar.em-bar{background:transparent;border:0;box-shadow:none;padding:0 28px 12px;gap:8px}
 .em-search{width:240px}
 .pill.em-draft i{background:var(--faint)}.pill.em-scheduled i{background:var(--accent)}.pill.em-sending i{background:var(--c4)}
-.pill.em-sent i{background:var(--ok)}.pill.em-failed i{background:var(--bad)}.pill.em-failed{color:var(--bad)}.pill.em-cancelled{color:var(--muted)}
+.pill.em-sent i{background:var(--ok)}.pill.em-failed i{background:var(--bad)}.pill.em-failed{color:var(--bad-text)}.pill.em-cancelled{color:var(--muted)}
 .em-card{margin:0 28px 24px;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);overflow:auto;flex:1;min-height:0}
 .em-card.grid-wrap{flex:0 1 auto}
 .em-grid{width:100%}
@@ -41,7 +41,7 @@ if (!document.getElementById("em-css")){
 .em-grid tbody tr{cursor:pointer;transition:background var(--t) var(--ease)}
 .em-grid tbody tr:last-child td{border-bottom:0}
 .em-grid .chip{font-size:11px;font-weight:600;padding:2px 7px;border-radius:var(--r-sm);background:var(--sunken);color:var(--muted);margin-left:4px}
-.em-grid .chip.draft{background:var(--draft-bg);color:var(--draft)}
+.em-grid .chip.draft{background:var(--draft-bg);color:var(--draft-text)}
 .em-ed{flex:1;min-height:0;display:grid;grid-template-columns:minmax(380px,44%) 1fr;gap:12px;padding:0 28px 20px}
 .em-left,.em-right{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-card);overflow:hidden}
 .em-fields{padding:18px 20px 6px;overflow:auto;flex:none;max-height:52%}
@@ -50,7 +50,7 @@ if (!document.getElementById("em-css")){
 .em-fields input,.em-fields select{width:100%}
 .em-fields input[readonly]{background:var(--head);color:var(--text2);box-shadow:none}
 .em-fields .chg input,.em-fields .chg select{background:var(--draft-bg);border-color:var(--draft)}
-.em-cnt{font-size:11px;font-weight:600;color:var(--faint);margin-left:6px}.em-cnt.over{color:var(--bad)}
+.em-cnt{font-size:11px;font-weight:600;color:var(--faint);margin-left:6px}.em-cnt.over{color:var(--bad-text)}
 .em-code{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px 20px 18px;border-top:1px solid var(--line2)}
 .em-code .h{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;font-weight:600;color:var(--muted);margin:6px 0 8px}
 .em-code textarea{flex:1;min-height:160px;resize:none;font:12px/1.6 var(--mono);padding:12px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--head);color:var(--text2);white-space:pre;overflow:auto;tab-size:2;box-shadow:none}
@@ -61,7 +61,7 @@ if (!document.getElementById("em-css")){
 .em-pbar .src{color:var(--muted);font-weight:500;margin-left:4px}
 .em-seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
 .em-root .fpills button{min-height:32px}
-.em-root button.danger,.em-root .menu button.danger{color:var(--bad-text, #c8303a)}
+.em-root button.danger,.em-root .menu button.danger{color:var(--bad-text)}
 .em-seg button{height:32px;padding:0 14px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted);font-size:12.5px}
 .em-seg button:hover{background:transparent;color:var(--text)}
 .em-seg button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
@@ -72,9 +72,9 @@ if (!document.getElementById("em-css")){
 .em-checks{flex:none;max-height:34%;overflow:auto;padding:12px 16px;border-top:1px solid var(--line2);font-size:13px}
 .em-checks .hint{margin:0;font-size:12.5px}
 .em-checks .p{padding:7px 10px;border-radius:var(--r-sm);margin:4px 0;color:var(--text2);word-break:break-word;font-size:12.5px;background:var(--head)}
-.em-checks .p.error{background:var(--bad-bg)} .em-checks .p.error b{color:var(--bad)}
+.em-checks .p.error{background:var(--bad-bg)} .em-checks .p.error b{color:var(--bad-text)}
 .em-checks .p.warn{background:var(--warn-bg)} .em-checks .p.warn b{color:var(--warn)}
-.em-checks .okline{color:var(--ok);font-weight:600;padding:2px 0 4px}
+.em-checks .okline{color:var(--ok-text);font-weight:600;padding:2px 0 4px}
 .em-root .toolbar.em-etb{background:transparent;border:0;box-shadow:none;padding:20px 28px 14px;gap:8px}
 .em-etb .t{font-size:18px;font-weight:600;color:var(--text);max-width:28vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:4px}
 .em-etb .sep{width:1px;align-self:stretch;background:var(--line);margin:4px 2px}
@@ -112,9 +112,15 @@ function fmtLocal(d){
 function zoneToDate(v){
   const [ds, ts] = String(v).split("T"); if (!ds || !ts) return null;
   const [Y, M, D] = ds.split("-").map(Number), [h, m] = ts.split(":").map(Number);
-  const want = Date.UTC(Y, M - 1, D, h, m); let g = want;
-  for (let i = 0; i < 3; i++){ const p = zoneParts(new Date(g)); g += want - Date.UTC(p.Y, p.M - 1, p.D, p.h, p.m) }
-  return new Date(g);
+  const want = Date.UTC(Y, M - 1, D, h, m); if (isNaN(want)) return null;
+  // S6: the same answer as the engine's to_utc (zoneinfo, fold=0) on DST edges. Try the zone's offset a day before and a day
+  // after: keep a time that shows exactly the wanted wall time (a repeated hour in autumn: the earlier one); in a skipped
+  // hour (spring) nothing shows it, and like Python the offset from before the change is used.
+  const wall = g => { const p = zoneParts(new Date(g)); return Date.UTC(p.Y, p.M - 1, p.D, p.h, p.m) };
+  const offAt = g => wall(g) - Math.floor(g / 60000) * 60000;
+  const before = offAt(want - 864e5), after = offAt(want + 864e5);
+  const ok = [want - before, want - after].filter(g => wall(g) === want);
+  return new Date(ok.length ? Math.min(...ok) : want - before);
 }
 const num = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
 const pct = v => v == null ? "" : Number(v).toFixed(1) + "%";
@@ -156,7 +162,7 @@ async function renderList(){
   try { E.state = await api(A("state")) } catch(e) { if (!gone()) el.innerHTML = `<div class="em-root"><div class="prob">${esc(e.message)}</div></div>`; return }
   if (gone()) return;
   el.innerHTML = `<div class="em-root"><div class="em-head"><div class="ttl"><h1>Email</h1><p>Campaigns from your email platform. Test, schedule and send are your own buttons.</p></div>
-    <div class="acts"><button data-em="refresh">Refresh</button><button data-em="new" class="primary">New campaign</button></div></div>
+    <div class="acts"><button data-em="refresh">Refresh Email</button><button data-em="new" class="primary">New campaign</button></div></div>
     ${banner()}
     <div class="toolbar em-bar">
       <div class="fpills" id="emPills"></div>
@@ -209,7 +215,7 @@ function onClick(e){
   st.textContent = `.em-menu{position:fixed;z-index:60;min-width:200px;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-pop);padding:6px;font-size:13px}
   .em-menu button{display:flex;align-items:center;width:100%;height:32px;text-align:left;border:0;border-radius:var(--r-sm);background:none;box-shadow:none;padding:0 10px;color:var(--text);font-weight:500}
   .em-menu button:hover:not(:disabled){background:var(--hover)}
-  .em-menu button.danger{color:var(--bad)} .em-menu button:disabled{color:var(--faint);cursor:default}
+  .em-menu button.danger{color:var(--bad-text)} .em-menu button:disabled{color:var(--faint);cursor:default}
   .em-menu .why{padding:2px 10px 6px;color:var(--muted);font-size:11px;font-weight:500;max-width:240px}`;
   document.head.appendChild(st);
 })();
@@ -273,7 +279,7 @@ function drawEditor(){
       <span class="t" title="${esc(c.name)}">${esc(c.name)}</span>${statusPill(o.status)}
       <span id="emDraftChip">${d ? `<span class="chip draft" title="Edits saved in Studio, not yet on ${esc(PN())} (by ${esc(d.by)})">Studio draft</span>` : ""}</span>
       <span class="em-spacer"></span>
-      <button data-em="check" title="Run every check, links included">Check</button>
+      ${editable ? `<button data-em="check" title="Run every check, links included">Check</button>` : ""}
       ${editable ? `<span id="emAuto" class="hint" title="Edits are kept as a Studio draft on their own, about a second after you stop typing">Edits save on their own</span>
       ${d ? `<button data-em="discard" class="danger" title="Throw away the Studio draft and go back to what ${esc(PN())} holds">Discard draft</button>` : ""}
       ${can("edit") ? `<button data-em="platform" class="primary" title="Write the Studio draft to ${esc(PN())} (drafts only)" ${d ? "" : "disabled"}>Save to platform</button>`
@@ -304,7 +310,7 @@ function drawEditor(){
         <div class="em-code" id="emCodeBox"><div class="h"><span>HTML</span><span id="emHtmlN"></span></div><textarea id="em_html" spellcheck="false" ${ro}>${esc(c.html)}</textarea></div>
       </div>
       <div class="em-right">
-        <div class="em-pbar"><span class="em-seg"><button data-emdev="desktop">Desktop</button><button data-emdev="mobile">Mobile</button></span><button data-em="prev" title="Preview again">Refresh</button><span class="src" id="emSrc"></span></div>
+        <div class="em-pbar"><span class="em-seg"><button data-emdev="desktop">Desktop</button><button data-emdev="mobile">Mobile</button></span><button data-em="prev" title="Preview again">Refresh preview</button><span class="src" id="emSrc"></span></div>
         <div class="em-frame" id="emFrame"><iframe id="emIframe" sandbox="" title="Email preview"></iframe></div>
         <div class="em-checks" id="emChecks"><span class="hint">Press Check to run every check (links too). Send, Schedule and Send test run them as well.</span></div>
       </div>

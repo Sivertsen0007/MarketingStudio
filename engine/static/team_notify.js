@@ -47,7 +47,7 @@
   .tn-card .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0;font-size:13px}
   .tn-card h4{font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 6px}
   .tn-card input[type=url]{flex:1;min-width:160px}
-  .tn-card .hint{font-size:12px;color:var(--muted)} .tn-card .warn{font-size:12px;font-weight:600;color:var(--bad)}
+  .tn-card .hint{font-size:12px;color:var(--muted)} .tn-card .warn{font-size:12px;font-weight:600;color:var(--bad-text)}
   </style>`);
 
   // ---------- the bell's list ----------

@@ -16,7 +16,7 @@ const CSS = `
 .seo-tabs.fpills button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
 .seo-tabs button .n{display:inline-block;min-width:18px;margin-left:6px;padding:0 5px;border-radius:var(--r-pill);background:var(--accent-bg);color:var(--accent);font-size:11px;font-weight:700;line-height:17px;text-align:center}
 .seo-target{display:inline-flex;align-items:center;height:28px;font-size:12px;font-weight:600;padding:0 10px;border-radius:var(--r-pill);background:var(--sunken);color:var(--text2);white-space:nowrap}
-.seo-target.prod{background:var(--bad-text, #c8303a);color:var(--ink-text)}
+.seo-target.prod{background:var(--bad-text);color:var(--ink-text)}
 .seo-target.dry{background:var(--accent-bg);color:var(--accent)}
 .seo-sub{display:flex;gap:10px;align-items:center;padding:0 28px 12px;flex-wrap:wrap;font-size:13px}
 .seo-sub input[type=search]{min-width:260px}
@@ -31,11 +31,11 @@ const CSS = `
 .seo-body table tr.seo-row:hover td{background:var(--hover)}
 .seo-body td.title{max-width:360px;color:var(--text);font-weight:600}
 .seo-body td.wrap{white-space:normal;min-width:260px;max-width:420px;line-height:1.4;padding-top:8px;padding-bottom:8px;height:auto}
-.seo-body .chip.draft{font-size:11px;font-weight:600;padding:2px 7px;border-radius:var(--r-sm);background:var(--draft-bg);color:var(--draft)}
-.seo-up{color:var(--ok);font-weight:600} .seo-down{color:var(--bad-text, #c8303a);font-weight:600}
-.seo-root button.danger{color:var(--bad-text, #c8303a)}
+.seo-body .chip.draft{font-size:11px;font-weight:600;padding:2px 7px;border-radius:var(--r-sm);background:var(--draft-bg);color:var(--draft-text)}
+.seo-up{color:var(--ok-text);font-weight:600} .seo-down{color:var(--bad-text);font-weight:600}
+.seo-root button.danger{color:var(--bad-text)}
 .seo-dacts{display:flex;gap:8px;align-items:center;margin-bottom:6px}
-.seo-dacts button.ghost.danger{color:var(--bad-text, #c8303a)}
+.seo-dacts button.ghost.danger{color:var(--bad-text)}
 .seo-len{display:inline-block;font-size:10.5px;font-weight:600;color:var(--faint);margin-left:6px;padding:0 5px;border-radius:var(--r-xs);background:var(--sunken)} .seo-len.bad{color:var(--warn);background:var(--warn-bg)}
 .seo-errs{margin:0 28px 12px;padding:10px 14px;border-radius:var(--r-md);background:var(--warn-bg);color:var(--text2);font-size:12.5px;font-weight:500;line-height:1.55}
 dialog.seo-wide{width:min(1180px,96vw)}
@@ -67,7 +67,7 @@ dialog.seo-wide{width:min(1180px,96vw)}
 .seo-ch:last-child{border-bottom:0}
 .seo-ch .old{color:var(--muted);text-decoration:line-through;word-break:break-word}
 .seo-ch .new{word-break:break-word;background:var(--draft-bg);color:var(--text);padding:2px 6px;border-radius:var(--r-xs)}
-.seo-iss{display:block;font-size:12px;font-weight:500;margin-top:4px} .seo-iss.error{color:var(--bad-text, #c8303a)} .seo-iss.warn{color:var(--warn)} .seo-iss.info{color:var(--muted)}
+.seo-iss{display:block;font-size:12px;font-weight:500;margin-top:4px} .seo-iss.error{color:var(--bad-text)} .seo-iss.warn{color:var(--warn)} .seo-iss.info{color:var(--muted)}
 .seo-post-h{font-weight:600;font-size:14px;color:var(--text);margin:16px 0 4px}
 .seo-steps{font-size:12px;font-weight:500;color:var(--muted)}
 .seo-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint);margin-right:6px}
@@ -122,7 +122,7 @@ function render(el){
   T.el = el;
   el.innerHTML = `<div class="seo-root"><div class="seo-head"><div class="ttl"><h1>SEO</h1><p>Blog posts, Search Console and GA4. Publish is your own button.</p></div>
     <div class="acts"><span id="seoTarget" class="seo-target"></span>
-    <button id="seoRefresh" title="Read WordPress, Search Console and GA4 again">Refresh</button>
+    <button id="seoRefresh" title="Read WordPress, Search Console and GA4 again">Refresh SEO</button>
     <button id="seoPublish" class="blue" disabled title="Nothing in the SEO draft yet">Publish</button></div></div>
   <div class="toolbar seo-bar">
     <div class="fpills seo-tabs" id="seoTabs"></div>
@@ -613,7 +613,7 @@ async function drawSettings(){
       <b>Reading</b><span>${yes(true, "Public REST API, published posts, no login")}</span>
       <b>Writing</b><span>${s.connected ? yes(true, "Connected as " + esc(s.user)) : `<span class="seo-dot"></span>Not connected`} <button id="ssConn">${s.connected ? "Change login" : "Connect ..."}</button>${s.connected ? ` <button id="ssDisc" class="danger">Disconnect</button>` : ""}</span>
       <b>Publish goes to</b><span><label><input type="radio" name="ssTarget" value="staging" ${s.target !== "prod" ? "checked" : ""}> Staging (staging.masterliveaboards.com)</label>
-        <label style="margin-left:14px;color:var(--bad)"><input type="radio" name="ssTarget" value="prod" ${s.target === "prod" ? "checked" : ""}> Prod (live site)</label></span>
+        <label style="margin-left:14px;color:var(--bad-text)"><input type="radio" name="ssTarget" value="prod" ${s.target === "prod" ? "checked" : ""}> Prod (live site)</label></span>
       <b>Publish mode</b><span><label><input type="radio" name="ssMode" value="dry" ${s.mode !== "live" ? "checked" : ""}> Dry run (records only)</label>
         <label style="margin-left:14px"><input type="radio" name="ssMode" value="live" ${s.mode === "live" ? "checked" : ""} ${s.connected ? "" : "disabled"}> WordPress REST</label>${s.connected ? "" : ` <span class="hint">needs the login</span>`}</span>
       <b>Yoast fields over REST</b><span>${s.snippet_installed ? yes(true, "Snippet installed: focus keyphrase is shared") : `<span class="seo-dot"></span>Snippet not installed: SEO title, meta and focus keyphrase can't be written yet. See the README (Setup).`}</span>

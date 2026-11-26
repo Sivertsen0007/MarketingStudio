@@ -16,7 +16,7 @@ X-Studio-Press with a random secret made at start-up and put into index.html whe
 in the browser can't press Studio's buttons. A program running on the Mac could still read the page and the secret:
 the real rule stays that Claude (mcp_server.py) has no tools for live actions.
 """
-import argparse, html, json, os, secrets, threading, traceback, webbrowser
+import argparse, html, json, os, secrets, threading, time, traceback, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -540,7 +540,8 @@ class H(BaseHTTPRequestHandler):
 
     def _drain_small(self, limit=1 << 20):
         """Read a small refused body before answering, so closing the connection doesn't reset it and lose the answer.
-        Big bodies are not read (the connection is closed anyway); a client that stops sending gets 2 seconds."""
+        Big bodies are not read (the connection is closed anyway). At most 2 seconds in all: a client that sends slowly,
+        or stops, can't hold the answer longer (each read gets only what is left of the 2 seconds)."""
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -548,9 +549,17 @@ class H(BaseHTTPRequestHandler):
         if not 0 < n <= limit:
             return
         was = self.connection.gettimeout()
+        end = time.monotonic() + 2
         try:
-            self.connection.settimeout(2)
-            self.rfile.read(n)
+            while n > 0:
+                left = end - time.monotonic()
+                if left <= 0:
+                    break
+                self.connection.settimeout(left)
+                got = self.rfile.read1(min(n, 65536)) if hasattr(self.rfile, "read1") else self.rfile.read(min(n, 65536))
+                if not got:
+                    break
+                n -= len(got)
         except OSError:
             pass
         finally:

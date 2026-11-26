@@ -389,6 +389,10 @@ def move(body):
     _block_checking(p0)
     if _on_vps(p0):
         raise ValueError(VPS_NO_MOVE)
+    done = [c for c, r in (p0.get("results") or {}).items() if (r or {}).get("status") == "published"]
+    if done:  # C30: moving would shift only the channels not published yet; the post would no longer be one post
+        raise ValueError("Part of this post is already published (" + ", ".join(store.CHANNEL_LABEL.get(c, c) for c in done)
+                         + "), so it can't be moved. Open it to change the other channels.")
     when = store.iso(store.parse_when(body["when"]))
     return _view(store.update(body["id"], lambda p: p.__setitem__("move", {"when": when, "at": store.iso(store.now())})))
 

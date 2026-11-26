@@ -48,15 +48,18 @@ window.studioFmt = window.studioFmt || (() => {
   .su-acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
   .su-code{font:12px/1.5 var(--mono);background:var(--sunken);color:var(--text2);padding:8px 10px;border-radius:var(--r-sm);word-break:break-all;flex:1}
   .su-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:22px} .su-top .sp{flex:1}
+  .su-top h2:focus{outline:0}
+  .su-foot{position:sticky;bottom:0;z-index:1;display:flex;align-items:center;gap:8px;margin:16px 0 0;padding:12px 22px;background:var(--panel);border-radius:var(--r-lg) var(--r-lg) 0 0;box-shadow:var(--sh-up),0 0 0 1px var(--line2)}
+  .su-foot .su-help{flex:1;margin:0}
   .su-file{display:inline-flex;align-items:center;height:34px;padding:0 14px;border-radius:var(--r);background:var(--panel);box-shadow:var(--sh-1),0 0 0 1px var(--line-strong);font-size:13px;font-weight:600;color:var(--text);cursor:pointer;margin:0}
   .su-file:hover{background:var(--hover)} .su-file:focus-within{box-shadow:var(--ring)}
   .su-file input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
   .su-card details.su-tech{margin-top:6px;font-size:12px;font-weight:500;color:var(--muted);line-height:1.5}
   .su-card details.su-tech summary{cursor:pointer;color:var(--text2);font-weight:600;padding:7px 0}
-  #setupPage button.danger{color:var(--bad-text, #c8303a)}
+  #setupPage button.danger{color:var(--bad-text)}
   @media (max-width:640px){.su-row{grid-template-columns:1fr}}`;
   document.head.insertAdjacentHTML("beforeend", `<style>${css}</style>`);
-  document.body.insertAdjacentHTML("beforeend", `<div id="setupPage" role="dialog" aria-label="Setup"></div>`);
+  document.body.insertAdjacentHTML("beforeend", `<div id="setupPage" role="dialog" aria-modal="true" aria-labelledby="suTitle"></div>`);
   const page = document.getElementById("setupPage");
   let S = null, poll = null;
 
@@ -65,8 +68,7 @@ window.studioFmt = window.studioFmt || (() => {
     S.keys.forEach(k => (groups[k.group] = groups[k.group] || []).push(k));
     const gOk = S.google_signed_in || S.google_service_account;
     page.innerHTML = `<div class="su-wrap">
-      <div class="su-top"><div><h2>Setup</h2><p class="su-sub">Your keys stay on this Mac: secrets in the macOS Keychain, the rest in ${esc(S.home)}. Nothing is sent anywhere else.</p></div>
-        <span class="sp"></span><button id="suClose">${S.ready ? "Done" : "Later"}</button></div>
+      <div class="su-top"><div><h2 id="suTitle" tabindex="-1">Setup</h2><p class="su-sub">Your keys stay on this Mac: secrets in the macOS Keychain, the rest in ${esc(S.home)}. Nothing is sent anywhere else.</p></div></div>
       ${S.keychain_error ? `<div class="su-card"><p class="prob" style="margin:0">${esc(S.keychain_error)} Studio never stores secrets anywhere else.</p></div>` : ""}
       <div class="su-card"><h3>Import from a .env file</h3><p class="su-help" style="margin:0 0 8px">Have your keys in a .env file (KEY=value lines)? Pick it and Studio saves every key it knows: secrets into the Keychain. The file itself is not kept.</p>
         <div class="su-acts"><label class="su-file">Choose .env file<input type="file" id="suEnvFile" accept=".env,text/plain,*"></label><span id="suEnvMsg" class="su-help"></span></div></div>
@@ -76,19 +78,19 @@ window.studioFmt = window.studioFmt || (() => {
       <div class="su-card" id="suTeam"></div>
       <div class="su-card"><h3><span class="su-dot ${gOk ? "ok" : ""}"></span>Google (Ads, Search Console, GA4)</h3>
         <p class="su-help" style="margin:0 0 8px">${S.google_signed_in ? `Signed in${S.google_account ? " as <b>" + esc(S.google_account) + "</b>" : ""}.` : S.google_service_account ? "Connected with a Google robot account copied from AI-Hub." : "Fill in the Google sign-in details below, save, then sign in. Your Google user needs access to the Ads accounts."}</p>
-        <div class="su-acts"><button id="suGoogle" class="${S.google_signed_in ? "" : "primary"}">${S.google_signed_in ? "Sign in again" : "Sign in with Google"}</button>${S.google_signed_in ? `<button id="suGoogleOut" class="danger">Sign out</button>` : ""}<span id="suGMsg" class="su-help"></span></div>
+        <div class="su-acts"><button id="suGoogle">${S.google_signed_in ? "Sign in again" : "Sign in with Google"}</button>${S.google_signed_in ? `<button id="suGoogleOut" class="danger">Sign out</button>` : ""}<span id="suGMsg" class="su-help"></span></div>
         <details class="su-tech"><summary>Technical details</summary>Sign in uses an OAuth client (Client ID and secret from Google Cloud) with the Google Ads, Search Console and Analytics scopes.${S.google_service_account ? " A service-account key from AI-Hub is also on this Mac and is used when nobody is signed in." : ""}</details></div>
       ${Object.entries(groups).map(([g, ks]) => `<div class="su-card"><h3><span class="su-dot ${ks.some(k => k.set) ? "ok" : ""}"></span>${esc(g)}</h3>
         ${ks.map(k => `<div class="su-row"><label for="su_${k.name}">${esc(k.label)}</label><div>
           <input id="su_${k.name}" data-k="${k.name}" ${k.secret ? `type="password" autocomplete="off" placeholder="${k.set ? "Saved - type to replace" : ""}"` : `value="${esc(k.value)}"`} ${k.from_env ? "disabled title='Set by the environment'" : ""}>
           <div class="su-help">${esc(k.help)}${k.secret && k.set ? ` <a href="#" data-rm="${k.name}">Remove</a>` : ""}</div></div></div>`).join("")}</div>`).join("")}
-      <div class="su-acts"><button id="suSave" class="primary">Save</button><span id="suMsg" class="su-help"></span></div></div>`;
+      <div class="su-foot"><span id="suMsg" class="su-help" role="status" aria-live="polite"></span><button id="suClose">${S.ready ? "Done" : "Later"}</button><button id="suSave" class="primary">Save</button></div></div>`;
     const $ = id => document.getElementById(id);
     if (window.teamCard) window.teamCard($("suTeam")); else $("suTeam").remove();
     $("suClose").onclick = close;
     $("suSave").onclick = async () => {
       const values = {}; page.querySelectorAll("input[data-k]").forEach(i => { if (!i.disabled) values[i.dataset.k] = i.value });
-      try { S = await call("/api/setup/save", {values}); draw(); document.getElementById("suMsg").textContent = "Saved. Refresh data to load with the new keys." } catch(e) { $("suMsg").textContent = e.message }
+      try { S = await call("/api/setup/save", {values}); draw(); document.getElementById("suMsg").textContent = "Saved. Refresh data to load with the new keys."; document.getElementById("suSave").focus() } catch(e) { $("suMsg").textContent = e.message }
     };
     page.querySelectorAll("[data-rm]").forEach(a => a.onclick = async e => { e.preventDefault(); if (!confirm("Remove this key from the Keychain?")) return;
       try { S = await call("/api/setup/save", {values:{[a.dataset.rm]: null}}); draw() } catch(err) { alert(err.message) } });
@@ -103,8 +105,29 @@ window.studioFmt = window.studioFmt || (() => {
       catch(e) { $("suGMsg").textContent = e.message } };
     if ($("suGoogleOut")) $("suGoogleOut").onclick = async () => { if (!confirm("Sign Marketing Studio out of Google?")) return; S = await call("/api/setup/google/sign_out", {}); draw() };
   }
-  async function open(){ try { S = await call("/api/setup") } catch(e) { return alert(e.message) } draw(); page.classList.add("on") }
-  function close(){ page.classList.remove("on"); clearInterval(poll) }
+  // U9: a real dialog. The app behind it is inert (no focus, no clicks), focus moves to the title and comes back on close.
+  let back = null;
+  const behind = on => { const app = document.querySelector(".app"); if (app) { app.inert = on; on ? app.setAttribute("aria-hidden", "true") : app.removeAttribute("aria-hidden") } };
+  async function open(){
+    try { S = await call("/api/setup") } catch(e) { return alert(e.message) }
+    if (!page.classList.contains("on")) back = document.activeElement;
+    draw(); page.classList.add("on"); behind(true);
+    const t = document.getElementById("suTitle"); if (t) t.focus();
+  }
+  function close(){
+    page.classList.remove("on"); clearInterval(poll); behind(false);
+    const to = back && document.contains(back) && back !== document.body ? back : document.getElementById("setupBtn");
+    back = null; if (to && to.focus) to.focus();
+  }
+  // Tab stays inside Setup: from the last control back to the first and the other way round
+  page.addEventListener("keydown", e => {
+    if (e.key !== "Tab" || !page.classList.contains("on")) return;
+    const f = [...page.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex='-1'])")].filter(x => !x.disabled && x.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1], a = document.activeElement;
+    if (e.shiftKey && (a === first || !page.contains(a) || a.id === "suTitle")){ e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && a === last){ e.preventDefault(); first.focus() }
+  });
   // Escape closes Setup like a dialog (not while a real <dialog> on top of it is open)
   document.addEventListener("keydown", e => { if (e.key === "Escape" && page.classList.contains("on") && !document.querySelector("dialog[open]")){ e.preventDefault(); close() } });
   window.openSetup = open;

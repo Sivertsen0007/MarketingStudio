@@ -8,6 +8,21 @@
     const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); return j;
   }
   const say = m => (typeof toast === "function" ? toast(m) : alert(m));
+  // U24: the team server's host from an invite link or an address ("team.example.com"), or ""
+  const hostOf = (link, server) => {
+    let srv = server || "";
+    if (!srv && link){ const q = String(link).split("?")[1] || ""; try { srv = new URLSearchParams(q).get("server") || "" } catch(e) {} }
+    try { return srv ? new URL(srv).host : "" } catch(e) { return String(srv).replace(/^[a-z]+:\/\//i, "").split("/")[0] }
+  };
+  // a plain sentence for the user; the technical text goes into the tooltip
+  const plainErr = (msg, host) => {
+    const m = String(msg || ""), at = host ? ` at ${host}` : "";
+    if (/^Can't reach the team server/i.test(m)) return `Can't reach the team server${at}. Check the invite link and your internet connection, or ask your admin.`;
+    if (/busy/i.test(m)) return `The team server${at} is busy. Try again in a moment.`;
+    if (/not JSON|device token/i.test(m)) return `The team server${at} answered something Studio doesn't understand. Check the invite link, or ask your admin.`;
+    return m;
+  };
+  const errHTML = (msg, host) => { const p = plainErr(msg, host); return p === String(msg || "") ? esc(p) : `<span title="${esc(msg)}">${esc(p)}</span>` };
   const css = `
   #teamSync{position:relative;gap:6px} #teamSync.waiting{color:var(--accent);box-shadow:0 0 0 1.5px var(--accent-soft),var(--sh-1)}
   #teamSync .tm-n{display:none;min-width:18px;padding:0 6px;border-radius:var(--r-pill);font-size:11px;font-weight:700;line-height:18px;text-align:center}
@@ -15,7 +30,7 @@
   #teamSync .tm-cf{background:var(--bad);color:var(--ink-text)} #teamSync .tm-n.on{display:inline-block}
   #teamSync.busy{opacity:.6;pointer-events:none}
   #teamDlg{border:0;border-radius:var(--r-xl);padding:0;max-width:860px;width:calc(100% - 32px);background:var(--panel);color:var(--text);box-shadow:var(--sh-dlg)}
-  #teamDlg::backdrop{background:rgba(17,19,24,.35);backdrop-filter:blur(2px)}
+  #teamDlg::backdrop{background:var(--scrim);backdrop-filter:blur(2px)}
   .tm-h{display:flex;align-items:center;gap:10px;padding:20px 24px 12px;font-size:18px;font-weight:600}
   .tm-h button{font-size:13px}
   .tm-h .sp{flex:1} .tm-b{padding:4px 24px 24px;max-height:70vh;overflow:auto}
@@ -27,7 +42,7 @@
   .tm-g pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.5 var(--mono);color:var(--text2);max-height:160px;overflow:auto}
   .tm-acts{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center} .tm-acts textarea{width:100%;min-height:70px;font:12px/1.5 var(--mono)}
   .tm-who{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;margin-right:6px;box-shadow:0 0 0 2px var(--panel),0 0 0 3px var(--line)}
-  .tm-bad{color:var(--bad)}
+  .tm-bad{color:var(--bad-text)}
   @media (max-width:640px){.tm-g{grid-template-columns:1fr}}`;
   document.head.insertAdjacentHTML("beforeend", `<style>${css}</style>`);
   document.body.insertAdjacentHTML("beforeend", `<dialog id="teamDlg" aria-label="Conflicts"></dialog>`);
@@ -129,24 +144,27 @@
         <details><summary class="su-help" style="cursor:pointer">Or enter the server address and invite code</summary>
           <div class="su-row"><label for="tmServer">Team server</label><div><input id="tmServer" placeholder="https://team.example.com"></div></div>
           <div class="su-row"><label for="tmInvite">Invite code</label><div><input id="tmInvite" autocomplete="off"></div></div></details>
-        <div class="su-acts"><button id="tmJoin" class="primary">Join team</button><span id="tmMsg" class="su-help"></span></div>`;
+        <div class="su-acts"><button id="tmJoin">Join team</button><span id="tmMsg" class="su-help"></span></div>`;
       el.querySelector("#tmJoin").onclick = async () => {
-        const msg = el.querySelector("#tmMsg"); msg.textContent = "Joining ...";
+        const msg = el.querySelector("#tmMsg"); msg.textContent = "Joining ..."; msg.removeAttribute("title");
         try {
           T = await call("/api/team/join", {link: el.querySelector("#tmLink").value.trim(), server: el.querySelector("#tmServer").value.trim(),
                                             invite: el.querySelector("#tmInvite").value.trim()});
           window._teamPendingLink = ""; drawButton(); drawCard(el); say(`Joined ${T.team}. Press Sync to get the team's drafts.`);
-        } catch(e) { msg.textContent = e.message }
+        } catch(e) {
+          const host = hostOf(el.querySelector("#tmLink").value.trim(), el.querySelector("#tmServer").value.trim());
+          msg.textContent = plainErr(e.message, host); if (msg.textContent !== e.message) msg.title = e.message;  // details in the tooltip
+        }
       };
       return;
     }
     const me = T.me || {};
     el.innerHTML = `<h3><span class="su-dot ${T.removed ? "" : "ok"}"></span>Team: ${esc(T.team)}</h3>
-      ${T.removed ? `<p class="su-help" style="margin:0 0 8px;color:var(--bad-text, #c8303a)">This Mac was removed from the team. Your drafts are still here. Leave the team to clear it, then join again with a new invite if you need to.</p>` : ""}
-      <p class="su-help" style="margin:0 0 8px"><span class="tm-who" style="background:${/^#[0-9a-fA-F]{6}$/.test(me.colour || "") ? me.colour : "#888888"}"></span><b>${esc(me.name)}</b> (${esc(me.role)}${me.approver ? ", approver" : ""}) on ${esc(T.server)}.
-        Last sync: ${T.last_sync ? esc(window.studioFmt.dateTime(T.last_sync)) : "never"}${T.last_error ? `. <span style="color:var(--bad-text, #c8303a)">${esc(T.last_error)}</span>` : ""}</p>
+      ${T.removed ? `<p class="su-help" style="margin:0 0 8px;color:var(--bad-text)">This Mac was removed from the team. Your drafts are still here. Leave the team to clear it, then join again with a new invite if you need to.</p>` : ""}
+      <p class="su-help" style="margin:0 0 8px"><span class="tm-who" style="background:${/^#[0-9a-fA-F]{6}$/.test(me.colour || "") ? me.colour : "var(--who)"}"></span><b>${esc(me.name)}</b> (${esc(me.role)}${me.approver ? ", approver" : ""}) on ${esc(T.server)}.
+        Last sync: ${T.last_sync ? esc(window.studioFmt.dateTime(T.last_sync)) : "never"}${T.last_error ? `. <span style="color:var(--bad-text)">${errHTML(T.last_error, hostOf("", T.server))}</span>` : ""}</p>
       ${T.can_send === false ? `<p class="su-help" style="margin:0 0 8px">You are a viewer: you receive the team's drafts, but viewers can't send changes.</p>` : ""}
-      ${(T.failed || []).length ? `<div class="su-help" style="margin:0 0 8px;color:var(--bad-text, #c8303a)">Not accepted by the team server (sent again once you edit them):<ul style="margin:4px 0 0 18px;padding:0">
+      ${(T.failed || []).length ? `<div class="su-help" style="margin:0 0 8px;color:var(--bad-text)">Not accepted by the team server (sent again once you edit them):<ul style="margin:4px 0 0 18px;padding:0">
         ${T.failed.map(f => `<li>${esc(f.coll)} ${esc(f.id)}: ${esc(f.reason)}</li>`).join("")}</ul></div>` : ""}
       ${(T.skipped || []).length ? `<details class="su-help" style="margin:0 0 8px"><summary style="cursor:pointer">${T.skipped.length} item(s) from the team could not be used here</summary><ul style="margin:4px 0 0 18px;padding:0">
         ${T.skipped.map(f => `<li>${esc(f.coll)} ${esc(f.id)}: ${esc(f.reason)}</li>`).join("")}</ul></details>` : ""}

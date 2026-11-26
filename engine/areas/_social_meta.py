@@ -149,7 +149,8 @@ def _vals(ins):
 
 def fb_row(x):
     m = _vals(x.get("insights"))
-    clicks = m.get("post_clicks_by_type") or {}
+    has_clicks = isinstance(m.get("post_clicks_by_type"), dict)
+    clicks = m.get("post_clicks_by_type") if has_clicks else {}
     kind = {"added_video": "Video", "added_photos": "Photo", "shared_story": "Link", "mobile_status_update": "Text"}.get(x.get("status_type"), "Post")
     if "/reel/" in (x.get("permalink_url") or ""):
         kind = "Reel"
@@ -158,8 +159,8 @@ def fb_row(x):
     shares = (x.get("shares") or {}).get("count", 0)
     return {"id": x["id"], "channel": "facebook", "when": x.get("created_time", ""), "text": (x.get("message") or "")[:500], "url": x.get("permalink_url", ""),
             "image": x.get("full_picture", ""), "format": kind, "reach": m.get("post_total_media_view_unique"), "views": m.get("post_media_view"),
-            "likes": reactions, "comments": comments, "shares": shares, "saves": None, "link_clicks": clicks.get("link clicks", 0),
-            "clicks": sum(v for v in clicks.values() if isinstance(v, (int, float))), "video_views": m.get("post_video_views"),
+            "likes": reactions, "comments": comments, "shares": shares, "saves": None, "link_clicks": clicks.get("link clicks"),  # C30: None when Meta sent no link clicks (unknown, not 0)
+            "clicks": sum(v for v in clicks.values() if isinstance(v, (int, float))) if has_clicks else None, "video_views": m.get("post_video_views"),
             "engagement": reactions + comments + shares}
 
 

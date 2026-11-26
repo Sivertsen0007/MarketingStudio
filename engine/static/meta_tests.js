@@ -48,7 +48,7 @@
       <b style="font-size:16px;font-weight:600">Tests on Meta</b><span class="hint" style="margin:0">A/B tests and creative tests on the business behind this ad account. New tests and ends go into the draft; Push live sends them.</span>
       <span style="flex:1"></span>
       <button data-t-new="split">New A/B test</button>
-      <button data-t-new="creative">New creative test</button><button data-t-refresh="1">Refresh</button></div>`;
+      <button data-t-new="creative">New creative test</button><button data-t-refresh="1">Refresh tests</button></div>`;
     if (!T.list.length){ el.innerHTML = head + `<div class="empty">No tests on this business yet.</div>`; return }
     let h = head + `<table><thead><tr><th>Test</th><th>Type</th><th>Status</th><th>Start (${esc((T.list[0] || {}).tz || "UTC")})</th><th>End</th><th>Cells</th><th></th></tr></thead><tbody>`;
     for (const r of T.list){

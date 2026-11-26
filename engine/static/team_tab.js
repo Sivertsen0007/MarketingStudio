@@ -66,7 +66,7 @@
       return;
     }
     el.innerHTML = `<div class="tt-root"><div class="tt-head"><div class="ttl"><h1>Team</h1><p>Team: ${esc(TM.st.team || "")}. What everyone changed, who is where, and your mentions.</p></div>
-      <button id="ttRefresh">Refresh</button></div>
+      <button id="ttRefresh">Refresh Team</button></div>
       <div class="toolbar"><select id="ttPerson" title="Show one person's activity"></select><select id="ttArea" title="Show one area"></select></div>
       <div class="tt-body"><section class="tt-feed"><h3>Activity</h3><div id="ttFeed"><div class="tt-empty">Loading ...</div></div></section>
       <aside class="tt-side"><section id="ttWho"></section><section id="ttMent"></section><section id="ttNotify"></section><section id="ttMembers"></section></aside></div></div>`;

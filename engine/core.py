@@ -387,8 +387,8 @@ SNIPPET_HEADERS = ("Amenities", "Brands", "Courses", "Degree programs", "Destina
 AD_EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍]")
 URL_RX = re.compile(r"^https?://[^\s/?#]+\.[^\s/?#]{2,}(?:[/?#]\S*)?$", re.I)
 CAPS_OK = {"PADI", "NAUI", "SSI", "SCUBA", "UK", "USA", "EU"}  # all-caps words that are names, not shouting
-BIG_JUMP = 3
-MAX_MICROS = 2 ** 63 - 1  # Google's micros are int64  # a budget / bid more than this many times the live value is a warning
+BIG_JUMP = 3  # a budget / bid more than this many times the live value is a warning
+MAX_MICROS = 2 ** 63 - 1  # Google's micros are int64
 
 
 def _txt(x):

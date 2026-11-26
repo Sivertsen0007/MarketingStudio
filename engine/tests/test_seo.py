@@ -126,11 +126,40 @@ class SeoRules(unittest.TestCase):  # C5, C6
 
     def test_yoast_variables_are_filled_before_measuring(self):
         post = {"title": "Six facts about sea turtles"}
-        self.assertEqual(chk.expand_vars("%%title%% %%sep%% %%sitename%%", post)[0], "Six facts about sea turtles - Master Liveaboards")
-        self.assertEqual(self.iss("seo_title", "%%title%% %%sep%% %%sitename%%", {"post": post}), [])  # 48 characters once filled
-        out = self.iss("seo_title", "%%title%% %%sep%% %%sitename%%", {"post": {"title": "Turtles"}})
+        self.assertEqual(chk.expand_vars("%%title%% %%sep%% %%sitename%%", post, "Demo Dive Co")[0], "Six facts about sea turtles - Demo Dive Co")
+        self.assertEqual(chk.expand_vars("%%sitename%%", post)[0], "")  # no site name known: empty, never a client's name
+        self.assertEqual(self.iss("seo_title", "%%title%% %%sep%% %%sitename%%", {"post": post, "site_name": "Demo Dive Company"}), [])  # 47 filled
+        out = self.iss("seo_title", "%%title%% %%sep%% %%sitename%%", {"post": {"title": "Turtles"}, "site_name": "Demo"})
         self.assertIn("with its Yoast variables filled in", out[0]["msg"])
         self.assertIn("%%nonsense%%", " ".join(i["msg"] for i in self.iss("seo_title", "Liveaboard diving in Egypt: Red Sea trips %%nonsense%%")))
+
+    def test_site_name_comes_from_wordpress(self):
+        self.assertEqual(seo.site_name(), "")  # the fixture posts carry no og_site_name
+        named = [dict(p, site_name="Demo Dive Co") for p in POSTS]
+        self.assertEqual(seo.site_name(named), "Demo Dive Co")
+        self.assertEqual(wp.parse_post({**RAW[0], "yoast_head_json": {**RAW[0]["yoast_head_json"], "og_site_name": "Demo Dive Co"}})["site_name"], "Demo Dive Co")
+        old = wp.posts
+        wp.posts = lambda force=False: {"at": 0, "authed": False, "posts": named}
+        try:
+            self.assertEqual(seo.get_settings()["yoast_vars"]["sitename"], "Demo Dive Co")
+        finally:
+            wp.posts = old
+
+    def test_wordpress_pages_stop_at_the_first_failure(self):
+        calls, old = [], c.http
+
+        def slow(url, **kw):
+            calls.append(kw.get("timeout"))
+            raise TimeoutError("timed out")
+        c.http = slow
+        try:
+            c.clear_cache("posts_pages")
+            with self.assertRaises(TimeoutError):
+                wp.page_keys(force=True)
+            self.assertEqual(len(calls), 1)
+            self.assertLessEqual(calls[0], 15)
+        finally:
+            c.http = old
 
     def test_focus_keyphrase(self):
         post = {"title": "Six facts about sea turtles", "seo_title": "Six facts about sea turtles", "slug": "sea-turtles-facts",

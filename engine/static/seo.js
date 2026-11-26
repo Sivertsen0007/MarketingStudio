@@ -284,7 +284,7 @@ async function loadCats(){
 }
 const catsNote = () => T.catsErr ? `<span class="hint">${esc(T.cats.length ? T.catsErr : "Categories could not be read: " + T.catsErr)}</span>` : "";
 // ---- post dialog ----
-let dlgWired = false;
+let dlgWired = false, postCancel = null;
 function wide(on){ const d = $("#dlg"); d.classList.toggle("seo-wide", on); if (!dlgWired){ dlgWired = true; d.addEventListener("close", () => d.classList.remove("seo-wide")) } }
 async function openPost(id, startPane){
   wide(true); showDialog("Loading post ...", `<p class="hint">Reading the post and its Search Console queries ...</p>`, []);
@@ -344,9 +344,11 @@ async function openPost(id, startPane){
     if (ask) f.querySelector("button.primary").focus();
   };
   foot(false);
-  const onCancel = e => { if ($("#sp_title") && postChanges(p, init).length){ e.preventDefault(); foot(true) } };
+  // one Esc guard at a time: opening another post while this dialog is open replaces the earlier one
+  if (postCancel) dlg.removeEventListener("cancel", postCancel);
+  const onCancel = postCancel = e => { if ($("#sp_title") && postChanges(p, init).length){ e.preventDefault(); foot(true) } };
   dlg.addEventListener("cancel", onCancel);
-  dlg.addEventListener("close", () => dlg.removeEventListener("cancel", onCancel), {once: true});
+  dlg.addEventListener("close", () => { dlg.removeEventListener("cancel", onCancel); if (postCancel === onCancel) postCancel = null }, {once: true});
   const pane = k => { document.querySelectorAll("#sp_tabs [data-p]").forEach(b => b.classList.toggle("on", b.dataset.p === k)); document.querySelectorAll("#dlgB [data-pane]").forEach(x => x.style.display = x.dataset.pane === k ? "" : "none") };
   $("#sp_tabs").onclick = e => { const b = e.target.closest("[data-p]"); if (b) pane(b.dataset.p) }; pane(startPane || "edit");
   const upd = () => {

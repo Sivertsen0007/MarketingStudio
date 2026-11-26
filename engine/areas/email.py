@@ -592,21 +592,19 @@ class McpAdapter:
         return {**self._with_audience(c, self.audiences()), "stats": st}
 
     def merge_tags(self):
-        """The platform's merge tags (email_list_merge_tags), cached; [] when the server has no such tool or fails."""
+        """The platform's merge tags (email_list_merge_tags, e.g. {note, mergeTags: [{token: "{{first_name}}", label}]}),
+        cached. None when the server has no such tool, fails or answers in a shape Studio can't read: that is not
+        cached, so the next check asks again."""
         def get():
-            try:
-                r = self.call("email.list_merge_tags", timeout=8)
-            except Exception:  # noqa: BLE001 - optional tool
-                return []
-            items = r if isinstance(r, list) else ((r or {}).get("tags") or (r or {}).get("mergeTags") or []) if isinstance(r, dict) else []
-            out = []
-            for x in items:
-                t = x if isinstance(x, str) else (x.get("tag") or x.get("key") or x.get("name") or "") if isinstance(x, dict) else ""
-                t = str(t).strip().strip("{} ")
-                if t and _TAG_NAME.fullmatch(t):
-                    out.append(t)
-            return out
-        return self._cached("merge_tags", get)
+            r = self.call("email.list_merge_tags", timeout=8)
+            tags = parse_merge_tags(r)
+            if tags is None:
+                raise AdapterError("the platform's merge tag list could not be read")
+            return tags
+        try:
+            return self._cached("merge_tags", get)  # a failure raises before anything is written to the cache
+        except Exception:  # noqa: BLE001 - optional tool
+            return None
 
     def overview_numbers(self, fresh=False):
         return self._cached("overview", lambda: {k: v for k, v in (self.call("email.overview") or {}).items() if isinstance(v, (int, float))}, fresh)
@@ -1080,10 +1078,31 @@ MERGE_TAGS = ("first_name", "last_name", "full_name", "name", "email", "company"
               "webview_url", "current_year")
 
 
+def parse_merge_tags(r):
+    """Tag names from a platform's merge tag list: a list of names or of {token|tag|key|name}, or a dict holding one
+    under mergeTags / merge_tags / tags. Tokens lose their braces ("{{first_name}}" -> "first_name"). None = unreadable."""
+    items = r if isinstance(r, list) else next((r[k] for k in ("mergeTags", "merge_tags", "tags") if isinstance(r, dict) and isinstance(r.get(k), list)), None)
+    if items is None:
+        return None
+    out = []
+    for x in items:
+        t = x if isinstance(x, str) else next((x[k] for k in ("token", "tag", "key", "name") if isinstance(x, dict) and x.get(k)), "")
+        t = re.sub(r"^\{+\s*|\s*\}+$", "", str(t).strip())
+        if t and _TAG_NAME.fullmatch(t):
+            out.append(t)
+    return out
+
+
+class KnownTags(set):
+    """The merge tags a check accepts. listed: the platform's own list was read (then an unknown tag is an error;
+    without it, only a warning, because Studio can't know every tag the platform fills in)."""
+    listed = False
+
+
 def known_merge_tags(a=None):
-    """The merge tags a check accepts (lower-case): the built-in list, the EMAIL_MERGE_TAGS setting and the platform's own
-    list when the adapter has one (merge_tags()). Never raises: a platform that can't list them adds nothing."""
-    out = set(MERGE_TAGS)
+    """The built-in list, the EMAIL_MERGE_TAGS setting and the platform's own list when the adapter can give one
+    (merge_tags() -> list, or None when it can't). Never raises."""
+    out = KnownTags(MERGE_TAGS)
     try:
         import appconfig  # noqa: PLC0415
         out |= {t.strip().strip("{} ").lower() for t in re.split(r"[\s,;]+", appconfig.get("EMAIL_MERGE_TAGS") or "") if t.strip("{} ")}
@@ -1092,9 +1111,12 @@ def known_merge_tags(a=None):
     fn = getattr(a, "merge_tags", None)
     if fn:
         try:
-            out |= {str(t).strip().strip("{} ").lower() for t in (fn() or []) if str(t).strip("{} ")}
+            got = fn()
         except Exception:  # noqa: BLE001 - the platform's list is a bonus
-            pass
+            got = None
+        if got is not None:
+            out |= {str(t).strip().strip("{} ").lower() for t in got if str(t).strip("{} ")}
+            out.listed = True
     return out
 
 
@@ -1106,8 +1128,12 @@ _MAILCHIMP = re.compile(r"\*\|\s*[A-Za-z_][\w:]*\s*\|\*")
 
 def merge_tag_problems(c, tags=None):
     """Merge tags in the subject, preview text, HTML and plain text. Unknown or malformed {{tags}} are errors (they reach
-    the inbox as typed); unbalanced braces, {single} braces and Mailchimp-style *|TAGS|* are warnings."""
-    known = known_merge_tags() if tags is None else {t.lower() for t in tags}
+    the inbox as typed) when the platform listed its tags, warnings when it could not; unbalanced braces, {single}
+    braces, {{tag|fallback}} (no platform Studio knows has a fallback syntax: the "|..." is sent as text) and
+    Mailchimp-style *|TAGS|* are warnings. tags: known_merge_tags(adapter), or any set (taken as the full list)."""
+    known = known_merge_tags() if tags is None else tags if isinstance(tags, KnownTags) else KnownTags(t.lower() for t in tags)
+    if tags is not None and not isinstance(tags, KnownTags):
+        known.listed = True
     body = re.sub(r"(?is)<(style|script)[^>]*>.*?</\1>", " ", _no_comments(c.get("html")))
     out, seen = [], set()
 
@@ -1124,9 +1150,16 @@ def merge_tag_problems(c, tags=None):
             name = m.group(1).split("|")[0].strip()  # {{ first_name | fallback }}: the name is before the bar
             if not _TAG_NAME.fullmatch(name):
                 add("error", f"Merge tag {m.group(0)} is not valid ({where}).")
-            elif name.lower() not in known:
-                add("error", f"Unknown merge tag {m.group(0)} ({where}): check the spelling. Known tags: "
-                             + ", ".join(sorted(known)[:12]) + (", ..." if len(known) > 12 else "") + ". Add your own with the EMAIL_MERGE_TAGS setting.")
+                continue
+            if "|" in m.group(1):
+                add("warn", f"{m.group(0)}: {PLATFORM} has no fallback syntax, so the part after | is sent as text. "
+                            f"Use {{{{{name}}}}} and write copy that reads well when it is blank ({where}).")
+            if name.lower() not in known:
+                listed = known.listed
+                add("error" if listed else "warn", f"Unknown merge tag {m.group(0)} ({where}): check the spelling. "
+                    + ("" if listed else f"{PLATFORM} did not list its tags, so this may still be fine. ")
+                    + "Known tags: " + ", ".join(sorted(known)[:12]) + (", ..." if len(known) > 12 else "")
+                    + ". Add your own with the EMAIL_MERGE_TAGS setting.")
         rest = _TAG.sub(" ", text)
         if "{{" in rest or "}}" in rest:
             frag = re.search(r".{0,20}(\{\{|\}\}).{0,20}", rest, re.S).group(0).strip()

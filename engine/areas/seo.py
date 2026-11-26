@@ -67,7 +67,7 @@ def get_settings(q=None):
     sc = g.scopes()
     snippet = snippet_installed()
     return {**s, "writer": "WordPress REST" if s["mode"] == "live" and s["connected"] else "Dry run (records only)",
-            "secrets_file": str(c.SECRETS), "sites": _sites(), "snippet_installed": snippet, "yoast_vars": chk.yoast_vars(),
+            "secrets_file": str(c.SECRETS), "sites": _sites(), "snippet_installed": snippet, "yoast_vars": chk.yoast_vars(site_name=site_name()),
             "scopes": {"search_console_read": "https://www.googleapis.com/auth/webmasters.readonly" in sc or "https://www.googleapis.com/auth/webmasters" in sc,
                        "url_inspection": "https://www.googleapis.com/auth/webmasters.readonly" in sc or "https://www.googleapis.com/auth/webmasters" in sc,
                        "sitemap_submit": "https://www.googleapis.com/auth/webmasters" in sc,
@@ -223,7 +223,7 @@ def get_post(q):
             "map_nodes": [{"id": nid, "title": n["title"], "type": n.get("type"), "queries": n.get("queries", [])}
                           for nid, n in tmap.load()["nodes"].items() if tmap._key(n.get("url")) == tmap._key(p["url"])],
             "errors": errors, "quota_left": g.quota_left(), "sources": {"search_console": sc_ok},
-            "snippet_installed": snippet_installed(all_posts), "yoast_vars": chk.yoast_vars(p)}
+            "snippet_installed": snippet_installed(all_posts), "yoast_vars": chk.yoast_vars(p, site_name(all_posts))}
 
 
 def get_categories(q=None):
@@ -324,7 +324,7 @@ def get_opportunities(q):
     cur = _safe(lambda: g.gsc_pages(s, e), errors, "Search Console pages")
     prev = _safe(lambda: g.gsc_pages(ps, pe), errors, "Search Console (previous period)")
     sc_ok = qp is not None and cur is not None
-    out = opportunities_from(posts_, qp or [], cur or {}, prev or {} if cur is not None else {}, c.read_json("seo_inspect.json", {}), days)
+    out = opportunities_from(posts_, qp or [], cur or {}, (prev or {}) if cur is not None else {}, c.read_json("seo_inspect.json", {}), days)
     if not sc_ok:  # no Search Console: no "few clicks" or "losing" rows (they would be built on zeros)
         out["low_ctr"], out["losing"] = [], []
     if prev is None:
@@ -354,6 +354,17 @@ def _norm(f, v):
 _CTX_KEYS = ("title", "slug", "seo_title", "meta_desc", "focus_kw", "excerpt", "content", "category_names", "noindex", "canonical", "url")
 
 
+def site_name(ps=None):
+    """The site's name as WordPress/Yoast gives it (og_site_name of the posts already read), for %%sitename%%. "" when unknown."""
+    if ps is None:
+        try:
+            ps = wp.posts()["posts"]
+        except Exception:  # noqa: BLE001
+            return ""
+    names = [p.get("site_name") for p in ps or () if p.get("site_name")]
+    return max(set(names), key=names.count) if names else ""
+
+
 def snippet_installed(ps=None):
     """True when Yoast shares its fields over REST (the Studio snippet), False when not, None when unknown (no posts read)."""
     if ps is None:
@@ -372,6 +383,7 @@ def _checker(changes=(), new_posts=()):
     except Exception:  # noqa: BLE001 - no WordPress: only the checks that need nothing else
         ps = []
     snip = snippet_installed(ps) if ps else None
+    site = site_name(ps)
     by_id = {p["id"]: p for p in ps}
     edits = {}
     for x in changes or ():
@@ -382,9 +394,9 @@ def _checker(changes=(), new_posts=()):
 
     def ctx(pid=None, new_post=None):
         if new_post is not None:
-            return {"post": {k: new_post.get(k) for k in _CTX_KEYS}, "snippet": snip, "others": others, "self_id": new_post.get("id"), "new": True}
+            return {"post": {k: new_post.get(k) for k in _CTX_KEYS}, "snippet": snip, "others": others, "self_id": new_post.get("id"), "new": True, "site_name": site}
         p = by_id.get(int(pid)) or {}
-        return {"post": {**{k: p.get(k) for k in _CTX_KEYS}, **edits.get(int(pid), {})}, "snippet": snip, "others": others, "self_id": int(pid)}
+        return {"post": {**{k: p.get(k) for k in _CTX_KEYS}, **edits.get(int(pid), {})}, "snippet": snip, "others": others, "self_id": int(pid), "site_name": site}
     return ctx
 
 

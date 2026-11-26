@@ -14,9 +14,8 @@ from . import _seo_wp as wp
 SEO_TITLE = (30, 60)
 META = (120, 156)  # Yoast's green band; Google cuts a desktop description at about 156-160 characters
 FOCUS_MAX_WORDS = 4
-SITE_NAME = "Master Liveaboards"  # what %%sitename%% fills in (the WordPress site title), for measuring only
-SNIPPET_MSG = ("Yoast fields can't be written yet: install the Studio snippet (wp-snippets/yoast-rest-fields.php, see the README), "
-               "or remove this change.")
+SNIPPET_MSG = ("Yoast fields can't be written yet: install the Studio snippet (wp-snippets/yoast-rest-fields.php, see the README) "
+               "and then Refresh WordPress, or remove this change.")
 LINK_TTL = 3600
 _link_cache = {}
 
@@ -43,10 +42,11 @@ def text_rules(field, text):
 
 
 def yoast_vars(post=None, site_name=None):
-    """What Yoast puts in place of the %%variables%% Studio knows, for measuring a title or description."""
+    """What Yoast puts in place of the %%variables%% Studio knows, for measuring a title or description. site_name is
+    the WordPress site's name as Yoast reports it (seo.site_name()); unknown = empty."""
     post = post or {}
     cats = post.get("category_names") or []
-    return {"title": str(post.get("title") or ""), "sitename": site_name or SITE_NAME, "sep": "-", "page": "",
+    return {"title": str(post.get("title") or ""), "sitename": site_name or "", "sep": "-", "page": "",
             "primary_category": cats[0] if cats else "", "category": ", ".join(cats), "excerpt": wp.text_of(post.get("excerpt") or "")[:155],
             "currentyear": str(time.localtime().tm_year), "currentmonth": time.strftime("%B"), "currentday": str(time.localtime().tm_mday)}
 

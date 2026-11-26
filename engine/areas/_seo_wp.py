@@ -116,7 +116,7 @@ def parse_post(p):
         "excerpt": html.unescape(excerpt) if excerpt is not None else text_of((p.get("excerpt") or {}).get("rendered", "")),
         "categories": list(p.get("categories") or []), "category_names": [cats.get(i, str(i)) for i in p.get("categories") or []],
         "image": img, "image_alt": fm.get("alt_text", ""), "noindex": robots.get("index") == "noindex",
-        "canonical": yj.get("canonical", ""), "content": content, "content_base": "raw" if (p.get("content") or {}).get("raw") else "rendered",
+        "canonical": yj.get("canonical", ""), "site_name": yj.get("og_site_name") or "", "content": content, "content_base": "raw" if (p.get("content") or {}).get("raw") else "rendered",
         "rendered": rendered,
     }
 
@@ -182,9 +182,12 @@ def page_keys(force=False):
     """URL keys of the site's published WordPress pages (not posts): a topical-map node pointing at one is live.
     Public REST, cached with the posts (Refresh WordPress clears both)."""
     def load():
-        out, page, pages = [], 1, 1
+        out, page, pages, end = [], 1, 1, time.time() + 30  # at most 30 s in all: the map must not wait minutes
         while page <= pages and page <= 20:
-            st, hdrs, body = c.http(f"{c.SITES['prod']}/wp-json/wp/v2/pages?per_page=100&page={page}&_fields=link", timeout=60)
+            left = end - time.time()
+            if left <= 1:
+                raise RuntimeError("WordPress pages: no full answer within 30 seconds")
+            st, hdrs, body = c.http(f"{c.SITES['prod']}/wp-json/wp/v2/pages?per_page=100&page={page}&_fields=link", timeout=min(15, left))
             if st != 200 or not isinstance(body, list):
                 raise RuntimeError(f"WordPress REST answered {st} for pages")
             out += [c.url_key(p.get("link", "")) for p in body if isinstance(p, dict)]

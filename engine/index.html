@@ -684,7 +684,26 @@ function moneyCell(c, v){
   return [esc(curFmt(toDisp(v), dc)), `${money(v)} ${cur} (account currency). Converted to ${dc} at today's rate: ${fxWhen()}`];
 }
 // Edit-panel money input label + a live "≈" hint (the input itself is always the native amount)
-const curLabel = label => acctCur() ? `${label} (${acctCur()}, account currency)` : label;
+const curLabel = label => { const c = acctCur() || (isMeta() && S.mcfg && S.mcfg.currency) || ""; return c ? `${label} (${c}, account currency)` : label };
+// ---- Meta rules from the engine (state.meta_config): one list of CTAs, budget step and minimum, copy limits ----
+const MC = () => (isMeta() && S.mcfg) || {};
+const CTA_FALLBACK = ["LEARN_MORE", "BOOK_NOW", "BOOK_TRAVEL", "SHOP_NOW", "SIGN_UP", "CONTACT_US", "GET_OFFER", "SEE_MORE", "DOWNLOAD", "APPLY_NOW", "SUBSCRIBE"];
+const ctaLabel = v => (((MC().ctas || []).find(c => c.value === v) || {}).label) || String(v || "").toLowerCase().replace(/_/g, " ").replace(/^./, x => x.toUpperCase());
+// [[value, label]] for a CTA select; a current value Studio doesn't list stays in (shown as is)
+const ctaOpts = (...cur) => { const list = (MC().ctas || []).length ? MC().ctas.map(c => c.value) : CTA_FALLBACK;
+  return [...new Set([...cur.filter(Boolean), ...list])].map(v => [v, ctaLabel(v)]) };
+const mLim = k => +((MC().copy_limits || {})[k] || 0);
+const mStep = () => MC().decimals === 0 ? "1" : "0.01";
+const mMin = () => MC().min_daily_budget != null ? MC().min_daily_budget : 1;
+// links in Meta ads: http(s) with a website address, no spaces (the engine refuses the rest too) -> problem text or ""
+function linkProblem(u, what = "Website URL"){
+  if (!u) return "";
+  if (/\s/.test(u)) return `${what}: no spaces in a link`;
+  let x; try { x = new URL(u) } catch(e) { return `${what}: not a link (start with https://)` }
+  if (!/^https?:$/.test(x.protocol)) return `${what}: only http:// or https:// links`;
+  if (!x.hostname || !x.hostname.includes(".")) return `${what}: needs a website address, e.g. https://example.com/page`;
+  return "";
+}
 const fxHint = id => dispCur() ? `<div class="hint fxlive" data-fx="${id}" style="margin:3px 0 0"></div>` : "";
 function wireFx(){ document.querySelectorAll("[data-fx]").forEach(h => { const i = document.getElementById(h.dataset.fx); if (!i) return;
   const f = () => { h.textContent = i.value === "" ? "" : `≈ ${curFmt(toDisp(i.value), S.disp)} (display only, at ${fxWhen()})` }; i.addEventListener("input", f); f() }) }
@@ -758,10 +777,10 @@ const META_VIEWS = {
   adsets:{label:"Ad sets", cols:[MST, CA, AS, DL, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money",when:r => r.budget != null},
     {key:"optimisation",label:"Optimisation"}, {key:"countries",label:"Countries"}, {key:"locations",label:"Locations",hide:1}, {key:"age",label:"Age"}, {key:"audiences",label:"Audiences"},
     {key:"excluded",label:"Excluded"}, {key:"end",label:"End",fmt:DATEF}, {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money,hide:1},
-    ...STATS, UPD, IDC], bulk:1, open:r => adsetDialog(r)},
+    ...STATS, UPD, IDC], bulk:1},
   ads:{label:"Ads", cols:[MST, THUMB, {key:"ad",label:"Ad"}, CA, AS, DL, {key:"format",label:"Format"}, {key:"headline",label:"Headline"},
     {key:"primary_text",label:"Primary text"}, {key:"description",label:"Description",hide:1}, {key:"link",label:"Link"}, {key:"cta",label:"CTA"},
-    ...STATS, {key:"creative_id",label:"Creative ID",hide:1}, UPD, IDC], bulk:1, open:r => metaAdDialog(r)},
+    ...STATS, {key:"creative_id",label:"Creative ID",hide:1}, UPD, IDC], bulk:1},
   audiences:{label:"Audiences", cols:[], ro:1, custom:"Audiences"}, // [audiences] static/audiences.js draws this tab
   leadforms:{label:"Lead forms", cols:[{key:"lead_form",label:"Lead form"}, {key:"status",label:"Status"}, {key:"leads",label:"Leads",num:1}, {key:"created",label:"Created"}, IDC], ro:1},
   tests:{label:"Tests", cols:[], ro:1, custom:1}, // [meta tests] static/meta_tests.js draws this tab
@@ -949,12 +968,15 @@ function renderPills(){
   $("#fpills").innerHTML = fs.map(([k, l]) => `<button data-f="${k}" class="${k === S.filter ? "on" : ""}" title="${k === "live" ? "Actually delivering: the ad, its ad set and its campaign are all on" : ""}">${l}${k !== "all" ? `<span class="n">${S.rows.filter(r => { const o = S.filter; S.filter = k; const p = passFilter(r); S.filter = o; return p }).length}</span>` : ""}</button>`).join("");
 }
 $("#fpills").onclick = e => { const b = e.target.closest("[data-f]"); if (!b) return; const was = S.filter; S.filter = b.dataset.f; localSet("filter", S.filter);
-  if ((was === "removed") !== (S.filter === "removed")){ loadTree(); loadGrid() } else { renderPills(); renderGrid() } };
+  if ((was === "removed") !== (S.filter === "removed")){ loadTree(); loadGrid() } else { renderPills(); renderGrid();
+    if (S.unsel) toast(`${numGB(S.unsel)} selected row${S.unsel === 1 ? " is" : "s are"} hidden by this filter: unselected`) } };
 function renderGrid(){
   if (V()[S.kind] && V()[S.kind].custom){ $("#fpills").innerHTML = ""; const cu = V()[S.kind].custom; const R = typeof cu === "string" ? window[cu] : (S.kind === "videos" && !isMeta() ? window.Videos : window.MetaTests); // [meta tests] [videos] [audiences]
     return R ? R.render($("#grid")) : ($("#grid").innerHTML = `<div class="empty">Loading ...</div>`) }
   const v = V()[S.kind];
   let cols = colsFor(), rows = S.rows.filter(passFilter);
+  // a selection never hides behind the filter pill: rows the filter hides are unselected (bulk acts only on rows you can see)
+  { const ok = new Set(rows.filter(selectable).map(rowKey)); S.unsel = 0; for (const k of [...S.sel]) if (!ok.has(k)){ S.sel.delete(k); S.unsel++ } }
   // U8: on Google tabs the column that names the row comes first (after Status) and stays in view; the saved order is unchanged
   const nk = !isMeta() && NAME_COL[S.kind], nTo = cols[0] && cols[0].key === "status" ? 1 : 0, nFrom = nk ? cols.findIndex(c => c.key === nk) : -1;
   if (nFrom > nTo){ cols = [...cols]; cols.splice(nTo, 0, cols.splice(nFrom, 1)[0]) }
@@ -1074,6 +1096,12 @@ $("#grid").ondblclick = e => {
   const tr = e.target.closest("tr[data-i]"); if (!tr || e.target.closest("td.edit, td.st-edit")) return;
   const r = S.rows[+tr.dataset.i], v = V()[S.kind];
   if (isTrial(r)) return toast(EXP_MSG);
+  if (isMeta()){  // M7: one way to edit on Meta: double-click opens the row in the Edit panel (no separate dialog)
+    focusRow(r); sideShow(true);
+    const f = document.querySelector("#editBody input:not([type=hidden]):not(:disabled), #editBody textarea:not(:disabled), #editBody select:not(#pvPlace):not(:disabled)");
+    if (f) f.focus();
+    return;
+  }
   if (v.open && !r._new) v.open(r);
 };
 // ---- status menu: click the status pill, pick the new status ----
@@ -1158,14 +1186,15 @@ function startEdit(td){
   if (col.edit.startsWith("status") || col.edit === "mstatus"){
     const opts = col.edit === "mstatus" ? ["Active", "Paused"] : col.edit === "status3" ? ["Enabled", "Paused"] : ["Enabled", "Paused", "Removed"];
     td.innerHTML = `<select>${opts.map(o => `<option ${o === cur ? "selected" : ""}>${o}</option>`).join("")}</select>`;
-  } else td.innerHTML = `<input type="number" step="0.01" min="0" value="${cur ?? ""}" title="${esc(acctCur() ? acctCur() + ", account currency: typed, saved and pushed as is" : "Account currency")}" placeholder="${esc(acctCur())}">`;
+  } else td.innerHTML = `<input type="number" step="${isMeta() ? mStep() : "0.01"}" min="${isMeta() ? mMin() : 0}" value="${cur ?? ""}" title="${esc(acctCur() ? acctCur() + ", account currency: typed, saved and pushed as is" : "Account currency")}" placeholder="${esc(acctCur())}">`;
   const inp = td.firstChild; inp.focus();
   let done = false;
   const finish = async save => {
     if (done) return; done = true;
     const nv = inp.value;
     if (!save || nv === "" || String(nv) === String(cur)) return renderGrid();
-    try { await addChanges([changeFor(r, col.key, nv, kind)], "") } catch(err) { toast(err.message); renderGrid() }
+    renderGrid();  // the input goes first: the draft poll only reloads the grid when no cell is being edited
+    try { await addChanges([changeFor(r, col.key, nv, kind)], "") } catch(err) { toast(err.message) }
   };
   inp.onkeydown = e => { if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false) };
   inp.onblur = () => finish(true);
@@ -1226,11 +1255,76 @@ document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
 });
 
 // ---- draft panel ----
+// M7 (one way to edit): the fields a Meta change sets on its object, e.g. "adset:123:status". A new change for a field
+// that is already in the draft replaces that draft item (its other fields are kept in the new change) instead of a duplicate.
+// Carousel copy: one item per ad, its cards merged per card. Never replaced: list additions (audiences in / out add up, they are unioned when items merge), a status change that ends
+// a test (with_end, from Tests: it stays next to a plain status change), and new objects.
+const MBASE = ["type", "level", "id"], MLIST = ["audiences_add", "audiences_remove", "excluded_add", "excluded_remove"];
+function mFieldKeys(c, fieldsOnly){
+  const t = c.type || "";
+  if (!t.startsWith("meta_") || /^meta_new_/.test(t) || !c.level || c.id == null || (t === "meta_status" && c.with_end)) return [];
+  const simple = {meta_status:"status", meta_rename:"name", meta_end:"end", meta_placements:"placements"};
+  const g = simple[t] ? [simple[t]] : t === "meta_budget" ? [c.lifetime ? "lifetime_budget" : "budget"]
+    : Object.keys(c).filter(k => !MBASE.includes(k) && !MLIST.includes(k)).flatMap(k =>
+        t === "meta_targeting" ? [k === "countries_clear" ? "countries" : /^age_(min|max)$/.test(k) ? "age" : k]
+        : k === "cards" ? (Array.isArray(c.cards) ? c.cards : []).map(x => `${t}.card${x.index}`)  // carousel: one field per card
+        : [t + "." + k]);
+  // carousel copy: one item per ad (two would each make a new creative); cards merge per card, so none is lost
+  if (t === "meta_carousel_copy" && !fieldsOnly) g.push(t);
+  return [...new Set(g)].map(f => `${c.level}:${c.id}:${f}`);
+}
+const keyOf = (oc, k, v) => mFieldKeys({type:oc.type, level:oc.level, id:oc.id, [k]:v}, true);
+function metaReplace(changes){
+  const items = S.draftItems || [], drop = new Map(), out = [];
+  for (const c of changes){
+    const mine = new Set(mFieldKeys(c)); if (!mine.size){ out.push(c); continue }
+    const merged = {...c};
+    for (const it of items){
+      const oc = it.change || {}, theirs = mFieldKeys(oc); if (!theirs.some(k => mine.has(k))) continue;
+      drop.set(it.id, it);
+      // the earlier item's other fields (same kind of change, other fields) stay, in the new change
+      if (oc.type !== c.type || ["meta_status", "meta_budget", "meta_rename", "meta_end", "meta_placements"].includes(c.type)) continue;
+      for (const [k, v] of Object.entries(oc)){
+        if (MBASE.includes(k)) continue;
+        if (MLIST.includes(k)){ merged[k] = [...new Set([...(merged[k] || []), ...(v || [])])]; continue }  // audiences add up
+        if (k === "cards"){ const have = new Set((merged.cards || []).map(x => x.index)); merged.cards = [...(merged.cards || []), ...(v || []).filter(x => !have.has(x.index))]; continue }
+        if (!(k in merged) && !keyOf(oc, k, v).some(x => mine.has(x))) merged[k] = v;
+      }
+    }
+    out.push(merged);
+  }
+  return {changes:out, dropped:[...drop.values()]};
+}
+const whoseChange = by => !by || by === "you" ? "the" : by === "claude" ? "Claude's" : `${by}'s`;
+const itemWords = i => String(i.summary || "").replace(/^Meta /, "").replace(/\badset\b/g, "ad set").replace(/\badsets\b/g, "ad sets");
 async function addChanges(changes, note, extra){
-  const items = await api("/api/draft/add", {changes, note, by:"you"});
+  let replaced = [];
+  if (isMeta()){
+    const r = metaReplace(changes); changes = r.changes; replaced = r.dropped;
+    // the note of a replaced change carries over when this one has none
+    if (!note && replaced.length) note = [...new Set(replaced.map(i => i.note).filter(Boolean))].join("; ");
+    if (replaced.length) await api("/api/draft/remove", {ids:replaced.map(i => i.id)});
+  }
+  let items;
+  try { items = await api("/api/draft/add", {changes, note, by:"you"}) }
+  catch(e){  // put the replaced items back as they were: their own author and note
+    if (replaced.length){
+      const groups = {};
+      for (const i of replaced){ const k = JSON.stringify([i.by || "you", i.note || ""]); (groups[k] = groups[k] || []).push(i.change) }
+      for (const [k, ch] of Object.entries(groups)){ const [by, n] = JSON.parse(k); try { await api("/api/draft/add", {changes:ch, note:n, by}) } catch(e2) {} }
+      poll(true);
+    }
+    throw e;
+  }
   const bad = items.filter(i => i.problems.length);
   const msg = bad.length ? `Added ${items.length} change${items.length === 1 ? "" : "s"}, but ${bad.length} need${bad.length === 1 ? "s" : ""} fixing` : `Added ${items.length} change${items.length === 1 ? "" : "s"} to the draft`;
-  toast(extra ? `${msg}; ${extra}` : msg);
+  let rep = "";
+  if (replaced.length){
+    const by = {}; replaced.forEach(i => (by[i.by || "you"] = by[i.by || "you"] || []).push(i));
+    rep = "Replaced " + Object.entries(by).map(([w, list]) => `${whoseChange(w)} earlier change${list.length === 1 ? "" : "s"} to ${list.slice(0, 2).map(itemWords).join("; ")}${list.length > 2 ? ` and ${list.length - 2} more` : ""}`).join("; ");
+  }
+  const head = rep ? rep + (bad.length ? ` (${bad.length} need${bad.length === 1 ? "s" : ""} fixing)` : "") : msg;
+  toast(extra ? `${head}; ${extra}` : head);
   await poll(true);
   return items;
 }
@@ -1480,7 +1574,9 @@ async function resumeJobs(){  // after a reload: show a preview or push that is 
 // ---- push preview: ticking "new as Active / Enabled" only rewords the rows and the spend tick; the push re-checks live anyway ----
 const ACTIVE_SPEND = /is created Active and starts delivering/;
 const metaNewAd = l => /^new (carousel )?ad "/.test(l);
-const newOn = meta => meta ? LIVE.meta_new : LIVE.enable_new;
+// M17: the Meta tick only matters (and only shows) when the draft makes new ads
+const draftNewAds = () => (S.draftItems || []).some(i => ((i.change || {}).type || "") === "meta_new_ad");
+const newOn = meta => meta ? LIVE.meta_new && draftNewAds() : LIVE.enable_new;
 function newWord(l, meta){
   if (meta) return metaNewAd(l) ? l.replace(newOn(true) ? "(Paused)" : "(Active)", newOn(true) ? "(Active)" : "(Paused)") : l;
   return /^new (ad group|keyword|RSA)\b/.test(l) ? l.replace(/\b(PAUSED|ENABLED)\)/, (newOn(false) ? "ENABLED" : "PAUSED") + ")") : l;
@@ -1526,7 +1622,7 @@ function renderPreview(p, acct){
   const body = `<table class="tally">${counts.map(([l, n]) => `<tr><td>${esc(l)}</td><td>${n}</td></tr>`).join("")}</table>
     ${p.connection ? `<div class="prob">${esc(p.connection)}</div>` : ""}
     ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then fix ${bad.length > 1 ? "them" : "it"} or remove ${bad.length > 1 ? "them" : "it"} from the draft (Draft tab).</div>` : ""}
-    ${meta ? `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.meta_new ? "checked" : ""}> <span>Create new ads as <b>Active</b> (they deliver once Meta approves them; new campaigns and ad sets stay Paused)</span></label>`
+    ${meta ? (draftNewAds() ? `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.meta_new ? "checked" : ""}> <span>Create new ads as <b>Active</b> (they deliver once Meta approves them; new campaigns and ad sets stay Paused)</span></label>` : "")
       : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused). Changing this checks the draft with Google again.</span></label>`}
     <div id="lv_spendBox">${spendTick(false)}</div>
     ${p.permanent ? `<label class="tick"><input type="checkbox" id="lv_perm"> <span>${nPerm} change${nPerm > 1 ? "s are" : " is"} permanent (${isMeta() ? "permanent changes" : "removals"}). I know.</span></label>` : ""}
@@ -1538,7 +1634,7 @@ function renderPreview(p, acct){
   const wireSpend = () => { if ($("#lv_spend")) $("#lv_spend").onchange = upd };
   wireSpend(); if ($("#lv_perm")) $("#lv_perm").onchange = upd; upd();
   if (TR) TR.wire($("#dlgB"), livePreview, upd);
-  $("#lv_new").onchange = e => {
+  if ($("#lv_new")) $("#lv_new").onchange = e => {
     // G17: Google checks the draft again with the new status (new rows' status, spend and Google's own answer can change)
     if (!meta){ LIVE.enable_new = e.target.checked; btn.disabled = true; return livePreview() }
     LIVE.meta_new = e.target.checked; try { localStorage.setItem("studio.metaNewActive", e.target.checked ? "1" : "0") } catch(err) {}
@@ -1689,6 +1785,7 @@ async function poll(force){
   const g = st.google || {};
   $("#pend").style.display = isMeta() ? "none" : "";
   if (isMeta()){
+    if (st.meta_config) S.mcfg = st.meta_config;  // CTAs, currency, minimum budget, copy limits, age rules (meta_ads.config)
     $("#fresh").textContent = st.refreshing ? "Meta: refreshing ..." : "Meta data " + gbDT(st.last_download);
     $("#fresh").className = "chip";
     $("#fresh").title = "Pulled from the Meta API and kept until you refresh (Refresh data, or Push live / Undo for this account)";
@@ -1921,64 +2018,22 @@ function sitelinkDialog(r, isNew){
 }
 
 // ---- Meta dialogs ----
-const CTAS = ["LEARN_MORE", "BOOK_TRAVEL", "SHOP_NOW", "SIGN_UP", "CONTACT_US", "GET_OFFER", "SEE_MORE", "DOWNLOAD", "APPLY_NOW", "SUBSCRIBE"];
-const ctaSel = cur => `<select id="f_cta">${[...new Set([cur, ...CTAS].filter(Boolean))].map(c => `<option ${c === cur ? "selected" : ""}>${c}</option>`).join("")}</select>`;
+// Call to action buttons from the engine (meta_config.ctas): the label is shown, the value is sent
+const ctaSel = cur => `<select id="f_cta">${ctaOpts(cur).map(([v, l]) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
 function copyFields(r){
-  return `<div class="row"><label>Primary text</label><textarea id="f_pt" rows="6">${esc(r.primary_text)}</textarea></div>
+  return `<div class="row"><label>Primary text</label><span><textarea id="f_pt" rows="6">${esc(r.primary_text)}</textarea> <span class="cnt"></span></span></div>
     <div class="row"><label>Headline</label><span><input id="f_hl" value="${esc(r.headline)}" style="width:85%"> <span class="cnt"></span></span></div>
-    <div class="row"><label>Description</label><input id="f_ds" value="${esc(r.description)}"></div>
+    <div class="row"><label>Description</label><span><input id="f_ds" value="${esc(r.description)}" style="width:85%"> <span class="cnt"></span></span></div>
     <div class="row"><label>Link</label><input id="f_ln" value="${esc(r.link)}"></div>
     <div class="row"><label>Button</label>${ctaSel(r.cta)}</div>`;
 }
-function metaAdDialog(r){
-  const thumb = r.thumbnail ? `<img src="${esc(r.thumbnail)}" style="max-height:90px;border-radius:6px;float:right;margin-left:10px" alt="">` : "";
-  const ro = !r.editable;
-  showDialog("Meta ad · " + r.ad, `${thumb}<p class="hint">${esc(r.campaign)} / ${esc(r.ad_set)} · ${esc(r.format)} · ${esc(r.delivery)}</p>
-    ${ro ? `<div class="warnl" style="clear:both">${esc(r.why_not)}. You can still rename it or change its status.</div>` :
-      `<p class="hint" style="clear:both">Saving makes a new creative with this copy (same image/video) and points the ad at it. The ad goes back to Meta review; undo points it back.</p>`}
-    <div class="row"><label>Ad name</label><input id="f_name" value="${esc(r.ad)}"></div>
-    ${copyFields(r)}${noteRow}`,
-    [["Save to draft", () => {
-      const ch = [], n = val("f_name");
-      if (n !== r.ad) ch.push({type:"meta_rename", level:"ad", id:r.id, new_name:n});
-      if (!ro){
-        const c = {type:"meta_copy", level:"ad", id:r.id};
-        const pt = $("#f_pt").value.trim();
-        if (pt !== (r.primary_text || "").trim()) c.primary_text = pt;
-        if (val("f_hl") !== r.headline) c.headline = val("f_hl");
-        if (val("f_ds") !== r.description) c.description = val("f_ds");
-        if (val("f_ln") !== r.link) c.link = val("f_ln");
-        if (val("f_cta") !== r.cta) c.cta = val("f_cta");
-        if (Object.keys(c).length > 3) ch.push(c);
-      }
-      ch.length ? submit(ch, val("f_note")) : dlg.close();
-    }, "primary"]]);
-  if (ro) ["f_pt", "f_hl", "f_ds", "f_ln", "f_cta"].forEach(id => $("#" + id).disabled = true);
-  counter($("#f_hl"), 40);
-}
-function adsetDialog(r){
-  const [amin, amax] = ageParts(r.age);
-  showDialog("Meta ad set · " + r.ad_set, `<p class="hint">${esc(r.campaign)} · ${esc(r.delivery)} · ${esc(r.optimisation)}</p>
-    <div class="row"><label>Ad set name</label><input id="f_name" value="${esc(r.ad_set)}"></div>
-    <div class="row"><label>Countries</label>${GeoPicker.field("f_ctry", (r.geo || {}).countries || [], {geo:r.geo, title:"Countries for " + r.ad_set})}</div>
-    <div class="row"><label>Age</label><span><input id="f_amin" type="number" min="18" max="65" value="${esc(amin)}" style="width:80px"> to <input id="f_amax" type="number" min="18" max="65" value="${esc(amax)}" style="width:80px"></span></div>
-    <div class="row"><label>End date</label><input id="f_end" type="date" value="${esc(r.end)}"></div>
-    <p class="hint">Audiences: ${esc(r.audiences || "none")} · Excluded: ${esc(r.excluded || "none")}${r.advantage_audience ? " · Advantage+ audience on" : ""}</p>${noteRow}`,
-    [["Save to draft", () => {
-      const ch = [];
-      if (val("f_name") !== r.ad_set) ch.push({type:"meta_rename", level:"adset", id:r.id, new_name:val("f_name")});
-      const ctry = GeoPicker.read("f_ctry"), t = {type:"meta_targeting", level:"adset", id:r.id};
-      if (ctry.join(",") !== ((r.geo || {}).countries || []).join(",")){
-        const bad = GeoPicker.problems(ctry, r.geo); if (bad.length) return toast(bad[0]);
-        t.countries = ctry; if (!ctry.length) t.countries_clear = true;  // no countries: only regions / cities stay
-      }
-      if (val("f_amin") !== amin) t.age_min = +val("f_amin");
-      if (val("f_amax") !== amax) t.age_max = +val("f_amax");
-      if (Object.keys(t).length > 3) ch.push(t);
-      if (val("f_end") !== r.end) ch.push({type:"meta_end", level:"adset", id:r.id, end_date:val("f_end") || null});
-      ch.length ? submit(ch, val("f_note")) : dlg.close();
-    }, "primary"]]);
-  GeoPicker.wire("f_ctry");
+// copy counters on the Meta copy fields (characters before Meta cuts the text: a warning, never a block)
+function copyCounters(){
+  for (const [id, k, d] of [["f_pt", "primary_text", 125], ["f_hl", "headline", 40], ["f_ds", "description", 30]]){
+    const i = document.getElementById(id), c = i && i.parentElement.querySelector(".cnt"), max = mLim(k) || d; if (!c) continue;
+    const f = () => { c.textContent = i.value.length + "/" + max; c.classList.toggle("over", i.value.length > max); c.title = i.value.length > max ? "Meta cuts longer text with \"... See more\"" : "" };
+    i.addEventListener("input", f); f();
+  }
 }
 const META_OBJ = [["traffic", "Traffic"], ["awareness", "Awareness"], ["engagement", "Engagement"], ["leads", "Leads"], ["sales", "Sales"]];
 // objective -> optimisation goals Studio allows (first = the default), as in meta_ads.GOALS
@@ -1994,7 +2049,7 @@ const META_ADD = {
     showDialog("New Meta campaign", `<p class="hint">New campaigns are created <b>Paused</b>, with lowest-cost bidding. Nothing changes on Meta until you push live.</p>
       <div class="row"><label>Name</label><input id="f_name"></div>
       <div class="row"><label>Objective</label><select id="f_obj">${META_OBJ.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
-      <div class="row"><label>${esc(curLabel("Campaign budget/day"))}</label><input id="f_budget" type="number" step="0.01" min="1" placeholder="optional: blank = budgets on the ad sets"></div>
+      <div class="row"><label>${esc(curLabel("Campaign budget/day"))}</label><input id="f_budget" type="number" step="${mStep()}" min="${mMin()}" placeholder="optional: blank = budgets on the ad sets"></div>
       <p class="hint">A campaign budget (CBO) lets Meta share it across the ad sets. Leave it blank to set a budget on each ad set.</p>
       <div class="row"><label>Special ad categories</label><span>${META_SPECIAL.map(([v, l]) => `<label class="tick" style="margin:2px 0"><input type="checkbox" data-sac="${v}"> ${l}</label>`).join("")}</span></div>
       <p class="hint">Job ads need Employment. Leave all unticked for normal travel ads.</p>${noteRow}`,
@@ -2009,16 +2064,18 @@ const META_ADD = {
     const camps = await api("/api/grid?" + qs({acct:S.acct, kind:"campaigns", status:"all"}));
     const camp = camps.find(c => String(c.id) === S.camp);
     if (!camp) return toast("Couldn't find that campaign: refresh and try again");
-    const cbo = camp.budget_level === "Campaign (CBO)", goals = META_GOALS[camp.objective] || [];
+    // M14: Studio can't attach a lead form, so a new ad set never optimises for lead generation here (make those in Ads Manager)
+    const cbo = /^Campaign \(CBO/.test(camp.budget_level || ""), allGoals = META_GOALS[camp.objective] || [], goals = allGoals.filter(g => g !== "LEAD_GENERATION");
     const iso = d => d.toISOString().slice(0, 10);
     showDialog("New ad set in " + sc.campaign, `<p class="hint">New ad sets are created <b>Paused</b>. Objective: ${esc(camp.objective)}${camp._new ? " (new campaign in the draft)" : ""}.</p>
       <div class="row"><label>Name</label><input id="f_name"></div>
-      ${cbo ? `<p class="hint">The campaign has a campaign budget (CBO), so the ad set has none.</p>` : `<div class="row"><label>${esc(curLabel("Budget/day"))}</label><input id="f_budget" type="number" step="0.01" min="1"></div>`}
+      ${cbo ? `<p class="hint">The campaign has a campaign budget (CBO), so the ad set has none.</p>` : `<div class="row"><label>${esc(curLabel("Budget/day"))}</label><input id="f_budget" type="number" step="${mStep()}" min="${mMin()}"></div>`}
       <div class="row"><label>Countries</label>${GeoPicker.field("f_ctry", [], {title:"Countries for the new ad set"})}</div>
       <div class="row"><label>Age</label><span><input id="f_amin" type="number" min="18" max="65" value="18" style="width:80px"> to <input id="f_amax" type="number" min="18" max="65" value="65" style="width:80px"></span></div>
       <div class="row"><label>Start date</label><input id="f_start" type="date" min="${iso(new Date())}" placeholder="blank = when it is turned on"></div>
       <div class="row"><label>End date</label><input id="f_end" type="date" min="${iso(new Date())}"></div>
       <div class="row"><label>Optimisation</label><select id="f_goal"><option value="">Default${goals.length ? ` (${goalLabel(goals[0])})` : ""}</option>${goals.slice(1).map(g => `<option value="${g}">${goalLabel(g)}</option>`).join("")}</select></div>
+      ${allGoals.includes("LEAD_GENERATION") ? `<p class="hint">Lead generation (instant forms) needs a lead form, which Studio can't attach: make those ad sets in Ads Manager.</p>` : ""}
       <div class="fld" style="margin-top:6px"><b>Placements</b>${plWidget({advantage:true, plats:{}})}</div>${noteRow}`,
       [["Add to draft", () => {
         const pl = readPl();
@@ -2036,15 +2093,21 @@ const META_ADD = {
   },
   async ads(){
     const sc = needScope("ad_group"); if (!sc) return;
+    // M14: an ad set that collects leads with an instant form needs ads with that form: Studio can only copy such an ad (from_ad)
+    let sets = []; try { sets = await api("/api/grid?" + qs({acct:S.acct, kind:"adsets", status:"all"})) } catch(e) {}
+    const leadSet = x => /^lead.?generation$/i.test(String(x.optimisation || "").trim());
+    const lead = sets.some(x => String(x.id) === String(S.ag) && leadSet(x)), leadIds = new Set(sets.filter(leadSet).map(x => String(x.id)));
     let ads = (await api("/api/grid?" + qs({acct:S.acct, kind:"ads", ad_group_id:S.ag}))).filter(a => a.editable && !a._new), where = "this ad set";
-    if (!ads.length){ ads = (await api("/api/grid?" + qs({acct:S.acct, kind:"ads"}))).filter(a => a.editable && !a._new); where = "the account" }
+    if (!ads.length){ ads = (await api("/api/grid?" + qs({acct:S.acct, kind:"ads"}))).filter(a => a.editable && !a._new && (!lead || leadIds.has(String(a.ad_group_id)))); where = "the account" }
+    if (lead && !ads.length) return showDialog("New ad in " + sc.ad_group, `<div class="warnl">This ad set collects leads with an instant form. A new ad here needs the form, and Studio can only copy an ad that already has one: there is none to copy yet. Make the first ad in Ads Manager.</div>`, []);
     let media = null;
     showDialog("New ad in " + sc.ad_group, `<p class="hint">New ads are created <b>Paused</b>. Nothing changes on Meta until you push live.</p>
       <p class="hint">This makes a single image or video ad with one text. Carousels and ads with several texts (headlines, primary texts) are made via Claude: ask Claude to add one to the draft.</p>
+      ${lead ? `<div class="warnl">This ad set collects leads with an instant form, so the new ad copies an ad that already has the form (an upload has no form).</div>` : ""}
       <div class="row"><label>Image or video</label><span>
         <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="copy" ${ads.length ? "checked" : "disabled"}> Copy the image/video of an existing ad${ads.length ? "" : " (none to copy)"}</label>
-        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="upload" ${ads.length ? "" : "checked"}> Upload a new image or video</label>
-        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="library"> Use a file from the media library</label></span></div>
+        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="upload" ${ads.length ? "" : "checked"} ${lead ? "disabled" : ""}> Upload a new image or video</label>
+        <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="library" ${lead ? "disabled" : ""}> Use a file from the media library</label></span></div>
       <div id="srcLib"><div class="row" style="align-items:start"><label>Media library</label><div id="libList" class="medlib"><div class="hint" style="padding:8px 0">Loading ...</div></div></div></div>
       <div id="srcCopy"><div class="row"><label>Copy from</label><select id="f_from">${ads.map(a => `<option value="${a.id}">${esc(a.ad)} (${esc(a.format)}${where === "the account" ? ", " + esc(a.ad_set) : ""})</option>`).join("")}</select></div></div>
       <div id="srcUp"><div class="row"><label>File</label><span><input type="file" id="f_file" accept=".jpg,.jpeg,.png,.mp4,.mov,image/jpeg,image/png,video/mp4,video/quicktime"><div id="upOut" class="hint">JPG or PNG up to 30 MB, MP4 or MOV up to 250 MB. Kept on this Mac; uploaded to Meta only when you push live.</div></span></div><div id="upPrev"></div></div>
@@ -2052,13 +2115,17 @@ const META_ADD = {
       [["Add to draft", () => {
         const name = val("f_name"); if (!name) return toast("Give the ad a name");
         const pt = $("#f_pt").value.trim();
+        const badLink = linkProblem(val("f_ln"), "Link");
+        if (lead && src() !== "copy") return toast("This ad set collects leads: copy an ad that has the form");
         if (src() === "upload" || src() === "library"){
           if (!media) return toast(src() === "library" ? "Pick a file from the media library first" : "Upload an image or video first");
           if (!pt || !val("f_hl") || !val("f_ln")) return toast("An uploaded image or video needs primary text, a headline and a link");
+          if (badLink) return toast(badLink);
           return submit([{type:"meta_new_ad", adset_id:S.ag, media_id:media.media_id, name, primary_text:pt, headline:val("f_hl"),
             ...(val("f_ds") ? {description:val("f_ds")} : {}), link:val("f_ln"), cta:val("f_cta")}], val("f_note"));
         }
         const a = ads.find(a => a.id === val("f_from")), c = {type:"meta_new_ad", adset_id:S.ag, from_ad:a.id, name};
+        if (badLink && val("f_ln") !== (a.link || "")) return toast(badLink);
         if (pt !== (a.primary_text || "").trim()) c.primary_text = pt;
         if (val("f_hl") !== a.headline) c.headline = val("f_hl");
         if (val("f_ds") !== a.description) c.description = val("f_ds");
@@ -2073,7 +2140,7 @@ const META_ADD = {
       $("#srcCopy").style.display = up ? "none" : ""; $("#srcUp").style.display = src() === "upload" ? "" : "none"; $("#srcLib").style.display = src() === "library" ? "" : "none";
       if (src() === "library" && !libLoaded){ libLoaded = true; loadLib() }
       const a = up ? {primary_text:"", headline:"", description:"", link:"", cta:"LEARN_MORE"} : ads.find(a => a.id === val("f_from"));
-      $("#copyBox").innerHTML = (up ? `<p class="hint">Primary text, headline and link are needed for an uploaded file.</p>` : "") + copyFields(a); counter($("#f_hl"), 40);
+      $("#copyBox").innerHTML = (up ? `<p class="hint">Primary text, headline and link are needed for an uploaded file.</p>` : "") + copyFields(a); copyCounters();
     };
     let srcWas = src(), libLoaded = false, lib = [];
     const loadLib = async () => {
@@ -2286,10 +2353,11 @@ if (localGet("side") === "closed" || (!localGet("side") && innerWidth < 1500)) s
 const fld = (id, label, val, live, opt = {}) => {
   const chg = String(val ?? "") !== String(live ?? "");
   const inner = opt.area ? `<textarea id="${id}" rows="${opt.area}">${esc(val)}</textarea>`
-    : opt.sel ? `<select id="${id}">${opt.sel.map(o => `<option ${o === val ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
-    : `<input id="${id}" value="${esc(val ?? "")}" ${opt.type ? `type="${opt.type}" step="0.01" min="0"` : ""}>`;
+    : opt.sel ? `<select id="${id}">${opt.sel.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${v === val ? "selected" : ""}>${esc(l)}</option>` }).join("")}</select>`
+    : `<input id="${id}" value="${esc(val ?? "")}" ${opt.type ? `type="${opt.type}" step="${opt.step || "0.01"}" min="${opt.min ?? 0}"` : ""}>`;
+  const shownLive = opt.liveTxt ? opt.liveTxt(live) : live;
   return `<div class="fld ${chg ? "chg" : ""}"><label><span>${label}${chg ? " · in draft" : ""}</span><span class="cnt" data-for="${id}" data-max="${opt.max || ""}"></span></label>${inner}
-    ${chg ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(live) || "(empty)"}</div>` : ""}</div>`;
+    ${chg ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(shownLive) || "(empty)"}</div>` : ""}</div>`;
 };
 const dv = (r, k) => r._draft && r._draft[k] ? r._draft[k].value : r[k];
 const draftIdsFor = (r, keys) => [...new Set(keys.map(k => r._draft && r._draft[k] && r._draft[k].draft_id).filter(Boolean))];
@@ -2307,10 +2375,6 @@ function editFoot(buttons){
 }
 function wireCounts(){ document.querySelectorAll("#editBody .cnt[data-max]").forEach(c => { const max = +c.dataset.max; if (!max) return; const i = document.getElementById(c.dataset.for);
   const f = () => { c.textContent = i.value.length + "/" + max; c.classList.toggle("over", i.value.length > max) }; i.addEventListener("input", f); f() }) }
-async function replaceInDraft(oldIds, changes){
-  if (oldIds.length) await api("/api/draft/remove", {ids:oldIds});
-  if (changes.length) await addChanges(changes, ""); else { toast(oldIds.length ? "Back to the live version" : "Nothing changed"); await poll(true) }
-}
 // ---- autosave: Edit-panel edits go into the draft on their own, ~1s after you stop typing ----
 const AUTO = {t:null, job:null, chain:Promise.resolve(), ids:{}};
 function asStatus(txt, cls){ const s = $("#asState"); if (s){ s.textContent = txt; s.className = "asstate " + (cls || "") } }
@@ -2363,7 +2427,7 @@ function renderEdit(r){
     return;
   }
   if (r._new && S.kind === "ads") return editNewAd(r);
-  if (r._new){ b.innerHTML = `<div class="empty">New ${S.kind === "campaigns" ? "campaign" : "ad set"} in the draft: <b>${esc(r.campaign && S.kind === "campaigns" ? r.campaign : r.ad_set)}</b>.<br>Created Paused when you push live.<br><br>Pick it in the tree to add ${S.kind === "campaigns" ? "ad sets" : "ads"} to it. Undo it in the Draft tab to change it.</div>`; editFoot([]); return }
+  if (r._new){ b.innerHTML = `<div class="empty">New ${S.kind === "campaigns" ? "campaign" : "ad set"} in the draft: <b>${esc(r.campaign && S.kind === "campaigns" ? r.campaign : r.ad_set)}</b>.<br>Created Paused when you push live.<br><br>Pick it in the tree to add ${S.kind === "campaigns" ? "ad sets" : "ads"} to it. To change it, remove it from the draft (Draft tab) and add it again.</div>`; editFoot([]); return }
   if (S.kind === "ads") return editAd(r);
   if (S.kind === "adsets") return editAdset(r);
   if (S.kind === "campaigns") return editCampaign(r);
@@ -2386,10 +2450,10 @@ function editAd(r){
   let copy;
   if (et === "meta_carousel_copy"){
     const cards = dv(r, "cards") || r.cards || [];
-    copy = fld("e_pt", "Primary text", dv(r, "primary_text"), r.primary_text, {area:6}) + fld("e_ln", "Website URL", dv(r, "link"), r.link)
+    copy = fld("e_pt", "Primary text", dv(r, "primary_text"), r.primary_text, {area:6, max:mLim("primary_text")}) + fld("e_ln", "Website URL", dv(r, "link"), r.link)
       + cards.map((c, i) => { const lc = (r.cards || [])[i] || {};
         return `<div class="cardbox"><div class="cardh">${lc.picture ? `<img class="bigok" src="${esc(lc.picture)}" data-big="${esc(lc.picture)}" alt="">` : ""}<b>Card ${i + 1}</b></div>
-          ${fld("e_cn" + i, "Headline", c.name, lc.name, {max:40})}${fld("e_cd" + i, "Description", c.description, lc.description)}${fld("e_cl" + i, "Link", c.link, lc.link)}</div>` }).join("");
+          ${fld("e_cn" + i, "Headline", c.name, lc.name, {max:mLim("card name") || 40})}${fld("e_cd" + i, "Description", c.description, lc.description, {max:mLim("card description")})}${fld("e_cl" + i, "Link", c.link, lc.link)}</div>` }).join("");
   } else if (et === "meta_feed_copy"){
     const bodies = dv(r, "bodies") || r.bodies || [];
     copy = `<p class="hint">This ad has several text options (flexible / Advantage+ creative). Meta mixes them. Up to 5 per list.</p>
@@ -2398,11 +2462,11 @@ function editAd(r){
       ${r._draft && r._draft.bodies ? `<div class="hint" style="margin:-8px 0 12px">Primary texts are in the draft.</div>` : ""}`
       + FEED_KEYS.slice(1).map(([k, l]) => fld("e_" + k, l, (dv(r, k) || []).join("\n"), (r[k] || []).join("\n"), {area:4})).join("");
   } else {
-    copy = `${fld("e_pt", "Primary text", dv(r, "primary_text"), r.primary_text, {area:7})}
-    ${fld("e_hl", "Headline", dv(r, "headline"), r.headline, {max:40})}
-    ${fld("e_ds", "Description", dv(r, "description"), r.description)}
+    copy = `${fld("e_pt", "Primary text", dv(r, "primary_text"), r.primary_text, {area:7, max:mLim("primary_text")})}
+    ${fld("e_hl", "Headline", dv(r, "headline"), r.headline, {max:mLim("headline") || 40})}
+    ${fld("e_ds", "Description", dv(r, "description"), r.description, {max:mLim("description")})}
     ${fld("e_ln", "Website URL", dv(r, "link"), r.link)}
-    ${fld("e_cta", "Call to action", dv(r, "cta"), r.cta, {sel:[...new Set([dv(r, "cta"), r.cta, ...CTAS].filter(Boolean))]})}`;
+    ${fld("e_cta", "Call to action", dv(r, "cta"), r.cta, {sel:ctaOpts(dv(r, "cta"), r.cta), liveTxt:ctaLabel})}`;
   }
   $("#editBody").innerHTML = `<div class="edit-head">${r.thumbnail ? `<img class="bigok" src="${esc(r.image || r.thumbnail)}" data-big="${esc(r.image || r.thumbnail)}" alt="">` : ""}
       <div><div class="t">${esc(dv(r, "ad"))}</div><div class="s">${esc(r.campaign)} / ${esc(r.ad_set)}</div><div class="s">${esc(r.format)} · Delivery: ${esc(r.delivery)}${spentTxt(r)}</div></div></div>
@@ -2427,7 +2491,13 @@ function editAd(r){
     const ch = [];
     if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
     if (val("e_name") !== r.ad) ch.push({type:"meta_rename", level:"ad", id:r.id, new_name:val("e_name")});
-    const c = adCopyChange(r); if (c) ch.push(c);
+    const c = adCopyChange(r);
+    if (c){
+      const bad = [linkProblem(c.link), ...(c.cards || []).map(x => linkProblem(x.link, `Card ${x.index + 1} link`)),
+        ...(c.link_urls || []).map(u => linkProblem(u))].find(Boolean);
+      if (bad) throw new Error(bad);
+      ch.push(c);
+    }
     return ch;
   }, () => pvLabel(r));
   if (et === "meta_feed_copy") $("#e_bodies").addEventListener("click", e => { if (e.target.closest("[data-rmbody]")) save() });
@@ -2518,9 +2588,9 @@ function editNewAd(r){
   $("#editBody").innerHTML = `<div class="edit-head">${r.media_id && r.format !== "Video" ? `<img class="bigok" src="${esc(mediaUrl(r.media_id))}" alt="">` : r.thumbnail ? `<img class="bigok" src="${esc(r.image || r.thumbnail)}" alt="">` : ""}
       <div><div class="t">${esc(r.ad)} <span class="chip draft">draft</span></div><div class="s">${esc(r.campaign)} / ${esc(r.ad_set)}</div><div class="s">New ad, created Paused when you push live</div></div></div>
     ${previewBox()}
-    ${[["Primary text", r.primary_text], ["Headline", r.headline], ["Description", r.description], ["Website URL", r.link], ["Call to action", r.cta]].map(([l, v]) => `<div class="fld"><label><span>${l}</span></label><div style="white-space:pre-wrap">${esc(v) || "-"}</div></div>`).join("")}
+    ${[["Primary text", r.primary_text], ["Headline", r.headline], ["Description", r.description], ["Website URL", r.link], ["Call to action", r.cta && ctaLabel(r.cta)]].map(([l, v]) => `<div class="fld"><label><span>${l}</span></label><div style="white-space:pre-wrap">${esc(v) || "-"}</div></div>`).join("")}
     ${it ? it.problems.map(p => `<div class="prob">${esc(p)}</div>`).join("") + it.warnings.map(p => `<div class="warnl">${esc(p)}</div>`).join("") : ""}
-    <p class="hint">To change it, Undo it in the Draft tab and add it again.</p>`;
+    <p class="hint">To change it, remove it from the draft (Draft tab) and add it again.</p>`;
   $("#pvLoad").onclick = () => loadPreview(r);
   $("#pvPlace").onchange = () => loadPreview(r);
   pvLabel(r); editFoot([]);
@@ -2563,40 +2633,77 @@ function plChange(pl){ // parsed placements -> the change fields
 // countries of an ad set: summary + "Choose countries" (static/geo_picker.js); the draft value is "GB, DE"
 function ctryFld(r){
   const live = (r.geo || {}).countries || [], cur = r._draft && r._draft.countries ? String(r._draft.countries.value || "").split(/[ ,]+/).filter(x => /^[A-Z]{2}$/.test(x)) : live;
-  const chg = cur.join(",") !== live.join(",");
+  const chg = !GeoPicker.same(cur, live);
   return `<div class="fld ${chg ? "chg" : ""}"><label><span>Countries${chg ? " · in draft" : ""}</span><span id="e_ctry_n">${cur.length} selected</span></label>
     ${GeoPicker.field("e_ctry", cur, {geo:r.geo, title:"Countries for " + r.ad_set})}
     ${chg ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(GeoPicker.summaryText(live))}${live.length > 2 ? ` (${esc(live.join(", "))})` : ""}</div>` : ""}</div>`;
 }
 // "20-65" or "20-65 (suggestion)" (Advantage+ audience) -> ["20", "65"]; numbers only, so an untouched field never reads as a change
 function ageParts(age){ const m = String(age || "").match(/^\s*(\d*)\s*-\s*(\d*)/); return m ? [m[1], m[2]] : ["", ""] }
+// Meta budget of a campaign or ad set: daily or lifetime (r.budget_type, M21), in the account's currency with its step and minimum (M13)
+const btype = r => r.budget_type || (r.budget != null ? "daily" : r.lifetime_budget != null ? "lifetime" : null);
+function budgetFld(r, what){
+  const o = {type:"number", step:mStep(), min:mMin()};
+  if (btype(r) === "lifetime") return fld("e_lbudget", curLabel("Lifetime budget" + what), dv(r, "lifetime_budget"), r.lifetime_budget, o) + fxHint("e_lbudget")
+    + `<p class="hint" style="margin-top:-6px">A lifetime budget is spread over the whole run, up to the end date.</p>`;
+  return fld("e_budget", curLabel("Daily budget" + what), dv(r, "budget"), r.budget, o) + fxHint("e_budget");
+}
+function budgetChange(r, level){
+  const life = btype(r) === "lifetime", id = life ? "e_lbudget" : "e_budget";
+  if (!document.getElementById(id)) return null;
+  const v = val(id), live = life ? r.lifetime_budget : r.budget;
+  if (v === "" || +v === live) return null;
+  if (!(+v > 0)) throw new Error(`the ${life ? "lifetime" : "daily"} budget must be a number above 0`);
+  if (!life && +v < mMin()) throw new Error(`the daily budget must be at least ${mMin()}${MC().currency ? " " + MC().currency : ""} (the account's minimum)`);
+  return {type:"meta_budget", level, id:r.id, budget:+v, ...(life ? {lifetime:true} : {})};
+}
+// age inputs: a typed age is clamped to 18-65 when the field is left (M5)
+function wireAge(){
+  const lo = (MC().age || {}).min || 18, hi = (MC().age || {}).max || 65;
+  for (const id of ["e_amin", "e_amax"]){ const i = document.getElementById(id); if (!i) continue;
+    i.addEventListener("blur", () => { if (i.value === "" || isNaN(+i.value)) return; const v = String(Math.min(hi, Math.max(lo, Math.round(+i.value))));
+      if (v !== i.value){ i.value = v; i.dispatchEvent(new Event("input", {bubbles:true})) } }) }
+}
 function editAdset(r){
+  const adv = !!r.advantage_audience;  // Advantage+ audience: the age is Meta's suggestion (age_range); the hard limits are age_control (M4)
   const [amin, amax] = ageParts(dv(r, "age")), [lmin, lmax] = ageParts(r.age);
+  const ctl = ageParts(dv(r, "age_control")), lctl = ageParts(r.age_control);
+  const ageChg = amin !== lmin || amax !== lmax, ctlChg = adv && (ctl[0] !== lctl[0] || ctl[1] !== lctl[1]);
   const livePl = parsePl(r.placements), curPl = parsePl(dv(r, "placements"));
   $("#editBody").innerHTML = `<div class="edit-head"><div><div class="t">${esc(dv(r, "ad_set"))}</div><div class="s">${esc(r.campaign)}</div><div class="s">Delivery: ${esc(r.delivery)} · ${esc(r.optimisation)}${spentTxt(r)}</div></div></div>
     ${fld("e_status", "Status", dv(r, "status"), r.status, {sel:ST_OPTS})}
     ${fld("e_name", "Ad set name", dv(r, "ad_set"), r.ad_set)}
-    ${r.cbo ? `<p class="hint">Budget is set on the campaign (CBO).</p>` : fld("e_budget", curLabel("Daily budget"), dv(r, "budget"), r.budget, {type:"number"}) + fxHint("e_budget")}
+    ${r.cbo ? `<p class="hint">Budget is set on the campaign (CBO).</p>` : budgetFld(r, "")}
     ${ctryFld(r)}
-    <div class="fld"><label><span>Age</span></label><span><input id="e_amin" type="number" min="18" max="65" value="${esc(amin)}" style="width:44%"> to <input id="e_amax" type="number" min="18" max="65" value="${esc(amax)}" style="width:44%"></span></div>
+    <div class="fld ${ageChg ? "chg" : ""}"><label><span>${adv ? "Age suggestion" : "Age"}${ageChg ? " · in draft" : ""}</span></label><span><input id="e_amin" type="number" min="18" max="65" value="${esc(amin)}" style="width:44%" aria-label="${adv ? "Suggested age from" : "Age from"}"> to <input id="e_amax" type="number" min="18" max="65" value="${esc(amax)}" style="width:44%" aria-label="${adv ? "Suggested age to" : "Age to"}"></span>
+      ${ageChg ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(r.age) || "(empty)"}</div>` : ""}
+      ${adv ? `<div class="hint" style="margin:3px 0 0">Advantage+ audience is on: Meta may also show the ads outside the suggestion. Hard age limits: <b>${esc(dv(r, "age_control") || "18-65")}</b>${ctlChg ? ` (in draft; live ${esc(r.age_control)})` : ""}, changed via Claude or Ads Manager.</div>` : ""}</div>
     ${fld("e_end", "End date", dv(r, "end"), r.end, {type:"date"})}
     <div class="fld ${r._draft && r._draft.placements ? "chg" : ""}"><label><span>Placements${r._draft && r._draft.placements ? " · in draft" : ""}</span></label>${plWidget(curPl, livePl)}
       ${r._draft && r._draft.placements ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(r.placements)}</div>` : ""}</div>
-    <p class="hint">Audiences: ${esc(r.audiences || "none")} · Excluded: ${esc(r.excluded || "none")}${r.advantage_audience ? " · Advantage+ audience on" : ""}</p>`;
-  $("#e_end").removeAttribute("step");
-  wirePl(); wireFx(); GeoPicker.wire("e_ctry");
-  wireAutoSave(r, ["status", "ad_set", "budget", "countries", "age", "end", "placements"], () => {
+    <p class="hint">Audiences: ${esc(r.audiences || "none")} · Excluded: ${esc(r.excluded || "none")}${adv ? " · Advantage+ audience on" : ""}</p>`;
+  $("#e_end").removeAttribute("step"); $("#e_end").removeAttribute("min");
+  wirePl(); wireFx(); wireAge(); GeoPicker.wire("e_ctry");
+  wireAutoSave(r, ["status", "ad_set", "budget", "lifetime_budget", "countries", "age", "age_control", "end", "placements"], () => {
     const ch = [];
     if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
     if (val("e_name") !== r.ad_set) ch.push({type:"meta_rename", level:"adset", id:r.id, new_name:val("e_name")});
-    if (!r.cbo && val("e_budget") !== "" && +val("e_budget") !== r.budget) ch.push({type:"meta_budget", level:"adset", id:r.id, budget:+val("e_budget")});
+    if (!r.cbo){ const b = budgetChange(r, "adset"); if (b) ch.push(b) }
     const ctry = GeoPicker.read("e_ctry"), t = {type:"meta_targeting", level:"adset", id:r.id};
-    if (ctry.join(",") !== ((r.geo || {}).countries || []).join(",")){
+    if (!GeoPicker.same(ctry, (r.geo || {}).countries || [])){  // M6: the same countries in another order are no change
       const bad = GeoPicker.problems(ctry, r.geo); if (bad.length) throw new Error(bad[0]);
       t.countries = ctry; if (!ctry.length) t.countries_clear = true;  // no countries: only regions / cities stay
     }
-    if (val("e_amin") !== lmin) t.age_min = +val("e_amin");
-    if (val("e_amax") !== lmax) t.age_max = +val("e_amax");
+    // M5: only a side that is a number and differs from live is sent; a cleared side keeps its live value
+    const side = (id, live) => { const v = val(id); return /^\d+$/.test(v) && +v !== +live ? +v : null };
+    if (adv){  // M4: the suggestion (age_range), both sides, the untouched one from live
+      const lo = side("e_amin", lmin), hi = side("e_amax", lmax);
+      if (lo != null || hi != null) t.age_range = [lo ?? (+lmin || 18), hi ?? (+lmax || 65)];
+      if (ctlChg){ if (ctl[0] !== lctl[0] && ctl[0]) t.age_min = +ctl[0]; if (ctl[1] !== lctl[1] && ctl[1]) t.age_max = +ctl[1] }  // keep a hard-limit change already in the draft
+    } else {
+      const lo = side("e_amin", lmin), hi = side("e_amax", lmax);
+      if (lo != null) t.age_min = lo; if (hi != null) t.age_max = hi;
+    }
     if (Object.keys(t).length > 3) ch.push(t);
     if (val("e_end") !== (r.end || "")) ch.push({type:"meta_end", level:"adset", id:r.id, end_date:val("e_end") || null});
     const pl = readPl();
@@ -2609,14 +2716,14 @@ function editCampaign(r){
   $("#editBody").innerHTML = `<div class="edit-head"><div><div class="t">${esc(dv(r, "campaign"))}</div><div class="s">${esc(r.objective)} · ${esc(r.budget_level)} · Delivery: ${esc(r.delivery)}</div></div></div>
     ${fld("e_status", "Status", dv(r, "status"), r.status, {sel:ST_OPTS})}
     ${fld("e_name", "Campaign name", dv(r, "campaign"), r.campaign)}
-    ${r.budget != null ? fld("e_budget", curLabel("Daily budget (campaign)"), dv(r, "budget"), r.budget, {type:"number"}) + fxHint("e_budget") : `<p class="hint">Budgets are set on the ad sets.</p>`}
+    ${btype(r) ? budgetFld(r, " (campaign)") : `<p class="hint">Budgets are set on the ad sets.</p>`}
     <p class="hint">${r.ad_sets} ad sets · ${r.ads} ads${spentTxt(r)}</p>`;
   wireFx();
-  wireAutoSave(r, ["status", "campaign", "budget"], () => {
+  wireAutoSave(r, ["status", "campaign", "budget", "lifetime_budget"], () => {
     const ch = [];
     if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
     if (val("e_name") !== r.campaign) ch.push({type:"meta_rename", level:"campaign", id:r.id, new_name:val("e_name")});
-    if (r.budget != null && val("e_budget") !== "" && +val("e_budget") !== r.budget) ch.push({type:"meta_budget", level:"campaign", id:r.id, budget:+val("e_budget")});
+    if (btype(r)){ const b = budgetChange(r, "campaign"); if (b) ch.push(b) }
     return ch;
   });
 }

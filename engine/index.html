@@ -1749,7 +1749,7 @@ function metaAdDialog(r){
   counter($("#f_hl"), 40);
 }
 function adsetDialog(r){
-  const [amin, amax] = (r.age || "-").split("-");
+  const [amin, amax] = ageParts(r.age);
   showDialog("Meta ad set · " + r.ad_set, `<p class="hint">${esc(r.campaign)} · ${esc(r.delivery)} · ${esc(r.optimisation)}</p>
     <div class="row"><label>Ad set name</label><input id="f_name" value="${esc(r.ad_set)}"></div>
     <div class="row"><label>Countries</label>${GeoPicker.field("f_ctry", (r.geo || {}).countries || [], {geo:r.geo, title:"Countries for " + r.ad_set})}</div>
@@ -2356,8 +2356,10 @@ function ctryFld(r){
     ${GeoPicker.field("e_ctry", cur, {geo:r.geo, title:"Countries for " + r.ad_set})}
     ${chg ? `<div class="hint" style="margin:3px 0 0">Live: ${esc(GeoPicker.summaryText(live))}${live.length > 2 ? ` (${esc(live.join(", "))})` : ""}</div>` : ""}</div>`;
 }
+// "20-65" or "20-65 (suggestion)" (Advantage+ audience) -> ["20", "65"]; numbers only, so an untouched field never reads as a change
+function ageParts(age){ const m = String(age || "").match(/^\s*(\d*)\s*-\s*(\d*)/); return m ? [m[1], m[2]] : ["", ""] }
 function editAdset(r){
-  const [amin, amax] = String(dv(r, "age") || "-").split("-"), [lmin, lmax] = String(r.age || "-").split("-");
+  const [amin, amax] = ageParts(dv(r, "age")), [lmin, lmax] = ageParts(r.age);
   const livePl = parsePl(r.placements), curPl = parsePl(dv(r, "placements"));
   $("#editBody").innerHTML = `<div class="edit-head"><div><div class="t">${esc(dv(r, "ad_set"))}</div><div class="s">${esc(r.campaign)}</div><div class="s">Delivery: ${esc(r.delivery)} · ${esc(r.optimisation)}${spentTxt(r)}</div></div></div>
     ${fld("e_status", "Status", dv(r, "status"), r.status, {sel:ST_OPTS})}

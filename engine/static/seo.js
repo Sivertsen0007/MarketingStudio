@@ -252,7 +252,7 @@ function drawPosts(){
     return `<tr class="seo-row" data-id="${r.id}">${cols.map(c => {
       const ch = dr[c.k], v = ch ? ch.new : r[c.k];
       let html = c.f ? c.f(v, r) : esc(v ?? "");
-      if (c.len){ const n = expandVars(v, {...yv, title: r.title, primary_category: (r.category_names || [])[0] || ""}).length; html += `<span class="seo-len ${n && (n < c.len[0] || n > c.len[1]) ? "bad" : ""}">${n}</span>` }
+      if (c.len){ const n = expandVars(v, {...yv, title: r.title, primary_category: (r.category_names || [])[0] || ""}).length; html += `<span class="seo-len ${n && (n < c.len[0] || n > c.len[1]) ? "bad" : ""}"${siteUnknown(v, yv) ? ` title="%%sitename%% counted as empty: the site's name is not known yet"` : ""}>${n}${siteUnknown(v, yv) ? "?" : ""}</span>` }
       if (c.k === "title" && (r.draft || []).length) html += ` <span class="chip draft">${r.draft.length} in draft</span>`;
       const cl = [c.cls || "", c.n ? "num" : "", ch ? "changed" : "", c.e && T.view === "edit" ? "edit" : ""].join(" ");
       return `<td class="${cl}" data-k="${c.k}" title="${esc(short(v, 300))}">${ch && c.k !== "content" ? `<span class="old">${esc(short(r[c.k], 40))}</span>` : ""}${html}</td>` }).join("")}</tr>` }).join("");
@@ -354,7 +354,7 @@ async function openPost(id, startPane){
   const upd = () => {
     const vars = {...(d.yoast_vars || {}), title: $("#sp_title").value};
     const t = expandVars($("#sp_seo_title").value, vars), m = expandVars($("#sp_meta_desc").value, vars);
-    lenCount($("#sp_tn"), t, TITLE_LEN); lenCount($("#sp_mn"), m, META_LEN);
+    lenCount($("#sp_tn"), t, TITLE_LEN, $("#sp_seo_title").value, vars); lenCount($("#sp_mn"), m, META_LEN, $("#sp_meta_desc").value, vars);
     $("#sp_st").textContent = t.length > 60 ? t.slice(0, 58) + " ..." : (t || $("#sp_title").value);
     $("#sp_sd").textContent = m ? (m.length > 160 ? m.slice(0, 157) + " ..." : m) : "No meta description: Google picks text from the page.";
     $("#sp_su").textContent = $("#sp_slug").value;
@@ -368,7 +368,14 @@ async function openPost(id, startPane){
   document.querySelectorAll("#dlgB [data-rel]").forEach(b => b.onclick = async () => {
     try { await P("add", {changes: [{post_id: +b.dataset.rel, field: "content", kind: "todo", note: `Add an internal link to "${p.title}" (${p.url}).`}]}); b.disabled = true; b.textContent = "In draft"; loadDraft() } catch(e) { toast(e.message) } });
 }
-function lenCount(el, text, [lo, hi]){ const n = text.length; el.textContent = `${n} / ${lo}-${hi}`; el.classList.toggle("over", !!n && (n < lo || n > hi)) }
+function lenCount(el, text, [lo, hi], raw, vars){
+  const n = text.length, noSite = siteUnknown(raw, vars);
+  el.textContent = `${n} / ${lo}-${hi}` + (noSite ? " (site name unknown)" : "");
+  el.title = noSite ? "%%sitename%% is counted as empty: Studio has not read the site's name from WordPress yet. Refresh WordPress, or count it yourself." : "";
+  el.classList.toggle("over", !!n && (n < lo || n > hi));
+}
+// %%sitename%% in the text while the engine could not read the site's name: the count leaves it out
+const siteUnknown = (raw, vars) => /%%\s*sitename\s*%%/i.test(String(raw || "")) && !((vars || {}).sitename);
 function insHTML(r){
   if (!r) return `<span class="hint">Not checked yet.</span>`;
   return `<div class="seo-kv"><b>Verdict</b><span><span class="seo-dot ${r.verdict === "PASS" ? "ok" : "bad"}"></span>${esc(r.coverage || r.verdict || "")}</span>
@@ -444,7 +451,7 @@ async function openNewPage(o){
   const upd = () => {
     const vars = {...((T.settings || {}).yoast_vars || {}), title: $("#np_title").value};
     const t = expandVars($("#np_seo_title").value, vars), m = expandVars($("#np_meta_desc").value, vars);
-    lenCount($("#np_tn"), t, TITLE_LEN); lenCount($("#np_mn"), m, META_LEN);
+    lenCount($("#np_tn"), t, TITLE_LEN, $("#np_seo_title").value, vars); lenCount($("#np_mn"), m, META_LEN, $("#np_meta_desc").value, vars);
     $("#np_st").textContent = t ? (t.length > 60 ? t.slice(0, 58) + " ..." : t) : $("#np_title").value;
     $("#np_sd").textContent = m || "No meta description: Google picks text from the page.";
     $("#np_su").textContent = $("#np_slug").value || slugOf($("#np_title").value);

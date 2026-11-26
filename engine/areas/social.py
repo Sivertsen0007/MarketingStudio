@@ -449,22 +449,30 @@ def save_settings(body):
         ch["utm"] = {c: bool(v) for c, v in (body["utm"] or {}).items() if c in ("facebook", "linkedin")}
     if "utm_campaign" in body:
         ch["utm_campaign"] = plan.campaign_slug(body["utm_campaign"])
-    if "posting_tz" in body:
-        set_posting_tz(body["posting_tz"])
     if "competitors" in body:
         names = [str(x).strip().lstrip("@") for x in body["competitors"] or [] if str(x).strip()]
         bad = [x for x in names if not USERNAME.match(x)]
         if bad:
             raise ValueError("not an Instagram username: " + ", ".join(bad))
         ch["competitors"] = list(dict.fromkeys(names))[:20]
-    return store.save_settings(ch)
+    # the posting zone is saved last, after every other field passed its check: a refused field saves nothing
+    tz = _check_tz(body["posting_tz"]) if "posting_tz" in body else None
+    out = store.save_settings(ch)
+    if tz:
+        set_posting_tz(tz)
+    return out
+
+
+def _check_tz(name):
+    name = str(name or "").strip() or store.TZ_DEFAULT
+    if not store._zone(name):
+        raise ValueError(f'"{name}" is not a time zone: use a name like Europe/London or Asia/Bangkok')
+    return name
 
 
 def set_posting_tz(name):
     """The posting time zone, shared with Email (Setup's EMAIL_TIMEZONE): one zone for every scheduled post and email."""
-    name = str(name or "").strip() or store.TZ_DEFAULT
-    if not store._zone(name):
-        raise ValueError(f'"{name}" is not a time zone: use a name like Europe/London or Asia/Bangkok')
+    name = _check_tz(name)
     import appconfig  # noqa: PLC0415
     appconfig.set_many({"EMAIL_TIMEZONE": name})
     return name
@@ -680,8 +688,11 @@ def schedule_plan(p, channels=None, c=None):
         options.append({"label": "Schedule", "channels": chs})
     elif ok and not _scoped_problems(c, ok):
         options.append({"label": f"Schedule {' and '.join(store.CHANNEL_LABEL[x] for x in ok)} only", "channels": ok})
+    probs = _scoped_problems(c, chs)
+    if "linkedin" in refused:  # the check says "LinkedIn is not connected" too: the reason is shown once, under refused
+        probs = [x for x in probs if not x.startswith("LinkedIn is not connected")]
     return {"when": store.iso(when) if when else "", "channels": chs, "routes": routes, "refused": refused,
-            "problems": _scoped_problems(c, chs), "warnings": c["warnings"], "how": how, "options": options}
+            "problems": probs, "warnings": c["warnings"], "how": how, "options": options}
 
 
 def schedule_preview(q):
@@ -716,7 +727,8 @@ def schedule(body):
         pl = schedule_plan(p, chs)
         routes = pl["routes"]
         if pl["refused"] or pl["problems"]:
-            return {"ok": False, "message": "Not scheduled.", "problems": [x for v in pl["refused"].values() for x in v] + pl["problems"],
+            return {"ok": False, "message": "Not scheduled.",
+                    "problems": list(dict.fromkeys([x for v in pl["refused"].values() for x in v] + pl["problems"])),
                     "options": pl["options"], "can_fb_only": "facebook" in chs and routes.get("facebook") is not None and len(chs) > 1}
         clash = _clashes(p, chs)  # warnings only (shared calendar); never stops the schedule
         _start("Scheduling" + (" (test mode)" if test_mode() else ""), chs, "Uploading media, Scheduling, Scheduled")

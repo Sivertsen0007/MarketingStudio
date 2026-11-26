@@ -152,8 +152,13 @@ def _live_posts():
 
 
 def _social_outside(start, end, posts):
-    """SoMe posts made outside Studio: live on the Page / Instagram, or scheduled in Meta. Ids Studio made are skipped."""
+    """SoMe posts made outside Studio: live on the Page / Instagram, or scheduled in Meta. Ids Studio made are skipped.
+    A Facebook video Studio uploaded is stored under its video id, while the Page lists it as a post ({page}_{id}) whose
+    link holds the video id: those count as Studio's too."""
     ours = {str(r.get("post_id")) for p in posts for r in (p.get("results") or {}).values() if r.get("post_id")}
+    videos = [re.compile(rf"(?<![0-9]){re.escape(v)}(?![0-9])") for v in
+              {str(r.get("post_id")) for p in posts for ch, r in (p.get("results") or {}).items()
+               if ch == "facebook" and r.get("post_id") and (r.get("object") == "video" or "/videos/" in (r.get("url") or ""))}]
     live = _live_posts()
     out, seen = [], set()
     for rows, st in ((live.get("posts"), "published"), (live.get("scheduled"), "scheduled")):
@@ -162,6 +167,9 @@ def _social_outside(start, end, posts):
             t = parse(x.get("when"))
             if not xid or xid in ours or xid in seen or not t or not start <= t < end:
                 continue
+            if (x.get("channel") or "facebook") == "facebook" and any(
+                    v.search(x.get("url") or "") or v.fullmatch(xid.split("_", 1)[-1]) for v in videos):
+                continue  # a Studio-made Facebook video seen as a Page post
             seen.add(xid)
             text = x.get("text") or ""
             m = URL_RE.search(text)

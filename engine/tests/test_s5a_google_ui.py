@@ -86,6 +86,32 @@ class RsaPaths(unittest.TestCase):
 
 
 class AssetRemove(unittest.TestCase):
+    def setUp(self):  # the link's status read: enabled unless a test says otherwise (never the real API)
+        self.p = mock.patch.object(live, "_read", side_effect=lambda src, gaql: [
+            {("customerAsset" if "customer_asset" in gaql else "campaignAsset"): {"status": "ENABLED"}}])
+        self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+
+    def test_undo_restores_a_paused_link(self):  # S7: undo links it again as it was, not always Enabled
+        self.p.stop()
+        seen = []
+        with mock.patch.object(live, "_read", side_effect=lambda src, gaql: seen.append(gaql) or [{"campaignAsset": {"status": "PAUSED"}}]):
+            ops = live.ops_for(Ids(), {"type": "sitelink", "remove": True, "campaign": "Brand", "texts": ["Dive deals"]}, False)
+        self.p.start()
+        self.assertIn(f"campaign_asset.resource_name = 'customers/{A}/campaignAssets/101~701~SITELINK'", seen[0])
+        self.assertEqual(ops[0]["undo"]["campaignAssetOperation"]["create"]["status"], "PAUSED")
+        self.assertIn("(was paused)", ops[0]["line"])
+
+    def test_unreadable_status_still_unlinks(self):
+        self.p.stop()
+        with mock.patch.object(live, "_read", side_effect=RuntimeError("no answer")):
+            ops = live.ops_for(Ids(), {"type": "callout", "remove": True, "level": "account", "campaign": "", "texts": ["Free nitrox"]}, False)
+        self.p.start()
+        self.assertEqual(ops[0]["undo"]["customerAssetOperation"]["create"], {"asset": f"customers/{A}/assets/801", "fieldType": "CALLOUT"})
+        self.assertIn("could not be read", ops[0]["undo_note"])
+
     def test_sitelinks_campaign(self):
         ops = live.ops_for(Ids(), {"type": "sitelink", "remove": True, "campaign": "Brand", "texts": ["Dive deals", "Brochure"]}, False)
         self.assertEqual([o["op"]["campaignAssetOperation"]["remove"] for o in ops],

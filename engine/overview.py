@@ -37,6 +37,18 @@ def destination(name):
     return " + ".join(hits) if hits else "General / brand"
 
 
+ALL = "*"  # in a failed-accounts list: no account of that channel could be read
+
+
+def _when(iso):
+    """'2026-11-26T09:05:00' -> '26 November 2026 09:05' (unchanged when it isn't an ISO time)."""
+    try:
+        d = dt.datetime.fromisoformat(str(iso))
+    except ValueError:
+        return str(iso)
+    return f"{d.day} {d.strftime('%B %Y %H:%M')}"
+
+
 def _google(days, failed=None):
     """-> (rows, errors). failed (a list) collects the names of accounts whose campaigns could not be read."""
     out, errors = [], []
@@ -44,6 +56,8 @@ def _google(days, failed=None):
     try:
         accts = gapi.accounts_any()  # the API account list works without Google Ads Editor
     except Exception as ex:  # noqa: BLE001
+        if failed is not None:
+            failed.append(ALL)  # no account could be read: every Google row of the previous Overview is kept
         return [], [f"Google: {ex}"]
     for a in accts:
         try:
@@ -73,17 +87,33 @@ def _google(days, failed=None):
     return out, errors
 
 
-def _meta(days):
+def _meta_name():
+    """The Overview's name for the current Meta ad account: "ML Meta" for the setup account (the name earlier Overviews
+    used, so their rows still match), else its name in Settings."""
+    try:
+        act = meta.act()
+        if act == meta.DEFAULT_ACT:
+            return "ML Meta"
+        return next((a["name"] for a in meta.settings()["meta_accounts"] if a.get("act") == act and a.get("name")), "ML Meta")
+    except Exception:  # noqa: BLE001
+        return "ML Meta"
+
+
+def _meta(days, failed=None):
+    """-> (rows, errors). failed (a list) collects the name of the Meta account that could not be read."""
     if not meta.TOKEN:
         return [], []
+    name = _meta_name()
     try:
         cur = meta.load()["account"]["currency"]
         rows = meta.get_all(f"{meta.act()}/insights", level="campaign", date_preset=WINDOWS[days][1],
                             fields="campaign_name,campaign_id," + meta.F_INS)
     except Exception as ex:  # noqa: BLE001
+        if failed is not None:
+            failed.append(name)
         return [], [f"Meta: {ex}"]
     status = {c["id"]: c["status"].title() for c in meta.load()["campaigns"]}
-    return [{"channel": "Meta", "account": "ML Meta", "campaign": r["campaign_name"], "status": status.get(r["campaign_id"], ""),
+    return [{"channel": "Meta", "account": name, "campaign": r["campaign_name"], "status": status.get(r["campaign_id"], ""),
              "currency": cur, "spend": round(float(r.get("spend", 0)), 2), "clicks": int(r.get("clicks", 0)),
              "impressions": int(r.get("impressions", 0)),
              "results": round(sum(float(x["value"]) for x in r.get("actions", []) if x["action_type"] in meta.RESULT_ACTIONS), 1),
@@ -265,19 +295,25 @@ def build(days="7", display="own", force=False):
 
 
 def _build(days, old=None):
-    failed = []
+    failed, mfailed = [], []
     g, ge = _google(days, failed)
-    m, me = _meta(days)
-    # a channel (or Google account) that could not be read keeps its rows from the previous Overview, marked stale
+    m, me = _meta(days, mfailed)
+    if me and not m and not mfailed:  # a reader that reports no account: the whole channel failed
+        mfailed.append(ALL)
+    # an account that could not be read keeps its rows from the previous Overview, marked stale; each row keeps the
+    # time its figures were really fetched, so repeated failures never pass old figures off as newer
     prev = (old or {}).get("campaigns") or []
     when = (old or {}).get("fetched_at")
-    kept = [r for r in prev if r.get("channel") == "Google" and r.get("account") in failed]
-    if me and not m:
-        kept += [r for r in prev if r.get("channel") == "Meta"]
+    gone = {"Google": set(failed), "Meta": set(mfailed)}
+    fresh = {(r["channel"], r["account"]) for r in g + m}
+    kept = [r for r in prev if (ALL in gone.get(r.get("channel"), ()) or r.get("account") in gone.get(r.get("channel"), ()))
+            and (r.get("channel"), r.get("account")) not in fresh]
     for r in kept:
         r["stale"] = True
+        r["fetched_at"] = r.get("fetched_at") or when
     for name in sorted({r["account"] for r in kept}):
-        ge.append(f"{name}: could not be read now, showing the figures fetched {when or 'earlier'}.")
+        times = [r["fetched_at"] for r in kept if r["account"] == name and r.get("fetched_at")]
+        ge.append(f"{name}: could not be read now, showing the figures fetched {_when(min(times)) if times else 'earlier'}.")
     g += [r for r in kept if r.get("channel") == "Google"]
     m += [r for r in kept if r.get("channel") == "Meta"]
     rows = g + m

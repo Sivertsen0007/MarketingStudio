@@ -89,26 +89,31 @@ if (!document.getElementById("em-css")){
 
 // ---- formatting ----
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-function londonParts(d){
-  const f = new Intl.DateTimeFormat("en-GB", {timeZone:"Europe/London", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hourCycle:"h23"});
+// The send zone: the shared posting zone (Setup > Email > Send timezone, also SoMe's posting zone), default Europe/London
+const sendTz = () => (E.state && E.state.send_tz) || "Europe/London";
+const tzName = () => sendTz().split("/").pop().replace(/_/g, " ");  // "Europe/London" -> "London"
+function zoneParts(d){
+  let f;
+  try { f = new Intl.DateTimeFormat("en-GB", {timeZone:sendTz(), year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hourCycle:"h23"}) }
+  catch(e) { f = new Intl.DateTimeFormat("en-GB", {timeZone:"Europe/London", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hourCycle:"h23"}) }
   const o = {}; for (const x of f.formatToParts(d)) o[x.type] = x.value;
   return {Y:+o.year, M:+o.month, D:+o.day, h:+o.hour, m:+o.minute};
 }
 const pad = n => String(n).padStart(2, "0");
 function fmtDate(iso, long){
   if (!iso) return "";
-  const p = londonParts(new Date(iso));
+  const p = zoneParts(new Date(iso));
   return `${p.D} ${long ? MONTHS[p.M - 1] : MONTHS[p.M - 1].slice(0, 3)} ${p.Y}, ${pad(p.h)}:${pad(p.m)}`;
 }
 function fmtLocal(d){
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-// "YYYY-MM-DDTHH:MM" as London wall time -> Date
-function londonToDate(v){
+// "YYYY-MM-DDTHH:MM" as wall time in the send zone -> Date
+function zoneToDate(v){
   const [ds, ts] = String(v).split("T"); if (!ds || !ts) return null;
   const [Y, M, D] = ds.split("-").map(Number), [h, m] = ts.split(":").map(Number);
   const want = Date.UTC(Y, M - 1, D, h, m); let g = want;
-  for (let i = 0; i < 3; i++){ const p = londonParts(new Date(g)); g += want - Date.UTC(p.Y, p.M - 1, p.D, p.h, p.m) }
+  for (let i = 0; i < 3; i++){ const p = zoneParts(new Date(g)); g += want - Date.UTC(p.Y, p.M - 1, p.D, p.h, p.m) }
   return new Date(g);
 }
 const num = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
@@ -283,7 +288,7 @@ function drawEditor(){
     </div>
     ${banner()}
     ${can("edit") ? "" : `<div class="em-need">${esc(E.state.needs_api)}: Save to platform, Send test, Schedule, Send now and Cancel schedule. Your edits stay as a Studio draft, and Create draft on platform makes a new draft from them.</div>`}
-    ${editable ? "" : `<div class="em-ro">${o.status === "scheduled" ? `Scheduled for ${esc(fmtDate(o.scheduled_for, true))} (London). Cancel the schedule to edit it again.` : o.status === "sent" ? `Sent ${esc(fmtDate(o.sent_at, true))}. A sent email can't be changed or unsent.` : `This campaign is ${esc(o.status)}. Only drafts can be changed.`}</div>`}
+    ${editable ? "" : `<div class="em-ro">${o.status === "scheduled" ? `Scheduled for ${esc(fmtDate(o.scheduled_for, true))} (${esc(tzName())}). Cancel the schedule to edit it again.` : o.status === "sent" ? `Sent ${esc(fmtDate(o.sent_at, true))}. A sent email can't be changed or unsent.` : `This campaign is ${esc(o.status)}. Only drafts can be changed.`}</div>`}
     <div class="em-ed" data-team-coll="email" data-team-id="${esc(o.id)}" data-team-label="${esc(c.name)}" data-team-bar="before">
       <div class="em-left">
         <div class="em-fields">
@@ -294,7 +299,7 @@ function drawEditor(){
           <div class="row"><label>From</label><input value="${esc(E.state.from_address || c.from_address || "")}" readonly title="${E.state.from_address ? "Fixed in Setup: always " + esc(E.state.from_address) : "Set by the platform"}"></div>
           <div class="row"><label>Reply-to</label><input value="${esc(E.state.from_address || c.reply_to || "")}" readonly title="${E.state.from_address ? "Fixed in Setup: always " + esc(E.state.from_address) : "Set by the platform"}"></div>
           <div class="row" data-f="aud"><label>Send to</label><select id="em_aud" ${editable ? "" : "disabled"}>${audOptions(audValue(c))}</select></div>
-          ${c.scheduled_for ? `<div class="row"><label>Scheduled for</label><span>${esc(fmtDate(c.scheduled_for, true))} (London)</span></div>` : ""}
+          ${c.scheduled_for ? `<div class="row"><label>Scheduled for</label><span>${esc(fmtDate(c.scheduled_for, true))} (${esc(tzName())})</span></div>` : ""}
         </div>
         <div class="em-code" id="emCodeBox"><div class="h"><span>HTML</span><span id="emHtmlN"></span></div><textarea id="em_html" spellcheck="false" ${ro}>${esc(c.html)}</textarea></div>
       </div>
@@ -516,7 +521,7 @@ async function testDialog(){
   if (sel){ const last = localGet("email.testTo"); if (last && list.includes(last)) sel.value = last; sel.onchange = () => localSet("email.testTo", sel.value) }
 }
 function defaultWhen(){
-  const p = londonParts(new Date(Date.now() + 86400000));
+  const p = zoneParts(new Date(Date.now() + 86400000));
   return `${p.Y}-${pad(p.M)}-${pad(p.D)}T09:00`;
 }
 // [team reviews] in a team: what needs approval, and the one-line why, in the Schedule / Send now dialogs
@@ -531,15 +536,15 @@ async function scheduleDialog(){
   if (!(await beforeAction())) return;
   const t = await teamGate();
   showDialog("Schedule", `<p>Sends to <b>${esc(audLabel())}</b> at the time you pick.</p>
-    <div class="row"><label>Date and time (London)</label><input id="emWhen" type="datetime-local" value="${defaultWhen()}"></div>
+    <div class="row"><label>Date and time (${esc(tzName())})</label><input id="emWhen" type="datetime-local" value="${defaultWhen()}"></div>
     <div class="em-when" id="emWhenLocal"></div>
     <p class="hint">Checks run first. You can cancel the schedule until it starts sending.${E.state.demo ? " Demo data: nothing will really go out." : ""}</p>${window.TeamReviews ? TeamReviews.section(t) : ""}`,
     [["Schedule", () => {
-      const v = $("#emWhen").value, d = londonToDate(v);
+      const v = $("#emWhen").value, d = zoneToDate(v);
       if (!d || d.getTime() < Date.now() + 120000) return toast("Pick a time at least a few minutes from now");
-      runAction("Schedule", "schedule", {when:v, tz:"Europe/London"});
+      runAction("Schedule", "schedule", {when:v, tz:sendTz()});
     }, "primary"]]);
-  const upd = () => { const d = londonToDate($("#emWhen").value); $("#emWhenLocal").textContent = d ? `London: ${fmtDate(d.toISOString(), true)} · Your time: ${fmtLocal(d)}` : "" };
+  const upd = () => { const d = zoneToDate($("#emWhen").value); $("#emWhenLocal").textContent = d ? `${tzName()}: ${fmtDate(d.toISOString(), true)} · Your time: ${fmtLocal(d)}` : "" };
   $("#emWhen").oninput = upd; upd();
   teamWire(t);
 }
@@ -555,7 +560,7 @@ async function sendNowDialog(){
   $("#emSure").onchange = e => { if (upd) upd(); else btn.disabled = !e.target.checked };
 }
 function cancelDialog(){
-  showDialog("Cancel the schedule", `<p>The campaign goes back to draft and will not go out at ${esc(fmtDate(E.cur.original.scheduled_for, true))} (London).</p>`,
+  showDialog("Cancel the schedule", `<p>The campaign goes back to draft and will not go out at ${esc(fmtDate(E.cur.original.scheduled_for, true))} (${esc(tzName())}).</p>`,
     [["Cancel schedule", () => runAction("Cancel schedule", "cancel"), "danger"]]);
 }
 

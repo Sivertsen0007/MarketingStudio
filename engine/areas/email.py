@@ -591,6 +591,23 @@ class McpAdapter:
             {"sent": 0, "delivered": 0, "opens": 0, "clicks": 0, "bounces": 0, "complaints": 0, "unsubscribes": None}
         return {**self._with_audience(c, self.audiences()), "stats": st}
 
+    def merge_tags(self):
+        """The platform's merge tags (email_list_merge_tags), cached; [] when the server has no such tool or fails."""
+        def get():
+            try:
+                r = self.call("email.list_merge_tags", timeout=8)
+            except Exception:  # noqa: BLE001 - optional tool
+                return []
+            items = r if isinstance(r, list) else ((r or {}).get("tags") or (r or {}).get("mergeTags") or []) if isinstance(r, dict) else []
+            out = []
+            for x in items:
+                t = x if isinstance(x, str) else (x.get("tag") or x.get("key") or x.get("name") or "") if isinstance(x, dict) else ""
+                t = str(t).strip().strip("{} ")
+                if t and _TAG_NAME.fullmatch(t):
+                    out.append(t)
+            return out
+        return self._cached("merge_tags", get)
+
     def overview_numbers(self, fresh=False):
         return self._cached("overview", lambda: {k: v for k, v in (self.call("email.overview") or {}).items() if isinstance(v, (int, float))}, fresh)
 
@@ -890,6 +907,7 @@ class FakeAdapter:
 # ---------------------------------------------------------------- preview and checks
 
 MERGE = re.compile(r"\{\{\s*[\w.]+\s*\}\}")
+UNSUB = re.compile(r"\{\{\s*unsubscribe_url\s*\}\}")
 
 
 def render_local(html):
@@ -1024,8 +1042,105 @@ def copy_problems(text, where):
     return out
 
 
-def run_checks(c, links=True, fetch=None):
-    """Problems [{level: error|warn, message}] for a campaign (with any Studio draft already merged in)."""
+def _no_comments(html):
+    return re.sub(r"(?s)<!--.*?-->", " ", html or "")
+
+
+def unsubscribe_problems(html):
+    """{{unsubscribe_url}} must be the href of a real link: a tag in plain text or inside an HTML comment is not a link."""
+    h = _no_comments(html)
+    hrefs = _attr_urls(h, "a", "href") + [htmllib.unescape(m) for m in re.findall(r"(?is)<a\b[^>]*?\bhref\s*=\s*([^\s\"'>]+)", h)]
+    if any(UNSUB.search(u) for u in hrefs):
+        return []
+    if UNSUB.search(html or ""):
+        return [{"level": "error", "message": '{{unsubscribe_url}} is not in a link: put it in <a href="{{unsubscribe_url}}">Unsubscribe</a> '
+                                              "(as plain text or inside an HTML comment it does not work)."}]
+    return [{"level": "error", "message": "{{unsubscribe_url}} is missing."}]
+
+
+GMAIL_WARN_KB, GMAIL_CLIP_KB = 90, 102  # Gmail clips a message whose HTML is over about 102 KB
+
+
+def size_problems(html):
+    """Gmail clipping: the HTML as sent, in UTF-8 bytes (the platform's tracking links add a little more)."""
+    n = len((html or "").encode("utf-8"))
+    kb = round(n / 1024)
+    if n >= GMAIL_CLIP_KB * 1024:
+        return [{"level": "error", "message": f"The email is {kb} KB: Gmail clips anything over {GMAIL_CLIP_KB} KB and hides the rest, "
+                                              "including the unsubscribe link. Make it smaller."}]
+    if n >= GMAIL_WARN_KB * 1024:
+        return [{"level": "warn", "message": f"The email is {kb} KB: close to Gmail's {GMAIL_CLIP_KB} KB clipping limit "
+                                             f"(keep it under {GMAIL_WARN_KB} KB to leave room for tracking links)."}]
+    return []
+
+
+# Merge tags every platform Studio talks to fills in; the EMAIL_MERGE_TAGS setting (comma separated) and the platform add more.
+MERGE_TAGS = ("first_name", "last_name", "full_name", "name", "email", "company", "city", "country", "phone",
+              "unsubscribe_url", "preferences_url", "manage_preferences_url", "view_in_browser_url", "web_version_url",
+              "webview_url", "current_year")
+
+
+def known_merge_tags(a=None):
+    """The merge tags a check accepts (lower-case): the built-in list, the EMAIL_MERGE_TAGS setting and the platform's own
+    list when the adapter has one (merge_tags()). Never raises: a platform that can't list them adds nothing."""
+    out = set(MERGE_TAGS)
+    try:
+        import appconfig  # noqa: PLC0415
+        out |= {t.strip().strip("{} ").lower() for t in re.split(r"[\s,;]+", appconfig.get("EMAIL_MERGE_TAGS") or "") if t.strip("{} ")}
+    except Exception:  # noqa: BLE001
+        pass
+    fn = getattr(a, "merge_tags", None)
+    if fn:
+        try:
+            out |= {str(t).strip().strip("{} ").lower() for t in (fn() or []) if str(t).strip("{} ")}
+        except Exception:  # noqa: BLE001 - the platform's list is a bonus
+            pass
+    return out
+
+
+_TAG = re.compile(r"\{\{\{?([^{}]*)\}?\}\}")  # {{tag}}, and {{{tag}}} (unescaped)
+_TAG_NAME = re.compile(r"[A-Za-z_][\w.]*")
+_SINGLE = re.compile(r"(?<![{$%])\{\s*([A-Za-z_][\w.]*)\s*\}(?!\})")
+_MAILCHIMP = re.compile(r"\*\|\s*[A-Za-z_][\w:]*\s*\|\*")
+
+
+def merge_tag_problems(c, tags=None):
+    """Merge tags in the subject, preview text, HTML and plain text. Unknown or malformed {{tags}} are errors (they reach
+    the inbox as typed); unbalanced braces, {single} braces and Mailchimp-style *|TAGS|* are warnings."""
+    known = known_merge_tags() if tags is None else {t.lower() for t in tags}
+    body = re.sub(r"(?is)<(style|script)[^>]*>.*?</\1>", " ", _no_comments(c.get("html")))
+    out, seen = [], set()
+
+    def add(level, msg):
+        if msg not in seen:
+            seen.add(msg)
+            out.append({"level": level, "message": msg})
+    for where, text in (("subject", c.get("subject")), ("preview text", c.get("preview_text")), ("email body", body),
+                        ("plain text", c.get("text"))):
+        text = text or ""
+        if "{" not in text and "*|" not in text:
+            continue
+        for m in _TAG.finditer(text):
+            name = m.group(1).split("|")[0].strip()  # {{ first_name | fallback }}: the name is before the bar
+            if not _TAG_NAME.fullmatch(name):
+                add("error", f"Merge tag {m.group(0)} is not valid ({where}).")
+            elif name.lower() not in known:
+                add("error", f"Unknown merge tag {m.group(0)} ({where}): check the spelling. Known tags: "
+                             + ", ".join(sorted(known)[:12]) + (", ..." if len(known) > 12 else "") + ". Add your own with the EMAIL_MERGE_TAGS setting.")
+        rest = _TAG.sub(" ", text)
+        if "{{" in rest or "}}" in rest:
+            frag = re.search(r".{0,20}(\{\{|\}\}).{0,20}", rest, re.S).group(0).strip()
+            add("warn", f"Unbalanced merge tag braces near \"{frag}\" ({where}).")
+        for m in _SINGLE.finditer(rest):
+            add("warn", f"{m.group(0)} has single braces: a merge tag needs two, like {{{{{m.group(1)}}}}} ({where}).")
+        for m in _MAILCHIMP.finditer(text):
+            add("warn", f"{m.group(0)} is a Mailchimp-style tag that {PLATFORM} will not fill in: use {{{{ }}}} tags ({where}).")
+    return out
+
+
+def run_checks(c, links=True, fetch=None, tags=None):
+    """Problems [{level: error|warn, message}] for a campaign (with any Studio draft already merged in).
+    tags: the merge tags the platform knows (known_merge_tags(adapter)); None = the built-in list plus Setup."""
     p = []
     html = c.get("html") or ""
     subj = (c.get("subject") or "").strip()
@@ -1038,10 +1153,12 @@ def run_checks(c, links=True, fetch=None):
         p.append({"level": "warn", "message": f"Subject is {len(subj)} characters; keep it to 60 or less."})
     if not html.strip():
         p.append({"level": "error", "message": "The email has no HTML."})
-    elif not re.search(r"\{\{\s*unsubscribe_url\s*\}\}", html):
-        p.append({"level": "error", "message": "{{unsubscribe_url}} is missing."})
+    else:
+        p += unsubscribe_problems(html)
     if not (c.get("list_id") or c.get("segment_id")):
         p.append({"level": "error", "message": "Pick a list or segment."})
+    p += size_problems(html)
+    p += merge_tag_problems(c, tags)
     p += image_problems(html)
     p += copy_problems(subj, "subject")
     p += copy_problems(c.get("preview_text") or "", "preview text")
@@ -1225,7 +1342,7 @@ def p_checks(body):
     a = adapter()
     base, orig, _dr = _merged(a, body["id"])
     merged = {**base, **{k: v for k, v in (body.get("fields") or {}).items() if k in EDITABLE}}
-    probs = run_checks(merged, links=body.get("links", True))
+    probs = run_checks(merged, links=body.get("links", True), tags=known_merge_tags(a))
     unsaved = any((merged.get(k) or "") != (orig.get(k) or "") for k in EDITABLE)
     if a.source == "api" and unsaved:
         probs.append({"level": "info", "message": f"{PLATFORM}'s own checks (audience, tracking) run when you save or send."})
@@ -1369,7 +1486,7 @@ def _prepare(a, cid, kind, extra_lines):
     import progress
     merged, orig, dr = _merged(a, cid, fresh=True)
     progress.start(KEY, kind, [("check", "Checking", 1), ("save", f"Saving to {PLATFORM}", 1), *extra_lines], "checking", "Checking the email")
-    probs = run_checks(merged)
+    probs = run_checks(merged, tags=known_merge_tags(a))
     if a.source == "api" and not dr:
         try:
             probs += [{"level": x.get("level", "warn"), "message": "Platform: " + x.get("message", "")} for x in a.server_checks(cid).get("problems", [])]

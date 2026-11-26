@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private var logHandle: FileHandle?
     private var port = 4830
     private var terminating = false
+    private var hideAfterFullScreen = false  // Cmd-W in full screen: hide once full screen has ended
     private var sigtermSource: DispatchSourceSignal?
 
     /// MSTUDIO_HEADLESS_TEST=1: never show a modal dialog (automated launch tests);
@@ -211,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             alert.informativeText = "Exit \(status).\n\n\(tail)\n\nFull log: \(logURL.path)\nQuit and open Marketing Studio again to restart it."
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)  // the window may be hidden: bring Studio forward so the alert is seen
             alert.runModal()
         }
     }
@@ -341,9 +343,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard sender === window, !terminating else { return true }
+        if sender.styleMask.contains(.fullScreen) {
+            // leave full screen first, then hide (windowDidExitFullScreen), so no empty black Space is left behind
+            hideAfterFullScreen = true
+            sender.toggleFullScreen(nil)
+            return false
+        }
         sender.saveFrame(usingName: AppDelegate.frameKey)
         sender.orderOut(nil)  // hidden, not closed: the page (and any push it is following) stays as it is
         return false
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        guard hideAfterFullScreen, let w = notification.object as? NSWindow, w === window else { return }
+        hideAfterFullScreen = false
+        w.saveFrame(usingName: AppDelegate.frameKey)
+        w.orderOut(nil)
     }
 
     func windowWillClose(_ notification: Notification) {

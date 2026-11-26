@@ -2339,7 +2339,7 @@ function srcNames(list){
 function ovTileTips(){
   document.querySelectorAll("#ovPage .tile .v").forEach(v => {
     const cut = v.scrollWidth > v.clientWidth + 1, full = v.textContent.trim(), tile = v.closest(".tile");
-    if (!tile.dataset.tip) tile.dataset.tip = tile.getAttribute("title") || "";
+    if (tile.dataset.tip === undefined) tile.dataset.tip = tile.getAttribute("title") || "";  // the tile's own tooltip, read once
     const base = tile.dataset.tip;
     if (cut) tile.title = base ? `${full}\n${base}` : full; else if (base) tile.title = base; else tile.removeAttribute("title");
   });
@@ -2390,6 +2390,7 @@ async function overviewPage(days){
     ${card("Campaigns with spend", `${o.campaigns.length} campaigns`, dc ? tbl(["Channel", "Campaign", "Destination", "Status", "Spend (" + esc(dc) + ")", "Native", "Clicks", "Results", "Select Cabin", "Cost / Select Cabin (" + esc(dc) + ")"], o.campaigns.map(r => `<tr><td>${r.channel}</td><td title="${esc(r.account)}">${esc(r.campaign)}</td><td>${esc(r.destination)}</td><td>${pill(r.status)}</td><td class="num" title="${esc(nat(r.spend, r.currency))}">${r.spend_display == null ? "not converted" : esc(curFmt(r.spend_display, dc))}</td><td>${esc(curFmt(r.spend, r.currency))}</td><td class="num">${fmtN(r.clicks)}</td><td class="num">${fmtN(r.results)}</td><td class="num"><b>${fmtN(r.select_cabin || "")}</b></td><td class="num" title="${esc(r.select_cabin ? nat(r.spend / r.select_cabin, r.currency) : "")}">${r.select_cabin && r.spend_display != null ? esc(curFmt(r.spend_display / r.select_cabin, dc)) : ""}</td></tr>`), [4, 6, 7, 8, 9])
     : tbl(["Channel", "Campaign", "Destination", "Status", "Spend", "Cur.", "Clicks", "Results", "Select Cabin", "Cost / Select Cabin"], o.campaigns.map(r => `<tr><td>${r.channel}</td><td title="${esc(r.account)}">${esc(r.campaign)}</td><td>${esc(r.destination)}</td><td>${pill(r.status)}</td><td class="num">${esc(curFmt(r.spend, r.currency))}</td><td>${r.currency}</td><td class="num">${fmtN(r.clicks)}</td><td class="num">${fmtN(r.results)}</td><td class="num"><b>${fmtN(r.select_cabin || "")}</b></td><td class="num">${r.select_cabin ? esc(curFmt(r.spend / r.select_cabin, r.currency)) : ""}</td></tr>`), [4, 6, 7, 8, 9]))}`;
   ovTileTips();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (document.body.classList.contains("ov")) ovTileTips() });  // widths change once Manrope has loaded
   $("#ovDays").onchange = e => { localSet("ovdays", e.target.value); overviewPage(e.target.value) };
   $("#ovRefresh").onclick = async () => { $("#ovRefresh").disabled = true; $("#ovFetched").innerHTML = `<span class="spin"></span> Fetching ...`;
     await dataRefresh("overview", null, {reload:false, body:{days:String(o.days)}}); overviewPage(String(o.days)) };

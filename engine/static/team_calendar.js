@@ -1,6 +1,7 @@
 // Marketing Studio - Calendar area: the shared calendar (week / month, every channel, each owner in their team colour),
 // the team library and the team settings. Also, on every page: the "Library" picker for text fields in the Ads, Email,
-// SEO and SoMe editors, and a heads-up with the clash warnings before SoMe / email scheduling (warnings only).
+// SEO and SoMe editors, and a heads-up with the clash warnings before email scheduling (warnings only; SoMe lists its
+// clash warnings inside its own Schedule dialog, before you confirm).
 // Talks to /api/area/team_calendar/* (areas/team_calendar.py, shared_calendar.py, team_settings.py).
 (() => {
 const PRESS = (document.querySelector('meta[name="studio-press"]') || {}).content || "";
@@ -61,7 +62,9 @@ const CSS = `
 .tc-it .t{font-weight:600;color:var(--text)} .tc-it .s{color:var(--muted);font-size:11px;font-weight:500}
 .tc-it.st-review{box-shadow:inset 3px 0 0 var(--oc),inset 0 0 0 1px var(--warn);background:var(--warn-bg)}
 .tc-it.st-planned{opacity:.9}
-.tc-it.st-published,.tc-it.st-sent{opacity:.55}
+.tc-it.st-published,.tc-it.st-sent,.tc-it.outside{opacity:.55}
+.tc-it.outside{box-shadow:inset 3px 0 0 var(--oc),inset 0 0 0 1px var(--line)}
+.tc-it a{color:inherit;text-decoration:none} .tc-it a:hover{text-decoration:underline}
 .tc-card{border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);padding:18px 20px;margin-bottom:12px}
 .tc-card h3{margin:0 0 6px;font-size:16px;font-weight:600;color:var(--text);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .tc-badge{display:inline-flex;align-items:center;height:22px;font-size:11px;padding:0 8px;border-radius:var(--r-sm);background:var(--sunken);color:var(--text2);font-weight:600}
@@ -155,9 +158,11 @@ async function loadCal(){
 }
 function item(x){
   const o = x.owner || {};
-  const tip = `${CH[x.channel] || x.channel} · ${x.status} · ${o.name}${x.audience_name ? " · to " + x.audience_name : ""}${x.link ? " · " + x.link : ""}`;
-  return `<span class="tc-it st-${esc(x.status)}" style="--oc:${colour(o.colour)}" title="${esc(tip)}">
-    <span class="s">${esc(hm(x.when))} ${esc(CH[x.channel] || x.channel)}</span> <span class="t">${esc(x.title)}</span>
+  const where = x.outside ? " · made outside Studio (Meta Business Suite or the app)" : x.kind === "seo" && x.status === "published" ? " · published from Studio's SEO area" : "";
+  const tip = `${CH[x.channel] || x.channel} · ${x.status} · ${o.name}${where}${x.audience_name ? " · to " + x.audience_name : ""}${x.link ? " · " + x.link : ""}`;
+  const t = x.url && /^https:\/\//.test(x.url) ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title);
+  return `<span class="tc-it st-${esc(x.status)}${x.outside ? " outside" : ""}" style="--oc:${colour(o.colour)}" title="${esc(tip)}">
+    <span class="s">${esc(hm(x.when))} ${esc(CH[x.channel] || x.channel)}</span> <span class="t">${t}</span>
     <span class="s">· ${esc(x.status)} · ${esc(o.name)}</span></span>`;
 }
 function drawCal(s, e){
@@ -165,18 +170,18 @@ function drawCal(s, e){
   for (const x of D.entries) (byDay[ymd(new Date(x.when))] = byDay[ymd(new Date(x.when))] || []).push(x);
   const lim = D.limits || {}, today = ymd(new Date()), month = T.anchor.getMonth();
   let h = `<div class="tc-legend">${(D.people || []).map(p => `<span class="who"><i class="tc-dot" style="background:${colour(p.colour)}"></i>${esc(p.name)}</span>`).join("")}
-    <span>Dashed: in review. Faded: already out.</span><span>Limits: ${esc(lim.max_per_channel_day)} a day per channel, ${esc(lim.min_gap_hours)} h apart.</span></div>`;
+    <span>Outlined: in review. Faded: already out, or made outside Studio. Planned drafts never count for the limits.</span><span>Limits: ${esc(lim.max_per_channel_day)} a day per channel, ${esc(lim.min_gap_hours)} h apart.</span></div>`;
   h += `<div class="tc-cal"><div class="${T.view === "week" ? "tc-week" : "tc-month"}">`;
   if (T.view === "month") h += DAYS.map(d => `<div class="tc-dow">${d}</div>`).join("");
   for (let d = new Date(s); d < e; d = addDays(d, 1)){
     const k = ymd(d), list = byDay[k] || [];
-    const per = {}; list.forEach(x => per[x.channel] = (per[x.channel] || 0) + 1);
+    const per = {}; list.forEach(x => { if (x.status !== "planned") per[x.channel] = (per[x.channel] || 0) + 1 });
     const over = Object.entries(per).filter(([, n]) => n > (lim.max_per_channel_day || 99)).map(([c]) => CH[c] || c);
     h += `<div class="tc-day ${k === today ? "today" : ""} ${T.view === "month" && d.getMonth() !== month ? "out" : ""}">
       <h4>${T.view === "week" ? DAYS[(d.getDay() + 6) % 7] + " " : ""}<span class="d">${d.getDate()}</span>${over.length ? ` <span class="n over" title="Over the daily limit">${esc(over.join(", "))}</span>` : list.length ? `<span class="n">${list.length}</span>` : ""}</h4>
       ${list.map(item).join("")}</div>`;
   }
-  body().innerHTML = h + `</div></div>` + (D.entries.length ? "" : `<p class="tc-help" style="margin-top:10px">Nothing with a time in this range. SoMe posts, email campaigns and SEO publishes show here once they have one.</p>`);
+  body().innerHTML = h + `</div></div>` + (D.entries.length ? "" : `<p class="tc-help" style="margin-top:10px">Nothing in this range. SoMe posts (Studio's, and what is live or scheduled on the Page and Instagram), email campaigns and pages published from the SEO area show here.</p>`);
 }
 
 // ---------- library ----------
@@ -351,15 +356,14 @@ function insert(el, x){
 }
 
 // ---------- clash heads-up before scheduling (warnings only) ----------
-const SCHED = /\/api\/area\/(social|email)\/(schedule|send_now)(\?|$)/;
+const SCHED = /\/api\/area\/(email)\/(schedule|send_now)(\?|$)/;  // SoMe: the clashes are listed in its Schedule dialog
 window.fetch = async function(input, init){
   try {
     const url = typeof input === "string" ? input : (input && input.url) || "";
     const m = SCHED.exec(url);
     if (m && init && (init.method || "").toUpperCase() === "POST" && typeof init.body === "string"){
       const b = JSON.parse(init.body || "{}");
-      const q = m[1] === "social" ? {kind:"social", id:b.id, channels:(b.channels || []).join(",")}
-        : m[2] === "send_now" ? {kind:"email", id:b.id, now:"1"} : {kind:"email", id:b.id, when:b.when || "", tz:b.tz || ""};
+      const q = m[2] === "send_now" ? {kind:"email", id:b.id, now:"1"} : {kind:"email", id:b.id, when:b.when || "", tz:b.tz || ""};
       let warns = [];
       try { warns = (await call(A("clashes", q))).clashes || [] } catch(err) {}
       if (warns.length && !confirm("Heads-up from the shared calendar (warnings only):\n\n" + warns.map(w => "- " + w.message).join("\n") + "\n\nGo ahead anyway?"))

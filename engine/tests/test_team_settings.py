@@ -30,6 +30,12 @@ def social_probs(text):
     return schecks.copy_problems("caption", text)
 def ads_warn(text):
     return core._warn([{"Headline 1": text}])
+class _Connected(em.FakeAdapter):
+    demo = False  # the demo platform's data, but treated as a connected platform (the calendar skips demo data)
+def connect_email():
+    em.adapter = lambda: _Connected()
+def scheduled(p, *chs):
+    return store.update(p["id"], lambda x: x.__setitem__("results", {c: {"status": "scheduled", "via": "meta", "scheduled_for": x["when"]} for c in chs}))
 def ads_block(text):
     return core.check({"type": "rsa", "campaign": "C", "ad_group": "G", "final_url": "https://example.com/",
                        "headlines": [{"text": text}, {"text": "Two"}, {"text": "Three"}], "descriptions": [{"text": "A fine line"}, {"text": "Another"}]})[0]
@@ -344,17 +350,20 @@ out = {"n": len(ts.library_list()["items"]), "can_add": ts.library_list()["can_a
         a, an = self.member("Cleo")
         b, bn = self.member("Cal")
         r = self.run_in(a, """
+connect_email()
 w = dt.datetime(2030, 3, 5, 9, 0, tzinfo=dt.timezone.utc)
 p1 = store.save({"title": "Manta season", "channels": ["facebook"], "when": w.isoformat(), "caption": "Mantas",
                  "link": "https://example.com/mantas/?utm_source=facebook", "media": [{"media_id": "img1", "kind": "image"}]})
 p2 = store.save({"title": "Reef report", "channels": ["facebook", "instagram"], "when": (w + dt.timedelta(hours=6)).isoformat(),
                  "caption": "Reefs", "media": [{"media_id": "img9", "kind": "image"}]})
+scheduled(p1, "facebook"); scheduled(p2, "facebook", "instagram")
 c3 = [x for x in em.adapter().list_campaigns() if x["id"] == "demo-3"][0]
 cal.mark_email(c3, c3["scheduled_for"])
 team.sync()
 out = {"p1": p1["id"]}""")
         r = self.run_in(b, f"""
 team.sync()
+connect_email()
 w = dt.datetime(2030, 3, 5, 9, 0, tzinfo=dt.timezone.utc)
 cand = store.save({{"title": "Manta Season!", "channels": ["facebook"], "when": (w + dt.timedelta(hours=1)).isoformat(),
                    "caption": "Mantas again", "link": "https://www.example.com/mantas", "media": [{{"media_id": "img1", "kind": "image"}}]}})
@@ -388,6 +397,7 @@ out = {{"soc": soc, "far": cal.social_clashes(far), "mail": mail, "other_list": 
         a, an = self.member("Sam")
         r = self.run_in(a, """
 from areas import email as em2
+connect_email()
 c = [x for x in em.adapter().list_campaigns() if x["id"] == "demo-4"][0]
 when = cal.parse([x for x in em.adapter().list_campaigns() if x["id"] == "demo-3"][0]["scheduled_for"]) + dt.timedelta(hours=1)
 em.FROM_ADDRESS = ""
@@ -403,6 +413,65 @@ out = {"ok": res.get("ok"), "msg": res.get("message"), "rules": sorted({x["rule"
         self.assertEqual(r["rules"], ["audience", "gap"])
         self.assertEqual(r["marks"], ["email_demo-4"])
         self.assertEqual(r["after"], [])
+
+    def test_calendar_skips_demo_email_and_planned_drafts_never_clash(self):
+        """C15: demo email data is neither on the calendar nor a clash; C29: a draft with only a time is no clash."""
+        r = self.run_in(self.home(), """
+w = dt.datetime(2030, 3, 5, 9, 0, tzinfo=dt.timezone.utc)
+draft = store.save({"title": "Manta season", "channels": ["facebook"], "when": w.isoformat(), "caption": "Mantas"})
+cand = store.save({"title": "Manta season", "channels": ["facebook"], "when": (w + dt.timedelta(minutes=30)).isoformat(), "caption": "x"})
+before = cal.social_clashes(cand)
+scheduled(draft, "facebook")
+after = sorted({x["rule"] for x in cal.social_clashes(cand)})
+c3 = [x for x in em.adapter().list_campaigns() if x["id"] == "demo-3"][0]
+t = cal.parse(c3["scheduled_for"])
+demo_rows = [e for e in cal.calendar_list((t - dt.timedelta(days=1)).isoformat(), (t + dt.timedelta(days=1)).isoformat())["entries"] if e["kind"] == "email"]
+demo_mark = cal.mark_email(c3, c3["scheduled_for"])
+marks = [x["id"] for x in draftstore.items("calendar", ROOT)]
+demo_clash = cal.email_clashes({"id": "new-1", "subject": "Another", "list_id": "l1"}, t + dt.timedelta(hours=1))
+connect_email()
+real_rows = [e["id"] for e in cal.calendar_list((t - dt.timedelta(days=1)).isoformat(), (t + dt.timedelta(days=1)).isoformat())["entries"] if e["kind"] == "email"]
+out = {"before": before, "after": after, "demo_rows": demo_rows, "demo_mark": demo_mark.get("demo"), "marks": marks,
+       "demo_clash": demo_clash, "real_rows": real_rows}""")
+        self.assertEqual(r["before"], [])  # the other one is only a planned draft
+        self.assertEqual(r["after"], ["gap", "topic"])  # scheduled now: a real clash
+        self.assertEqual(r["demo_rows"], [])
+        self.assertTrue(r["demo_mark"])
+        self.assertEqual(r["marks"], [])  # a demo schedule never reaches the team's calendar
+        self.assertEqual(r["demo_clash"], [])
+        self.assertEqual(r["real_rows"], ["demo-3"])
+
+    def test_calendar_has_posts_made_outside_studio_and_seo_history(self):
+        """C13 / U25: live and Meta-scheduled SoMe posts (not Studio's own) are on the calendar and clash; C14: SEO
+        publish history shows."""
+        r = self.run_in(self.home(), """
+import json as _j
+from areas import social, _seo_common as seoc
+w = dt.datetime(2030, 3, 5, 9, 0, tzinfo=dt.timezone.utc)
+mine = store.save({"title": "Studio post", "channels": ["facebook"], "when": w.isoformat(), "caption": "ours"})
+store.update(mine["id"], lambda x: x.__setitem__("results", {"facebook": {"status": "published", "post_id": "fb_1"}}))
+social._published = lambda force=False: {"posts": [
+    {"id": "fb_1", "channel": "facebook", "when": w.isoformat(), "text": "ours"},
+    {"id": "fb_2", "channel": "facebook", "when": (w + dt.timedelta(hours=1)).isoformat(), "text": "From Business Suite https://example.com/x", "url": "https://fb/2"}],
+    "scheduled": [{"id": "fb_3", "channel": "facebook", "when": (w + dt.timedelta(days=1)).isoformat(), "text": "Scheduled in Meta"}]}
+seoc.append_jsonl("seo_history.jsonl", {"push_id": "p1", "at": (w + dt.timedelta(hours=3)).isoformat(), "action": "publish", "target": "live",
+                                        "post_id": 7, "title": "Red Sea guide", "url": "https://example.com/red-sea/", "ok": True})
+seoc.append_jsonl("seo_history.jsonl", {"push_id": "p2", "at": (w + dt.timedelta(hours=4)).isoformat(), "action": "publish", "target": "live",
+                                        "post_id": 8, "title": "Undone", "ok": True})
+seoc.append_jsonl("seo_history.jsonl", {"push_id": "p2", "at": (w + dt.timedelta(hours=5)).isoformat(), "action": "undo"})
+cl = cal.calendar_list(w.date().isoformat(), (w + dt.timedelta(days=3)).date().isoformat())
+cand = store.save({"title": "New", "channels": ["facebook"], "when": (w + dt.timedelta(hours=1, minutes=30)).isoformat(),
+                   "caption": "see https://example.com/x?utm_source=fb"})
+out = {"entries": [(e["key"], e["status"], e["owner"]["name"], bool(e.get("outside"))) for e in cl["entries"]],
+       "rules": sorted({(x["rule"], x["other"]["id"]) for x in cal.social_clashes(cand)})}""")
+        keys = {k: (st, who, outside) for k, st, who, outside in r["entries"]}
+        self.assertNotIn("social:live:fb_1", keys)  # Studio made it: listed once, as the Studio post
+        self.assertEqual(keys["social:live:fb_2"], ("published", "Outside Studio", True))
+        self.assertEqual(keys["social:live:fb_3"], ("scheduled", "Outside Studio", True))
+        self.assertEqual(keys["seo:pub:p1:7"][0], "published")
+        self.assertNotIn("seo:pub:p2:8", keys)  # undone
+        self.assertIn(["gap", "fb_2"], r["rules"])
+        self.assertIn(["link", "fb_2"], r["rules"])
 
 
 if __name__ == "__main__":

@@ -2,8 +2,10 @@
 to post (weekday x hour heatmap), quick time picks, bulk CSV import preview, evergreen autolists, trackable links (UTM),
 hashtag ranking from our own posts, account analytics + an HTML report, and competitor facts.
 
-Times: Studio works in this Mac's local time zone. Instagram's online_followers hours are read as Pacific time
-(Meta's insights days end at 08:00 UTC, i.e. midnight Pacific) and converted to local time (confidence: medium).
+Times: slots, quick picks and the best time are in the posting time zone (store.posting_tz(), default Europe/London, shared
+with Email), passed in as `tz`; without one a function keeps the zone of the time it is given. Instagram's online_followers
+hours are read as Pacific time (Meta's insights days end at 08:00 UTC, i.e. midnight Pacific) and converted to that zone
+(confidence: medium).
 """
 import csv
 import datetime as dt
@@ -43,7 +45,7 @@ def fmt_slots(slots):
 
 
 def taken_times(posts, channels):
-    """Minute-rounded local times already used by posts (any status except cancelled/deleted) on these channels."""
+    """Minute-rounded times already used by posts (any status except cancelled/deleted) on these channels."""
     out = set()
     for p in posts:
         w = (p.get("move") or {}).get("when") or p.get("when")
@@ -53,21 +55,22 @@ def taken_times(posts, channels):
     return out
 
 
-def next_free_slot(slot_map, channels, posts, after, day=None, horizon=28):
-    """The first slot (of any of the channels) after `after` that no post on those channels uses.
-    day: a date to look on only that day. -> aware datetime or None."""
+def next_free_slot(slot_map, channels, posts, after, day=None, horizon=28, tz=None):
+    """The first slot (of any of the channels) after `after` that no post on those channels uses. Slots are wall-clock
+    times in tz (default: after's zone). day: a date to look on only that day. -> aware datetime (in tz) or None."""
     slots = sorted({s for c in channels for s in parse_slots(slot_map.get(c) or [])})
     if not slots:
         return None
     used = taken_times(posts, channels)
-    after = after.astimezone()
-    start = dt.datetime.combine(day, dt.time(), after.tzinfo) if day else after
+    after = after.astimezone(tz) if tz else (after if after.tzinfo else after.astimezone())
+    tz = after.tzinfo
+    start = dt.datetime.combine(day, dt.time(), tz) if day else after
     for i in range(1 if day else horizon + 1):
         d = (start + dt.timedelta(days=i)).date()
         for wd, h, m in slots:
             if d.weekday() != wd:
                 continue
-            t = dt.datetime(d.year, d.month, d.day, h, m, tzinfo=after.tzinfo).astimezone()
+            t = dt.datetime(d.year, d.month, d.day, h, m, tzinfo=tz)
             if t > after and t not in used:
                 return t
     return None
@@ -146,17 +149,19 @@ def next_best(top, after, used=()):
     return sorted(out)
 
 
-def quick_times(now, slot_time=None, best=None):
-    """The quick picks under the date field. -> [{label, when}]"""
-    now = now.astimezone()
+def quick_times(now, slot_time=None, best=None, tz=None):
+    """The quick picks under the date field, as wall-clock times in tz (default: now's zone). -> [{label, when}]"""
+    now = now.astimezone(tz) if tz else (now if now.tzinfo else now.astimezone())
     day = lambda n, h, m=0: (now + dt.timedelta(days=n)).replace(hour=h, minute=m, second=0, microsecond=0)  # noqa: E731
     picks = []
     if day(0, 18) > now + dt.timedelta(minutes=15):
         picks.append(("Today 18:00", day(0, 18)))
     picks += [("Tomorrow 09:00", day(1, 9)), ("Tomorrow 12:00", day(1, 12)), ("Tomorrow 18:00", day(1, 18))]
     if slot_time:
+        slot_time = slot_time.astimezone(now.tzinfo)
         picks.append((f"Next queue slot ({slot_time:%a %H:%M})", slot_time))
     for b in (best or [])[:1]:
+        b = b.astimezone(now.tzinfo)
         picks.append((f"Best time ({b:%a %H:%M})", b))
     return [{"label": label, "when": store.iso(t)} for label, t in picks]
 

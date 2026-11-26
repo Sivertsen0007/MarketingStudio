@@ -111,7 +111,12 @@ function render(el){
   $("#actCustom").style.display = T.period === "custom" ? "" : "none";
   $("#actPeriod").onchange = e => { T.period = e.target.value; $("#actCustom").style.display = T.period === "custom" ? "" : "none";
     if (T.period !== "custom"){ localSet("act.period", T.period); load() } };
-  $("#actApply").onclick = () => { T.from = $("#actFrom").value; T.to = $("#actTo").value; if (T.from && T.to) load(); else toast("Pick a from and a to date") };
+  $("#actApply").onclick = () => { let f = $("#actFrom").value, t = $("#actTo").value; const today = dayKey(new Date());
+    if (!f || !t) return toast("Pick a from and a to date");
+    if (t < f){ [f, t] = [t, f]; $("#actFrom").value = f; $("#actTo").value = t; toast("The dates were the wrong way round, so they were swapped") }
+    if (f > today) return toast("The from date is after today: pick a date up to today");
+    if (t > today){ t = today; $("#actTo").value = t; toast("The to date was after today, so the period ends today") }
+    T.from = f; T.to = t; load() };
   $("#actTz").onchange = e => { T.tz = e.target.value; localSet("act.tz", T.tz); load() };
   $("#actCompare").onchange = e => { T.compare = e.target.checked; localSet("act.compare", T.compare ? "1" : "0"); draw() };
   $("#actRefresh").onclick = async () => { const b = $("#actRefresh"); b.disabled = true;
@@ -134,7 +139,7 @@ function load(refresh){
       if (r.sync){ const w = $("#actSync"); if (w){ w.textContent = r.sync.warning || ""; w.style.display = r.sync.warning ? "" : "none" } }
     } catch(e) {
       if (seq !== T.seq) return;
-      T.res[s] = {status: "error", rows: [], by_tile: {}, prev_by_tile: {}, note: "", errors: [e.message]};
+      T.res[s] = {status: "error", rows: [], by_tile: {}, prev_by_tile: {}, note: "", errors: [e.message], error_details: []};
     }
     draw();
   });
@@ -156,7 +161,7 @@ function draw(){
   if (!T.el || !$("#actBody") || !$("#actPerLabel") || !$("#actChips")) return;
   $("#actPerLabel").textContent = T.per ? `${T.per.label}: ${fmtDay(T.per.days[0])} to ${fmtDay(T.per.days[T.per.days.length - 1])}` : "Loading ...";
   $("#actChips").innerHTML = `<span class="lbl">Sources</span>` + Object.entries(SRC).map(([s, l]) => { const r = T.res[s] || {};
-    const tip = [r.note, ...(r.errors || [])].filter(Boolean).join(" | ");
+    const tip = [r.note, ...(r.errors || []), ...(r.error_details || [])].filter(Boolean).join(" | ");
     return `<span class="act-chip ${esc(r.status)}" title="${esc(tip)}" data-src="${s}"><i></i>${esc(l)}: ${esc(STATUS[r.status] || r.status)}${r.status === "ok" || r.status === "demo" ? ` (${N((r.rows || []).length)})` : ""}</span>` }).join("");
   const rows = allRows();
   const body = $("#actBody");
@@ -179,7 +184,8 @@ function tilesHtml(){
     else if (T.compare) d = r.prev_complete === false ? "no full history to compare" : (v === pv ? "same as previous period" : `${v > pv ? "up" : "down"} ${N(Math.abs(v - pv))} on previous (${N(pv)})`);
     const cls = T.compare && r.status === "ok" && r.prev_complete !== false && v !== pv ? (v > pv ? "up" : "down") : "";
     const on = T.f.channel === src && (src !== "blog" || T.f.type === (k === "blog_pub" ? "Post published" : "Post edited"));
-    return `<div class="act-tile ${on ? "on" : ""}" data-tile="${k}" title="${esc(label)}: show only these"><div class="k">${esc(label)}</div><div class="v">${r.status === "loading" ? "..." : N(v)}${r.complete === false ? "<span class='ast'> *</span>" : ""}</div><div class="d ${cls}">${esc(d)}</div></div>` }).join("")}</div>`;
+    const unread = r.status === "error" || r.status === "not_connected";  // not read: "-", never a 0 that looks like nothing happened
+    return `<div class="act-tile ${on ? "on" : ""}" data-tile="${k}" title="${esc(label)}: show only these${unread && (r.errors || []).length ? " | " + esc((r.errors || []).join(" ")) : ""}"><div class="k">${esc(label)}</div><div class="v">${r.status === "loading" ? "..." : unread ? "-" : N(v)}${r.complete === false ? "<span class='ast'> *</span>" : ""}</div><div class="d ${cls}">${esc(d)}</div></div>` }).join("")}</div>`;
 }
 
 function chartHtml(rows){
@@ -212,7 +218,9 @@ function notesHtml(){
   if (g.note) bits.push(`<b>Google Ads:</b> ${esc(g.note)}`);
   if (m.note) bits.push(`<b>Meta:</b> ${esc(m.note)}`);
   ["email", "blog", "social"].forEach(s => { const r = T.res[s] || {}; if (r.note) bits.push(`<b>${SRC[s]}:</b> ${esc(r.note)}`) });
-  Object.entries(T.res).forEach(([s, r]) => (r.errors || []).forEach(e => bits.push(`<b style="color:var(--bad)">${SRC[s]} error:</b> ${esc(e)}`)));
+  ((T.per || {}).notes || []).forEach(n => bits.push(`<b>Period:</b> ${esc(n)}`));
+  Object.entries(T.res).forEach(([s, r]) => (r.errors || []).forEach((e, i) => { const raw = (r.error_details || []).join(" | ");
+    bits.push(`<span title="${esc(raw)}"><b style="color:var(--bad)">${SRC[s]} could not be read:</b> ${esc(e)}</span>`) }));
   bits.push("* = the archive does not cover the whole period yet. Meta's own automatic events (reviews, first delivery, billing) and demo or dry-run rows are listed but not counted.");
   return `<div class="act-notes"><p class="act-note">${bits.join("<br>")}</p></div>`;
 }

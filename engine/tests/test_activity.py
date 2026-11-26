@@ -192,6 +192,11 @@ class MetaMapping(unittest.TestCase):
                  extra_data=json.dumps({"old_value": 5000, "new_value": 8000, "currency": "USD"}))
         r = mch.map_row(x, "act_644", "ML Meta")
         self.assertEqual((r["old"], r["new"], r["by_kind"]), ("50.00 USD", "80.00 USD", "api"))
+        x.update(extra_data=json.dumps({"old_value": 5000, "new_value": 8000, "currency": "JPY", "type": "budget"}))
+        r = mch.map_row(x, "act_644", "ML Meta")
+        self.assertEqual((r["old"], r["new"]), ("5,000 JPY", "8,000 JPY"))  # whole yen, not 50.00
+        o, n = mch.old_new("update_ad_set_budget", json.dumps({"new_value": [1200, 3400], "currency": "krw", "type": "budget"}))
+        self.assertEqual(n, "1,200; 3,400 krw")
 
     def test_system_and_unknown(self):
         x = {"actor_id": "0", "event_time": "2026-11-10T00:08:25+0000", "event_type": "update_ad_run_status", "object_type": "ADGROUP",
@@ -372,6 +377,57 @@ class CombineAndCsv(unittest.TestCase):
 
     def test_no_write_actions(self):
         self.assertEqual(A.POST, {})
+
+
+class V023(unittest.TestCase):
+    """v0.2.3: custom periods are checked (C28); unreadable sources show no number and a plain sentence (C27)."""
+
+    def test_custom_period_swapped_clamped_refused(self):
+        now = dt.datetime(2026, 11, 10, 15, 0, tzinfo=LON)
+        p = per.period("custom", now=now, start="2026-10-26", end="2026-10-20")
+        self.assertEqual((p["start"], p["end"]), (dt.datetime(2026, 10, 20, tzinfo=LON), dt.datetime(2026, 10, 27, tzinfo=LON)))
+        self.assertIn("swapped", p["notes"][0])
+        p = per.period("custom", now=now, start="2026-11-01", end="2026-12-31")
+        self.assertEqual(p["end"], dt.datetime(2026, 11, 11, tzinfo=LON))  # ends with today
+        self.assertIn("ends today", p["notes"][0])
+        with self.assertRaises(ValueError) as e:
+            per.period("custom", now=now, start="2026-11-20", end="2026-11-30")
+        self.assertIn("after today", str(e.exception))
+        with self.assertRaises(ValueError):
+            per.period("custom", now=now, start="soon", end="later")
+        self.assertEqual(per.period("custom", now=now, start="2026-10-20", end="2026-10-26")["notes"], [])
+        self.assertIn("notes", A._period_out(p))
+
+    def test_plain_errors(self):
+        raw = "Meta: <urlopen error [Errno 8] nodename nor servname provided, or not known>"
+        self.assertEqual(A.plain_error(raw), "Meta: Could not reach it: this Mac seems to be offline, or the address is wrong.")
+        self.assertIn("did not answer in time", A.plain_error("The read operation timed out"))
+        self.assertIn("refused or has expired", A.plain_error("HTTP Error 401: Unauthorized"))
+        self.assertEqual(A.plain_error("AttributeError: 'NoneType' object has no attribute 'get'"), "Could not read it (details in the tooltip).")
+        self.assertEqual(A.plain_error("No Meta token or ad account."), "No Meta token or ad account.")
+
+    def test_unreadable_source_has_no_number(self):
+        p = per.period("last_7", now=dt.datetime(2026, 11, 10, 15, 0, tzinfo=LON))
+        orig = A._load_raw
+        A._load_raw = lambda src, p, force=False: (_ for _ in ()).throw(OSError("[Errno 8] nodename nor servname provided"))
+        try:
+            r = A.load_source("blog", p, force=True)
+        finally:
+            A._load_raw = orig
+        self.assertEqual(r["status"], "error")
+        self.assertIn("offline", r["errors"][0])
+        self.assertIn("Errno 8", r["error_details"][0])  # the raw text, for the tooltip
+        empty = {"status": "ok", "rows": [], "count": 0, "prev_count": 0, "by_tile": {}, "prev_by_tile": {}}
+        res = {s: dict(empty) for s in A.SOURCES}
+        res["blog"] = r
+        s = A.summarise(res, p)
+        t = {x["key"]: x for x in s["tiles"]}
+        self.assertIsNone(t["blog_pub"]["v"])
+        self.assertIsNone(t["blog_pub"]["delta"])
+        self.assertEqual(t["google"]["v"], 0)
+        self.assertIsNone(s["sources"]["blog"]["count"])
+        js = (Path(__file__).resolve().parents[1] / "static" / "activity.js").read_text()
+        self.assertIn('unread ? "-"', js)
 
 
 @unittest.skipUnless(os.environ.get("ACTIVITY_REAL") == "1", "real reads only with ACTIVITY_REAL=1")

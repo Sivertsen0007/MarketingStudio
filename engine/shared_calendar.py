@@ -2,11 +2,16 @@
 
 Entries come from what this Mac has, read locally (no extra calls to the team server):
   SoMe    every Studio post with a time (synced drafts: teammates' posts too), one entry per ticked channel, with its
-          status (planned, review = approval needed, scheduled, publishing, published, ...).
+          status (planned, review = approval needed, scheduled, publishing, published, ...). Plus the posts made
+          outside Studio (Meta Business Suite, the apps): what is live on the Page and Instagram and what Meta has
+          scheduled, read the same way (and with the same cache) as the SoMe area's own calendar. Posts Studio made
+          are not listed twice. These have "outside": True and the owner "Outside Studio".
   Email   campaigns on the email platform that are scheduled, sending or sent (the platform is shared, so this is the
           whole team's), plus marks in the synced collection "calendar" ({id: "email_<campaign id>", campaign_id, when,
-          audience, subject, by}) that say who scheduled each one from Studio.
-  SEO     new pages drafted with a publish time (publish_at / when), if any.
+          audience, subject, by}) that say who scheduled each one from Studio. Nothing when the Email area shows demo
+          data (no platform connected): demo campaigns are not real, so they are neither shown nor warned about.
+  SEO     new pages drafted with a publish time (publish_at / when), if any, and what Studio published to WordPress
+          (the SEO publish history, seo_history.jsonl), as "published".
 Each entry has an owner (the member who made it, in their team colour; "you" when solo).
 
 Clash warnings (team_settings key calendar_limits; warnings only, nothing is ever blocked):
@@ -16,7 +21,8 @@ Clash warnings (team_settings key calendar_limits; warnings only, nothing is eve
   image     the same image within same_image_days
   topic     the same topic (the post's name or the email's subject) within same_topic_days
   audience  an email to the same list or segment within email_audience_days
-Each warning names the other item, who scheduled it and when.
+Each warning names the other item, who scheduled it and when. Drafts that only have a time ("planned") are not real yet,
+so they never cause a warning.
 """
 import datetime as dt
 import re
@@ -28,7 +34,9 @@ import team_settings
 
 CAL = "calendar"
 IGNORED = ("cancelled", "deleted", "failed", "draft_cancelled")
+NOT_REAL = ("planned",)  # a draft with a time: shown on the calendar, never a clash
 DEFAULT_COLOUR = "#1a73e8"
+OTHER_COLOUR = "#888888"
 URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 
 
@@ -72,7 +80,7 @@ def _who():
         a = str(author or "").strip()
         if not a or a in ("you", "claude", "team sync") or a == my_name:
             return {"name": my_name, "colour": my_colour, "me": True}
-        return {"name": a, "colour": by_name.get(a, "#888888"), "me": False}
+        return {"name": a, "colour": by_name.get(a, OTHER_COLOUR), "me": False}
     return owner, {"name": my_name, "colour": my_colour}
 
 
@@ -105,7 +113,8 @@ def _social(start, end, owner):
     root = store.data_dir()
     recs = {r["id"]: r for r in draftstore.items("social", root)}
     out = []
-    for p in store.posts():
+    posts = store.posts()
+    for p in posts:
         when = (p.get("move") or {}).get("when") or p.get("when")
         t = parse(when)
         if not t or not start <= t < end:
@@ -127,11 +136,53 @@ def _social(start, end, owner):
                         "when": iso(parse(r.get("scheduled_for")) or t), "title": title, "status": st, "owner": who,
                         "link": link, "images": [i for i in images if i], "topic": norm_topic(p.get("title")),
                         "audience": ""})
+    return out + _social_outside(start, end, posts)
+
+
+OUTSIDE = {"name": "Outside Studio", "colour": OTHER_COLOUR, "me": False}
+
+
+def _live_posts():
+    """{"posts", "scheduled"} from the SoMe area's Meta read (cached there; no Meta: empty)."""
+    try:
+        from areas import social  # noqa: PLC0415
+        return social._published()
+    except Exception:  # noqa: BLE001
+        return {"posts": [], "scheduled": []}
+
+
+def _social_outside(start, end, posts):
+    """SoMe posts made outside Studio: live on the Page / Instagram, or scheduled in Meta. Ids Studio made are skipped."""
+    ours = {str(r.get("post_id")) for p in posts for r in (p.get("results") or {}).values() if r.get("post_id")}
+    live = _live_posts()
+    out, seen = [], set()
+    for rows, st in ((live.get("posts"), "published"), (live.get("scheduled"), "scheduled")):
+        for x in rows or []:
+            xid = str(x.get("id") or "")
+            t = parse(x.get("when"))
+            if not xid or xid in ours or xid in seen or not t or not start <= t < end:
+                continue
+            seen.add(xid)
+            text = x.get("text") or ""
+            m = URL_RE.search(text)
+            out.append({"key": f"social:live:{xid}", "kind": "social", "id": xid, "channel": x.get("channel") or "facebook",
+                        "when": iso(t), "title": (text or x.get("format") or "(no text)")[:80], "status": st, "owner": dict(OUTSIDE),
+                        "outside": True, "url": x.get("url") or "", "link": m.group(0) if m else "", "images": [],
+                        "topic": "", "audience": ""})
     return out
 
 
 def _marks(root=None):
     return {r["id"]: {**r["data"], "_author": r.get("author")} for r in draftstore.items(CAL, root or team._root())}
+
+
+def _email_demo():
+    """True when the Email area shows demo data (no platform connected)."""
+    try:
+        from areas import email as em  # noqa: PLC0415
+        return bool(getattr(em.adapter(), "demo", False))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _email(start, end, owner):
@@ -142,7 +193,8 @@ def _email(start, end, owner):
         from areas import email as em  # noqa: PLC0415
         if em.PLATFORM and em.PLATFORM != "your email platform":
             platform = em.PLATFORM
-        rows = em.adapter().list_campaigns()
+        a = em.adapter()
+        rows = [] if getattr(a, "demo", False) else a.list_campaigns()  # demo campaigns are not real: never on the calendar
     except Exception:  # noqa: BLE001 - no platform reachable: the marks alone
         rows = []
     for c in rows:
@@ -163,7 +215,7 @@ def _email(start, end, owner):
     for mid, mk in marks.items():
         cid = str(mk.get("campaign_id") or "")
         t = parse(mk.get("when"))
-        if mk.get("kind") != "email" or not cid or cid in seen or not t or not start <= t < end:
+        if mk.get("kind") != "email" or mk.get("demo") or not cid or cid in seen or not t or not start <= t < end:
             continue
         out.append({"key": f"email:{cid}", "kind": "email", "id": cid, "channel": "email", "when": iso(t),
                     "title": mk.get("subject") or cid, "status": "scheduled", "owner": owner(mk.get("_author") or mk.get("by")),
@@ -187,6 +239,36 @@ def _seo(start, end, owner):
                     "title": d.get("title") or d.get("slug") or r["id"], "status": d.get("status") or "planned",
                     "owner": owner(r.get("author")), "link": "", "images": [], "topic": norm_topic(d.get("title")),
                     "audience": ""})
+    return out + _seo_history(start, end, owner)
+
+
+def _seo_history(start, end, owner):
+    """What Studio published to WordPress (the SEO area's publish history; undone pushes left out)."""
+    try:
+        from areas import _seo_common as c  # noqa: PLC0415
+        rows = c.read_jsonl("seo_history.jsonl", 2000)
+    except Exception:  # noqa: BLE001
+        return []
+    undone = {r.get("push_id") for r in rows if r.get("action") == "undo"}
+    out, seen = [], set()
+    for r in rows:
+        if r.get("action", "publish") != "publish" or r.get("ok") is False or r.get("push_id") in undone:
+            continue
+        t = parse(r.get("at"))
+        if not t or not start <= t < end:
+            continue
+        key = f"seo:pub:{r.get('push_id', '')}:{r.get('post_id', '')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        target = str(r.get("target") or "")
+        title = r.get("title") or str(r.get("post_id") or "Blog post")
+        if target and target not in ("live", "production", "prod"):
+            title += f" ({target})"
+        out.append({"key": key, "kind": "seo", "id": f"pub:{r.get('push_id', '')}:{r.get('post_id', '')}", "channel": "blog",
+                    "when": iso(t), "title": title, "status": "published", "owner": owner(r.get("by") or "you"),
+                    "link": r.get("url") or "", "url": r.get("url") or "", "images": [], "topic": norm_topic(r.get("title")),
+                    "audience": "", "action": "new page" if r.get("created") else "update"})
     return out
 
 
@@ -265,7 +347,7 @@ def clashes(cands, exclude_ids=()):
     days = max(lim["same_link_days"], lim["same_image_days"], lim["same_topic_days"], lim["email_audience_days"], 1) + 1
     times = [parse(c["when"]) for c in cands]
     others = [o for o in entries(min(times) - dt.timedelta(days=days), max(times) + dt.timedelta(days=days))
-              if o["id"] not in set(map(str, exclude_ids)) and o["status"] not in IGNORED]
+              if o["id"] not in set(map(str, exclude_ids)) and o["status"] not in IGNORED + NOT_REAL]
     out, seen = [], set()
 
     def warn(rule, o, msg, per_channel=False):
@@ -340,6 +422,8 @@ def mark_email(campaign, when, by="you"):
     data = {"id": iid, "kind": "email", "campaign_id": cid, "when": iso(parse(when)), "audience": audience_key(campaign),
             "audience_name": campaign.get("segment_name") or campaign.get("list_name") or "",
             "subject": campaign.get("subject") or campaign.get("name") or "", "by": by}
+    if _email_demo():  # a demo schedule is not real: never put it on the team's calendar
+        return {**data, "demo": True}
     with draftstore.tx(CAL, team._root(), by=by) as t:
         t.put(iid, data, by)
     return data

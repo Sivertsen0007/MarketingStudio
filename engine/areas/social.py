@@ -108,15 +108,42 @@ def media_lookup(media_id):
     return _meta_ads().MEDIA_DIR / m["file"], m["ext"], m["kind"]
 
 
+_facts = {}  # (media_id, mtime_ns, size) -> media facts: a file is read once, until it changes
+_facts_lock = threading.Lock()
+
+
 def media_facts(post):
+    """Media facts for each item of the post, read from the file head once per file (cached per media id, mtime and
+    size). A missing file -> {"missing": True}."""
     out = []
     for m in post.get("media") or []:
         try:
             path, ext, kind = media_lookup(m["media_id"])
-            out.append(checks.media_facts(path, kind, ext))
-        except (ValueError, OSError):
+            st = path.stat()
+            key = (str(m["media_id"]), st.st_mtime_ns, st.st_size)
+            with _facts_lock:
+                f = _facts.get(key)
+            if f is None:
+                f = checks.media_facts(path, kind, ext)
+                with _facts_lock:
+                    if len(_facts) > 2000:
+                        _facts.clear()
+                    _facts[key] = f
+            out.append(dict(f))
+        except (ValueError, OSError, KeyError):
             out.append({"kind": m.get("kind", "image"), "ext": "", "size": 0, "missing": True})
     return out
+
+
+def linkedin_connected():
+    """Is LinkedIn set up? Test mode counts it as connected (the publishers are fakes there)."""
+    if test_mode():
+        return True
+    try:
+        from . import _social_linkedin as li  # noqa: PLC0415
+        return bool(li.connected())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def link_check(url):
@@ -146,8 +173,12 @@ def link_check(url):
 
 
 def check(post, links=True):
-    res = checks.check_post(post, store.caption_for, media_facts(post), link_check if links else None)
-    missing = [i + 1 for i, f in enumerate(media_facts(post)) if f.get("missing")]
+    """The post's checks. Media facts are looked up once per check; a fully published post is history, so its media
+    are not looked at again."""
+    facts = None if store.status(post) == "published" else media_facts(post)
+    li = linkedin_connected() if "linkedin" in (post.get("channels") or []) else None
+    res = checks.check_post(post, store.caption_for, facts, link_check if links else None, linkedin_connected=li)
+    missing = [i + 1 for i, f in enumerate(facts or []) if f.get("missing")]
     if missing:
         res["problems"].append(f"media item(s) {', '.join(map(str, missing))} not found on this Mac: add the file again")
         res["ok"] = False
@@ -222,13 +253,13 @@ def get_state(q):
         meta_err = ""
     except Exception as ex:  # noqa: BLE001
         meta, meta_err = {}, str(ex)
-    from . import _social_linkedin as li  # noqa: PLC0415
     sync_queue()
     return {"test_mode": test_mode(), "settings": {k: s[k] for k in ("vps_job", "local_scheduler", "late_minutes", "slots", "utm", "utm_campaign", "competitors")},
             "team_fields": _team_fields(),
             "vps_installed": False, "vps_parked": VPS_PARKED, "queue_mode": queue_mode(),
             "scheduler_running": scheduler_running(), "last_tick": _sched.get("last"), "scheduler_error": _sched.get("error", ""),
-            "meta": meta, "meta_error": meta_err, "linkedin_connected": li.connected(),
+            "meta": meta, "meta_error": meta_err, "linkedin_connected": linkedin_connected(),
+            "posting_tz": store.posting_tz_name(),
             "posts": [_view(p) for p in sorted(store.posts(), key=lambda p: p.get("when") or p["updated"], reverse=True)]}
 
 
@@ -270,7 +301,8 @@ def get_media(q):
 GET = {"state": get_state, "calendar": get_calendar, "post": get_post, "published": get_published, "adsets": get_adsets, "media": get_media,
        "slot": lambda q: get_slot(q), "quick_times": lambda q: get_quick_times(q), "heatmap": lambda q: get_heatmap(q),
        "library": lambda q: get_library(q), "hashtags": lambda q: get_hashtags(q), "feed": lambda q: get_feed(q),
-       "analytics": lambda q: get_analytics(q), "competitors": lambda q: get_competitors(q)}
+       "analytics": lambda q: get_analytics(q), "competitors": lambda q: get_competitors(q),
+       "schedule_preview": lambda q: schedule_preview(q)}
 
 
 # ---------- drafts (you and Claude) ----------
@@ -417,6 +449,8 @@ def save_settings(body):
         ch["utm"] = {c: bool(v) for c, v in (body["utm"] or {}).items() if c in ("facebook", "linkedin")}
     if "utm_campaign" in body:
         ch["utm_campaign"] = plan.campaign_slug(body["utm_campaign"])
+    if "posting_tz" in body:
+        set_posting_tz(body["posting_tz"])
     if "competitors" in body:
         names = [str(x).strip().lstrip("@") for x in body["competitors"] or [] if str(x).strip()]
         bad = [x for x in names if not USERNAME.match(x)]
@@ -424,6 +458,16 @@ def save_settings(body):
             raise ValueError("not an Instagram username: " + ", ".join(bad))
         ch["competitors"] = list(dict.fromkeys(names))[:20]
     return store.save_settings(ch)
+
+
+def set_posting_tz(name):
+    """The posting time zone, shared with Email (Setup's EMAIL_TIMEZONE): one zone for every scheduled post and email."""
+    name = str(name or "").strip() or store.TZ_DEFAULT
+    if not store._zone(name):
+        raise ValueError(f'"{name}" is not a time zone: use a name like Europe/London or Asia/Bangkok')
+    import appconfig  # noqa: PLC0415
+    appconfig.set_many({"EMAIL_TIMEZONE": name})
+    return name
 
 
 # ---------- live actions: the user's own button only ----------
@@ -590,9 +634,71 @@ def post_now(body):
     return _team(body, "Posted", lambda: _guard(go))
 
 
+LI_NOT_CONNECTED = "LinkedIn is not connected: connect it first (SoMe settings), or untick LinkedIn"
+
+
+def _open_channels(p, channels=None):
+    return [c for c in (channels or p["channels"]) if c in p["channels"]
+            and ((p.get("results") or {}).get(c) or {}).get("status") not in ("published", "scheduled", "publishing")]
+
+
+def _scoped_problems(c, chs):
+    """The check's problems that matter for scheduling these channels: post-wide ones and those of these channels."""
+    per = c.get("channels") or {}
+    own = {x for v in per.values() for x in v.get("problems", [])}
+    out = [x for x in c["problems"] if x not in own] + [x for ch in chs for x in (per.get(ch) or {}).get("problems", [])]
+    return list(dict.fromkeys(out))
+
+
+def schedule_plan(p, channels=None, c=None):
+    """What Schedule would do with this post right now. schedule() runs on exactly this, and the Schedule dialog shows
+    it (schedule_preview), so the dialog never offers what the engine refuses.
+    -> {when, channels, routes {ch: "meta" | "queue" | None}, refused {ch: [why]}, problems (the checks, for these
+        channels), warnings, how {ch: text}, options [{label, channels}] (empty = nothing can be scheduled)}"""
+    when = store.parse_when(p.get("when"))
+    chs = _open_channels(p, channels)
+    mode = queue_mode()
+    now = store.now()
+    routes, refused, how = {}, {}, {}
+    for ch in chs:
+        lab = store.CHANNEL_LABEL[ch]
+        r, pr = checks.schedule_route(ch, when, now, mode is not None)
+        if ch == "linkedin" and not linkedin_connected():
+            r, pr = None, [LI_NOT_CONNECTED]
+        routes[ch] = r
+        if pr:
+            refused[ch] = [x if x.startswith(lab) else f"{lab}: {x}" for x in pr]
+        elif r == "meta":
+            how[ch] = "Facebook is scheduled by Meta itself (10 minutes to 30 days ahead), so it goes out even when this Mac is off."
+        else:
+            how[ch] = (f"{lab}: Studio on this Mac publishes it at that time. The Mac must be on and Studio open; if it is not, "
+                       "the post shows as Missed and is not posted late.")
+    c = c or check(p)
+    ok = [ch for ch in chs if ch not in refused]
+    options = []
+    if chs and not refused and not _scoped_problems(c, chs):
+        options.append({"label": "Schedule", "channels": chs})
+    elif ok and not _scoped_problems(c, ok):
+        options.append({"label": f"Schedule {' and '.join(store.CHANNEL_LABEL[x] for x in ok)} only", "channels": ok})
+    return {"when": store.iso(when) if when else "", "channels": chs, "routes": routes, "refused": refused,
+            "problems": _scoped_problems(c, chs), "warnings": c["warnings"], "how": how, "options": options}
+
+
+def schedule_preview(q):
+    """For the Schedule dialog: the engine's own answer (schedule_plan) plus the shared calendar's clash warnings for
+    the channels that can go (warnings only). Read-only: nothing is saved or sent."""
+    p = store.get(q["id"])
+    chs = [x for x in str(q.get("channels") or "").split(",") if x in store.CHANNELS] or None
+    pl = schedule_plan(p, chs)
+    go = (pl["options"][0]["channels"] if pl["options"] else pl["channels"])
+    return {**pl, "approval_needed": approval_needed(p), "clashes": _clashes(p, go) if go and pl["when"] else [],
+            "posting_tz": store.posting_tz_name()}
+
+
 def schedule(body):
     """Schedule at the post's time: Facebook through Meta (10 min to 30 days), Instagram / LinkedIn (and Facebook outside
-    Meta's window) through the VPS job when it is installed. Refuses as a whole when any ticked channel can't."""
+    Meta's window) through Studio's scheduler on this Mac when it is on. Refuses as a whole when any of the channels
+    asked for can't (schedule_plan: the same answer the dialog showed)."""
     _pressed(body)
 
     def go():
@@ -602,23 +708,16 @@ def schedule(body):
         if stale:
             return stale
         when = store.parse_when(p.get("when"))
-        s = store.settings()
-        chs = [c for c in (body.get("channels") or p["channels"]) if c in p["channels"]
-               and ((p.get("results") or {}).get(c) or {}).get("status") not in ("published", "scheduled", "publishing")]
+        chs = _open_channels(p, body.get("channels"))
         if not chs:
             raise ValueError("nothing to schedule")
         if approval_needed(p):
             return _needs_approval(p)
-        mode = queue_mode()
-        routes, probs = {}, []
-        for c in chs:
-            r, pr = checks.schedule_route(c, when, store.now(), mode is not None)
-            routes[c] = r
-            probs += [f"{store.CHANNEL_LABEL[c]}: {x}" if not x.startswith(store.CHANNEL_LABEL[c]) else x for x in pr]
-        c = check(p)
-        if probs or not c["ok"]:
-            return {"ok": False, "message": "Not scheduled.", "problems": probs + c["problems"],
-                    "can_fb_only": "facebook" in chs and routes.get("facebook") is not None and len(chs) > 1}
+        pl = schedule_plan(p, chs)
+        routes = pl["routes"]
+        if pl["refused"] or pl["problems"]:
+            return {"ok": False, "message": "Not scheduled.", "problems": [x for v in pl["refused"].values() for x in v] + pl["problems"],
+                    "options": pl["options"], "can_fb_only": "facebook" in chs and routes.get("facebook") is not None and len(chs) > 1}
         clash = _clashes(p, chs)  # warnings only (shared calendar); never stops the schedule
         _start("Scheduling" + (" (test mode)" if test_mode() else ""), chs, "Uploading media, Scheduling, Scheduled")
         res = {}
@@ -1014,34 +1113,38 @@ def get_slot(q):
     chs = _chs(q)
     day = dt.date.fromisoformat(q["day"])
     now = store.now()
-    if q.get("hour") not in (None, ""):
+    tz = store.posting_tz()
+    if q.get("hour") not in (None, ""):  # an hour row of the calendar's week view, which shows this Mac's time
         t = dt.datetime(day.year, day.month, day.day, int(q["hour"]), 0).astimezone()
         return {"when": store.iso(t), "from": "slot"}
-    t = plan.next_free_slot(store.settings()["slots"], chs, store.posts(), max(now, dt.datetime(day.year, day.month, day.day).astimezone()), day=day)
+    t = plan.next_free_slot(store.settings()["slots"], chs, store.posts(), max(now, dt.datetime(day.year, day.month, day.day, tzinfo=tz)),
+                            day=day, tz=tz)
     if t:
         return {"when": store.iso(t), "from": "queue"}
-    return {"when": store.iso(dt.datetime(day.year, day.month, day.day, 9, 0).astimezone()), "from": "default"}
+    return {"when": store.iso(dt.datetime(day.year, day.month, day.day, 9, 0, tzinfo=tz)), "from": "default"}
 
 
 def _best(chs):
     try:
         h = heatmap_for("instagram" if "instagram" in chs else "facebook")
-        return plan.next_best(h["top"], store.now())
+        return plan.next_best(h["top"], store.now().astimezone(store.posting_tz()))
     except Exception:  # noqa: BLE001
         return []
 
 
 def get_quick_times(q):
     chs = _chs(q)
-    slot = plan.next_free_slot(store.settings()["slots"], chs, store.posts(), store.now())
-    return plan.quick_times(store.now(), slot, _best(chs))
+    tz = store.posting_tz()
+    slot = plan.next_free_slot(store.settings()["slots"], chs, store.posts(), store.now(), tz=tz)
+    return plan.quick_times(store.now(), slot, _best(chs), tz=tz)
 
 
 def add_to_queue(body):
     """Give the post the next free slot of its channels (it stays a draft until you press Schedule)."""
     p = store.get(body["id"])
     _editable(p)
-    t = plan.next_free_slot(store.settings()["slots"], p["channels"], [x for x in store.posts() if x["id"] != p["id"]], store.now())
+    t = plan.next_free_slot(store.settings()["slots"], p["channels"], [x for x in store.posts() if x["id"] != p["id"]], store.now(),
+                            tz=store.posting_tz())
     if not t:
         raise ValueError("no posting slots set for these channels: add some in SoMe settings")
     return _view(store.update(p["id"], lambda x: (x.__setitem__("when", store.iso(t)), x.__setitem__("move", None))))
@@ -1055,13 +1158,13 @@ def heatmap_for(channel):
             online = _sm().online_followers()  # read-only, cached 6 hours
         except Exception:  # noqa: BLE001 - engagement alone then
             online = []
-    return plan.heatmap(live["posts"], channel, online)
+    return plan.heatmap(live["posts"], channel, online, store.posting_tz())
 
 
 def get_heatmap(q):
     ch = q.get("channel") if q.get("channel") in ("facebook", "instagram") else "instagram"
     h = heatmap_for(ch)
-    return {**h, "channel": ch, "days": list(plan.DAYS)}
+    return {**h, "channel": ch, "days": list(plan.DAYS), "tz": store.posting_tz_name()}
 
 
 # ---------- bulk CSV import ----------
@@ -1107,7 +1210,7 @@ def _csv_facts(ref):
 
 
 def csv_rows(text, store_media=False):
-    rows = plan.parse_csv(text or "")
+    rows = plan.parse_csv(text or "", store.posting_tz())
     for r in rows:
         media = []
         for ref in r["media"]:
@@ -1181,7 +1284,7 @@ def autolist_fill(body):
     end = store.now() + dt.timedelta(days=int(body.get("days") or 7))
     free, after, pool = [], store.now(), list(posts)
     while True:
-        t = plan.next_free_slot(store.settings()["slots"], chs, pool, after)
+        t = plan.next_free_slot(store.settings()["slots"], chs, pool, after, tz=store.posting_tz())
         if not t or t > end:
             break
         free.append(t)

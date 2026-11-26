@@ -51,6 +51,7 @@ SP = """
 from areas import social as so
 from areas import _social_store as sst
 import datetime as dt
+so.linkedin_connected = lambda: True  # LinkedIn counts as connected here (v0.2.3 refuses an unconnected LinkedIn)
 """
 
 
@@ -597,6 +598,7 @@ out = None
             WS = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=3)).replace(microsecond=0).isoformat()
             p = sst.save({{"title": "Launch", "channels": ["linkedin"], "when": WS, "caption": "Hello", "format": "text"}}, "you")
             so.test_mode = lambda: False  # Studio's own queue on this Mac: no network involved
+            so.linkedin_connected = lambda: True  # connected, so LinkedIn can be queued (v0.2.3 refuses an unconnected LinkedIn)
             act("social_schedule", "/api/area/social/schedule", {{"id": p["id"], "pressed": "user", "why": "why social", "channels": ["linkedin"]}})
             # the same actions when nothing real happens: a dry run, demo data, test mode -> no feed entry at all
             dry = {{}}

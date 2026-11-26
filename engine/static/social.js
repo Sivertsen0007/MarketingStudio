@@ -173,6 +173,26 @@ const mondayOf = d => { const x = new Date(d); x.setHours(0,0,0,0); x.setDate(x.
 const stChip = s => `<span class="so-st ${esc(String(s).replace(/ .*/, ""))}">${esc(String(s).replace(/_/g, " "))}</span>`;
 const mediaUrl = id => "/api/meta/media?" + qs({acct: "meta", id});
 const sapi = (k, body) => api(A + k, body);
+// ---- the posting time zone (SoMe settings, shared with Email; default Europe/London): the editor's time field, quick
+// picks, queue slots and the best time are wall-clock times there, whatever zone this Mac is in ----
+const MAC_TZ = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "";
+const ptz = () => (SO.state && SO.state.posting_tz) || "Europe/London";
+function zoneParts(d, tz){
+  const o = {}; for (const x of new Intl.DateTimeFormat("en-GB", {timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"}).formatToParts(d)) o[x.type] = x.value;
+  return o;
+}
+const zoneISO = (d, tz) => { const o = zoneParts(d, tz); return `${o.year}-${o.month}-${o.day}T${o.hour}:${o.minute}` };  // for datetime-local
+function fromZone(wall, tz){  // "YYYY-MM-DDTHH:MM" as a wall-clock time in tz -> Date
+  const m = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d)/.exec(wall || ""); if (!m) return null;
+  const want = Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5]); let t = want;
+  for (let i = 0; i < 3; i++){ const o = zoneParts(new Date(t), tz); const shown = Date.UTC(+o.year, o.month - 1, +o.day, +o.hour, +o.minute); if (shown === want) break; t += want - shown }
+  return new Date(t);
+}
+const zoneTime = (v, tz) => { const d = new Date(v); return isNaN(d) ? "" : d.toLocaleString("en-GB", {timeZone: tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"}) };
+const macNote = v => v && MAC_TZ && MAC_TZ !== ptz() ? `This Mac (${MAC_TZ}): ${zoneTime(v, MAC_TZ)}` : "";
+// characters as the server counts them (code points), and Instagram's hashtags (caption + first comment), as _social_checks.py
+const nChars = t => [...String(t || "")].length;
+const nTags = t => (String(t || "").match(/(^|[^\p{L}\p{N}_])#[\p{L}\p{N}_]+/gu) || []).length;
 // After an await the user may have switched to another area: write into a detached stand-in instead of throwing on null.
 const byId = id => document.getElementById(id) || document.createElement("div");
 const MAXDAY = 3;  // month view: at most this many posts per day, then "+N more" (opens the day view)
@@ -347,9 +367,9 @@ function wireCal(main){
   };
 }
 async function newAt(day, hour){
-  let when = `${day}T09:00`;
-  try { const r = await sapi("slot?" + qs({day, hour: hour ?? "", channels: "facebook,instagram"})); when = localISO(new Date(r.when)) } catch(e) {}
-  if (new Date(when) < new Date()) { const n = new Date(); n.setMinutes(0, 0, 0); n.setHours(n.getHours() + 1); if (ymd(n) === day) when = localISO(n) }
+  let when = new Date(`${day}T09:00`).toISOString();
+  try { const r = await sapi("slot?" + qs({day, hour: hour ?? "", channels: "facebook,instagram"})); when = r.when } catch(e) {}
+  if (new Date(when) < new Date()) { const n = new Date(); n.setMinutes(0, 0, 0); n.setHours(n.getHours() + 1); if (ymd(n) === day) when = n.toISOString() }
   openPost(null, {when});
 }
 async function confirmMove(id){
@@ -425,14 +445,16 @@ function drawEditor(){
   const li = SO.state && SO.state.linkedin_connected;
   const txt = SO.tab === "all" ? p.caption : ((p.captions || {})[SO.tab] ?? "");
   const res = Object.entries(p.results || {});
-  const whenVal = p.when ? localISO(new Date(p.when)) : "";
+  const whenVal = p.when && !isNaN(new Date(p.when)) ? zoneISO(new Date(p.when), ptz()) : "";
   side.innerHTML = `<div class="so-ed" ${p.id ? `data-team-coll="social" data-team-id="${esc(p.id)}" data-team-label="${esc(p.title || (p.caption || "").slice(0, 60))}"` : ""}>
     <div class="so-edh"><h3>${p.id ? "Post" : "New post"} ${stChip(p.status || "draft")}</h3><button id="soClose" title="Close">Close</button></div>
     ${ro ? `<div class="so-warn">Scheduled: cancel it to edit. You can still move it in the calendar.</div>` : ""}
     ${res.length ? `<div class="so-res">${res.map(([c, r]) => `<div class="${r.error ? "so-prob" : "so-okk"}"><b>${esc(CH[c])}</b>: ${esc(r.status)}${r.scheduled_for && r.status === "scheduled" ? " for " + esc(fmtDate(r.scheduled_for)) + (r.via === "vps" ? " (VPS job)" : r.via === "local" ? " (Studio on this Mac)" : " (Meta)") : ""}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">open</a>` : ""}${r.error ? " · " + esc(r.error) : ""}${r.warning ? " · " + esc(r.warning) : ""}${r.status === "missed" ? " · use Post now if you still want it" : ""}${r.status === "needs_checking" ? ` <button data-checkagain="${esc(c)}">Check again</button>` : ""}</div>`).join("")}</div>` : ""}
     <div class="so-row"><label>Name in Studio (not posted)</label><input type="text" id="so_title" value="${esc(p.title)}" ${dis}></div>
-    <div class="so-row"><label>Channels</label><div class="so-ticks">${CHS.map(c => `<label><input type="checkbox" data-chan="${c}" ${p.channels.includes(c) ? "checked" : ""} ${dis}> ${CH[c]}${c === "linkedin" && !li ? ` <span class="chip">not connected</span>` : ""}</label>`).join("")}</div></div>
-    <div class="so-row"><label>Date and time (this Mac's time zone)</label><input type="datetime-local" id="so_when" value="${esc(whenVal)}" ${dis}>
+    <div class="so-row"><label>Channels</label><div class="so-ticks">${CHS.map(c => { const off = c === "linkedin" && !li && !p.channels.includes(c);
+      return `<label ${off ? `title="LinkedIn is not connected: see SoMe settings"` : ""}><input type="checkbox" data-chan="${c}" ${p.channels.includes(c) ? "checked" : ""} ${dis || (off ? "disabled" : "")}> ${CH[c]}${c === "linkedin" && !li ? ` <span class="chip">not connected</span>` : ""}</label>` }).join("")}</div></div>
+    <div class="so-row"><label>Date and time (posting time zone: ${esc(ptz())})</label><input type="datetime-local" id="so_when" value="${esc(whenVal)}" ${dis}>
+      <div class="hint" id="soMacTime" style="margin:4px 0 0">${esc(macNote(p.when))}</div>
       ${ro ? "" : `<div class="so-quick" id="soQuick">${(SO.quick || []).map(x => `<button data-qt="${esc(x.when)}">${esc(x.label)}</button>`).join("")}${p.id ? `<button data-addq="1" title="Give it the next free posting slot of its channels">Add to queue</button>` : ""}</div>`}</div>
     <div class="so-row"><label class="inl"><input type="checkbox" id="so_appr" ${p.approval ? "checked" : ""} ${dis}> Needs approval before it goes out</label>
       ${p.approval ? `<div class="so-consent">${p.approval === "approved" ? "Approved." : "Waiting for approval."} <input type="text" id="so_note" value="${esc(p.note)}" placeholder="Note for the approver" style="width:100%;margin-top:4px" ${dis}>${p.approval === "needed" && p.id ? ` <button id="soApprove" style="margin-top:4px">Approve</button>` : ""}</div>` : ""}</div>
@@ -467,7 +489,7 @@ function drawEditor(){
   const q = s => side.querySelector(s);
   q("#soClose").onclick = async () => { if (SO.autoT) await autoSave(); side.classList.remove("on"); SO.post = null };
   const capEl = q("#so_caption");
-  const upd = () => { collect(); counts(); phones() };
+  const upd = () => { collect(); counts(); phones(); const mt = q("#soMacTime"); if (mt) mt.textContent = macNote(p.when) };
   side.oninput = e => { if (e.target.matches("input[type=text], textarea, input[type=datetime-local]")){ upd(); if (!ro) scheduleAutoSave() } };
   side.onchange = e => { if (e.target.matches("input[type=checkbox]")){ collect(); drawEditor(); if (!ro) scheduleAutoSave() } };
   q("#soTabs").onclick = e => { const t = e.target.dataset.tab; if (!t) return; collect(); SO.tab = t; drawEditor() };
@@ -477,7 +499,7 @@ function drawEditor(){
   side.querySelectorAll("[data-checkagain]").forEach(b => b.onclick = async () => { b.disabled = true;
     try { const r = await sapi("check_again", {id: p.id, channel: b.dataset.checkagain}); SO.post = r.post; toast(r.message); drawEditor(); loadCalendar() } catch(e) { b.disabled = false; toast(e.message) } });
   if (q("#soQuick")) q("#soQuick").onclick = async e => { const t = e.target.closest("[data-qt]"), aq = e.target.closest("[data-addq]");
-    if (t){ collect(); p.when = localISO(new Date(t.dataset.qt)); drawEditor() }
+    if (t){ collect(); p.when = t.dataset.qt; drawEditor(); scheduleAutoSave() }
     if (aq){ collect(); const r = await saveDraft(false); if (!r) return; try { SO.post = await sapi("add_to_queue", {id: r.id}); toast("Next free slot: " + fmtDate(SO.post.when) + ". Press Schedule to make it real."); drawEditor(); loadCalendar() } catch(err) { toast(err.message) } } };
   if (!SO.quick && !ro) sapi("quick_times?" + qs({channels: p.channels.join(",")})).then(x => { SO.quick = x; if (SO.post === p) drawEditor() }).catch(() => { SO.quick = [] });
   if (q("#soApprove")) q("#soApprove").onclick = async () => { collect(); await saveDraft(false); try { SO.post = await sapi("approve", {id: SO.post.id, pressed: "user"}); toast("Approved"); drawEditor() } catch(e) { toast(e.message) } };
@@ -509,7 +531,7 @@ function collect(){
   const p = SO.post, side = byId("soSide"); if (!p || !side) return;
   const v = id => { const e = side.querySelector("#" + id); return e ? e.value : null };
   for (const k of ["title", "hashtags", "link", "first_comment", "alt_text", "location"]){ const x = v("so_" + k); if (x !== null) p[k] = x }
-  const w = v("so_when"); if (w !== null) p.when = w;
+  const w = v("so_when"); if (w !== null){ const d = w ? fromZone(w, ptz()) : null; p.when = d ? d.toISOString() : "" }
   const cap = v("so_caption"); if (cap !== null){ if (SO.tab === "all") p.caption = cap; else { p.captions = p.captions || {}; if (cap) p.captions[SO.tab] = cap; else delete p.captions[SO.tab] } }
   const chans = [...side.querySelectorAll("[data-chan]")]; if (chans.length) p.channels = chans.filter(c => c.checked).map(c => c.dataset.chan);
   const g = side.querySelector("#so_guest"); if (g) p.guest_photos = g.checked;
@@ -530,8 +552,9 @@ function textFor(p, ch){
 }
 function counts(){
   const p = SO.post, el = document.getElementById("soCnt"); if (!el) return;
-  el.innerHTML = p.channels.map(c => { const n = textFor(p, c).length; return `<span class="${n > LIM[c] ? "over" : ""}">${CH[c]} ${n}/${LIM[c]}</span>` }).join(" · ")
-    + (p.channels.includes("instagram") ? ` · ${(textFor(p, "instagram").match(/(^|\s)#\w+/g) || []).length}/30 hashtags` : "");
+  el.innerHTML = p.channels.map(c => { const n = nChars(textFor(p, c)); return `<span class="${n > LIM[c] ? "over" : ""}">${CH[c]} ${n}/${LIM[c]}</span>` }).join(" · ")
+    + (p.channels.includes("instagram") ? (() => { const n = nTags(textFor(p, "instagram")) + nTags(p.first_comment);
+        return ` · <span class="${n > 30 ? "over" : ""}">${n}/30 hashtags${nTags(p.first_comment) ? " (with the first comment)" : ""}</span>` })() : "");
 }
 function phones(){
   const p = SO.post, el = document.getElementById("soPhones"); if (!el) return;
@@ -585,8 +608,10 @@ async function saveDraft(show){
   try { const r = await sapi("save", body); SO.post = r; if (show) toast("Draft saved"); drawEditor(); await loadState(); if (SO.view === "calendar") loadCalendar(); return r }
   catch(e) { toast(e.message); return null }
 }
-function resultDialog(title, r, list){
-  showDialog(r.ok ? title : "Not done", `${list || ""}<p>${esc(r.message || "")}</p>${(r.problems || []).map(x => `<div class="so-prob">${esc(x)}</div>`).join("")}
+// When nothing ran (refused before any step), there is no progress list to show: just the plain answer and the problems.
+function resultDialog(title, r, list, notTitle){
+  const ran = r.results && Object.keys(r.results).length;
+  showDialog(r.ok ? title : (notTitle || "Not done"), `${ran ? (list || "") : ""}<p>${esc(r.message || "")}</p>${(r.problems || []).map(x => `<div class="so-prob">${esc(x)}</div>`).join("")}
     ${r.results ? `<div class="so-res">${Object.entries(r.results).map(([c, x]) => `<div class="${x.error ? "so-prob" : "so-okk"}"><b>${esc(CH[c])}</b>: ${esc(x.status)}${x.url ? ` · <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.url)}</a>` : ""}${x.error ? " · " + esc(x.error) : ""}</div>`).join("")}</div>` : ""}`, []);
 }
 async function confirmThen(title, html, label, fn){
@@ -604,7 +629,7 @@ function teamWire(t){
 }
 async function postNow(){
   const p = await saveDraft(false); if (!p) return;
-  if (!p.check.ok) return resultDialog("", {ok: false, message: "Fix the problems first.", problems: p.check.problems});
+  if (!p.check.ok) return resultDialog("", {ok: false, message: "Fix the problems first.", problems: p.check.problems}, "", "Not posted");
   const chs = p.channels.filter(c => !["published", "scheduled"].includes((p.results[c] || {}).status));
   const t = await teamGate(p.id);
   confirmThen("Post now?", `<p>This posts to <b>${esc(chs.map(c => CH[c]).join(", "))}</b> straight away${SO.state.test_mode ? " (test mode: nothing leaves the Mac)" : ""}.</p>
@@ -626,44 +651,45 @@ async function sendNow(id, again){
     if (r.needs_confirm){
       showDialog("It may already be live", `<div class="so-warn">${esc(r.message)}</div><p class="hint">Open the channel and look for the post first. Posting again can make a double post.</p>`,
         [["Don't post", () => dlg.close()], ["Post again anyway", () => sendNow(id, true), "live"]]);
-    } else resultDialog("Posted", r, await lastProgress(PROG));
+    } else resultDialog("Posted", r, await lastProgress(PROG), "Not posted");
   } catch(e) { toast(e.message) }
   await loadState(); draw();
 }
+// The dialog shows the engine's own answer (schedule_preview = what Schedule would do): its refusals, the checks, how each
+// channel goes out and the shared calendar's clash warnings, before you confirm. It only offers what the engine accepts.
 async function scheduleIt(){
   const p = await saveDraft(false); if (!p) return;
   if (!p.when) return toast("Pick a date and time first (or a quick pick)");
   if (p.approval === "needed") return approvalDialog({message: "This post is marked Needs approval: approve it first.", note: p.note}, scheduleIt);
-  const s = SO.state || {}, mode = s.queue_mode;
-  const viaQueue = c => c !== "facebook" || (new Date(p.when) - new Date()) > 30 * 864e5;
-  const chs = p.channels.filter(c => !["published", "scheduled"].includes((p.results[c] || {}).status));
-  const blocked = mode ? [] : chs.filter(viaQueue);
-  const fbOnly = blocked.length && chs.includes("facebook") && !viaQueue("facebook");
-  const msg = blocked.length ? `<div class="so-warn">${esc(blocked.map(c => CH[c]).join(" and "))} can't be scheduled yet: no scheduling of ${blocked.length > 1 ? "their" : "its"} own through the API. Turn on <b>Studio's scheduler</b> in SoMe settings (this Mac must be on and Studio open at that time), or use Post now at the time${fbOnly ? ", or schedule the Facebook part only" : ""}.</div>
-      <button id="soOpenSet">Open SoMe settings</button>` : "";
-  const q = chs.filter(viaQueue);
-  const how = [chs.includes("facebook") && !viaQueue("facebook") ? "Facebook is scheduled by Meta itself (10 minutes to 30 days ahead), so it goes out even when this Mac is off." : "",
-    q.length && mode === "local" ? `${q.map(c => CH[c]).join(" and ")}: Studio on this Mac publishes ${q.length > 1 ? "them" : "it"} at that time. The Mac must be on and Studio open; if it is not, the post shows as Missed and is not posted late.` : "",
-    q.length && mode === "vps" ? `${q.map(c => CH[c]).join(" and ")}: the VPS publisher job publishes ${q.length > 1 ? "them" : "it"} at that time.` : ""].filter(Boolean);
+  let pv; try { pv = await sapi("schedule_preview?" + qs({id: p.id})) } catch(e) { return toast(e.message) }
+  const refused = Object.values(pv.refused || {}).flat();
+  const needsSched = refused.some(x => x.includes("Studio's scheduler"));
   const go = chans => async () => {
     try { const r = await withProgress("Scheduling", A + "schedule", {id: p.id, pressed: "user", channels: chans, ...teamExtra()}, PROG);
       if (r.needs_approval) return approvalDialog(r, scheduleIt);
-      resultDialog("Scheduled", r, await lastProgress(PROG)); if (r.post){ SO.post = r.post; drawEditor() } }
+      resultDialog("Scheduled", r, await lastProgress(PROG), "Not scheduled"); if (r.post){ SO.post = r.post; drawEditor() } }
     catch(e) { toast(e.message) }
     await loadState(); draw();
   };
   const btns = [["Back", () => dlg.close()]];
-  if (!blocked.length) btns.push(["Schedule", go(chs), "live"]);
-  if (fbOnly) btns.push(["Schedule Facebook only", go(["facebook"]), "live"]);
-  const t = await teamGate(p.id);
-  showDialog("Schedule?", `<p>For <b>${esc(fmtDate(p.when))}</b> on ${esc(chs.map(c => CH[c]).join(", "))}.</p>${msg}${how.map(x => `<p class="hint">${esc(x)}</p>`).join("")}${teamSection(t)}`, btns);
+  for (const o of pv.options || []) btns.push([o.label, go(o.channels), "live"]);
+  const t = (pv.options || []).length ? await teamGate(p.id) : null;
+  const mac = macNote(pv.when);
+  const html = `<p>For <b>${esc(zoneTime(pv.when, pv.posting_tz || ptz()))}</b> (${esc(pv.posting_tz || ptz())}) on ${esc(pv.channels.map(c => CH[c]).join(", "))}.${mac ? `<br><span class="hint">${esc(mac)}</span>` : ""}</p>
+    ${(pv.problems || []).length ? `<p class="hint">Fix these first:</p>${pv.problems.map(x => `<div class="so-prob">${esc(x)}</div>`).join("")}` : ""}
+    ${refused.map(x => `<div class="so-prob">${esc(x)}</div>`).join("")}${needsSched ? `<button id="soOpenSet" style="margin:4px 0">Open SoMe settings</button>` : ""}
+    ${Object.values(pv.how || {}).map(x => `<p class="hint">${esc(x)}</p>`).join("")}
+    ${(pv.options || []).length ? "" : `<p class="hint">Nothing can be scheduled like this. Change the time or the channels, or use Post now at the time.</p>`}
+    ${(pv.clashes || []).length ? `<p class="hint">Heads-up from the shared calendar (warnings only, nothing is stopped):</p>${pv.clashes.map(x => `<div class="so-warn">${esc(x.message)}</div>`).join("")}` : ""}
+    ${(pv.warnings || []).length ? `<p class="hint">Warnings:</p>${pv.warnings.map(x => `<div class="so-warn">${esc(x)}</div>`).join("")}` : ""}${t ? teamSection(t) : ""}`;
+  showDialog((pv.options || []).length ? "Schedule?" : "Not scheduled", html, btns);
   const os = document.getElementById("soOpenSet"); if (os) os.onclick = settingsDialog;
-  teamWire(t);
+  if (t) teamWire(t);
 }
 function cancelIt(){
   const p = SO.post, chs = Object.entries(p.results || {}).filter(([, r]) => r.status === "scheduled").map(([c]) => c);
   confirmThen("Cancel the schedule?", `<p>${esc(chs.map(c => CH[c]).join(", "))} will not go out. The post stays here as a draft.</p>`, "Cancel schedule", async () => {
-    try { const r = await withProgress("Cancelling", A + "cancel", {id: p.id, pressed: "user"}, PROG); resultDialog("Cancelled", r, await lastProgress(PROG)); if (r.post){ SO.post = r.post; drawEditor() } }
+    try { const r = await withProgress("Cancelling", A + "cancel", {id: p.id, pressed: "user"}, PROG); resultDialog("Cancelled", r, await lastProgress(PROG), "Not cancelled"); if (r.post){ SO.post = r.post; drawEditor() } }
     catch(e) { toast(e.message) } await loadState(); draw();
   });
 }
@@ -672,7 +698,7 @@ function deleteLive(){
   confirmThen("Delete the live post?", `<p>This deletes the post on the channel. It can't be undone.</p>${chs.map(c => `<label style="display:flex;gap:6px"><input type="checkbox" data-dl="${c}" checked> ${CH[c]}</label>`).join("")}
     <p class="hint">Instagram posts can't be deleted through the API: delete those in the Instagram app.</p>`, "Delete", async () => {
     const sel = [...document.querySelectorAll("[data-dl]")].filter(x => x.checked).map(x => x.dataset.dl); if (!sel.length) return toast("Tick a channel");
-    try { const r = await withProgress("Deleting", A + "delete_post", {id: p.id, pressed: "user", channels: sel}, PROG); resultDialog("Deleted", r, await lastProgress(PROG)); if (r.post){ SO.post = r.post; drawEditor() } }
+    try { const r = await withProgress("Deleting", A + "delete_post", {id: p.id, pressed: "user", channels: sel}, PROG); resultDialog("Deleted", r, await lastProgress(PROG), "Not deleted"); if (r.post){ SO.post = r.post; drawEditor() } }
     catch(e) { toast(e.message) } await loadState(); draw();
   });
 }
@@ -689,6 +715,8 @@ async function settingsDialog(){
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px">Still post up to <input type="number" id="soLate" min="0" max="240" value="${esc(st.late_minutes || 0)}" style="width:70px"> minutes late (0 = never)</label>
         ${s.scheduler_running ? "" : `<div class="hint" style="margin:4px 0 0">The scheduler thread starts with Studio (after a Studio restart).</div>`}</div>
       <label style="display:flex;gap:6px;align-items:center;margin-top:8px;color:var(--muted)"><input type="checkbox" id="soVps" disabled> ${esc(s.vps_parked || "VPS publisher: parked, not available yet. See the README")}</label></div>
+    <div class="set-sec"><h3>Posting time zone</h3><p class="hint">Times in the post editor, quick picks, posting slots and the best time are in this zone. Email uses the same one (Setup &gt; Email &gt; Send timezone). This Mac is on ${esc(MAC_TZ || "an unknown zone")}.</p>
+      <input type="text" id="soTz" list="soTzList" value="${esc(s.posting_tz || "Europe/London")}" style="width:260px"><datalist id="soTzList">${["Europe/London", "Europe/Copenhagen", "Europe/Berlin", "Asia/Bangkok", "Asia/Dubai", "America/New_York", MAC_TZ].filter((x, i, a) => x && a.indexOf(x) === i).map(z => `<option value="${esc(z)}">`).join("")}</datalist></div>
     <div class="set-sec"><h3>Posting slots (the queue)</h3><p class="hint">Weekly times per channel, for example "Tue 09:00, Thu 18:00". Add to queue picks the next free one.</p>
       ${CHS.map(c => `<div class="so-row"><label>${CH[c]}</label><input type="text" data-slots="${c}" value="${esc(((st.slots || {})[c] || []).join(", "))}" style="width:100%"></div>`).join("")}</div>
     <div class="set-sec"><h3>Trackable links</h3>
@@ -708,7 +736,8 @@ async function settingsDialog(){
   async function saveSet(){
     const b = {local_scheduler: document.getElementById("soLocal").checked, late_minutes: +document.getElementById("soLate").value || 0,
       slots: Object.fromEntries([...document.querySelectorAll("[data-slots]")].map(x => [x.dataset.slots, x.value])),
-      utm: Object.fromEntries([...document.querySelectorAll("[data-utm]")].map(x => [x.dataset.utm, x.checked])), utm_campaign: document.getElementById("soCamp").value};
+      utm: Object.fromEntries([...document.querySelectorAll("[data-utm]")].map(x => [x.dataset.utm, x.checked])), utm_campaign: document.getElementById("soCamp").value,
+      posting_tz: document.getElementById("soTz").value.trim()};
     for (const k of tf) delete b[k];
     try { await sapi("settings", b); toast("Saved"); dlg.close(); SO.quick = null; await loadState(); draw() } catch(e) { toast(e.message) }
   }
@@ -743,7 +772,7 @@ async function loadAnalytics(){
       <button id="soReport">Download report (HTML)</button><span class="hint" style="margin:0">Organic posts only. Engagement rate = engagement / reach of the same posts.</span></div>
     <div class="tiles">${tiles}</div>
     <h3 class="so-h">Best time to post <select id="soHeatCh">${["instagram","facebook"].map(c => `<option value="${c}" ${SO.heatCh === c ? "selected" : ""}>${CH[c]}</option>`).join("")}</select></h3>
-    <p class="hint">${esc((hm.basis || []).join(" + ") || "Not enough data yet")}. Darker = better; outlined = the top 3: ${(hm.top || []).map(t => esc(t.label)).join(", ") || "none yet"}. Times are this Mac's time zone${SO.heatCh === "instagram" ? " (Meta's follower hours read as Pacific time, medium confidence)" : ""}.</p>${heat}
+    <p class="hint">${esc((hm.basis || []).join(" + ") || "Not enough data yet")}. Darker = better; outlined = the top 3: ${(hm.top || []).map(t => esc(t.label)).join(", ") || "none yet"}. Times are in the posting time zone (${esc(hm.tz || ptz())})${SO.heatCh === "instagram" ? " (Meta's follower hours read as Pacific time, medium confidence)" : ""}.</p>${heat}
     <h3 class="so-h">By post type</h3>${tbl(["Channel","Type","Posts","Reach","Engagement","Engagement rate %"], a.by_type.map(x => `<tr><td>${esc(CH[x.channel])}</td><td>${esc(x.format)}</td><td class="num">${num(x.posts)}</td><td class="num">${num(x.reach)}</td><td class="num">${num(x.engagement)}</td><td class="num">${x.engagement_rate ?? ""}</td></tr>`))}
     <h3 class="so-h">By day of the week</h3>${tbl(["Day","Posts","Reach","Engagement","Engagement rate %"], a.by_day.map(x => `<tr><td>${esc(x.day)}</td><td class="num">${num(x.posts)}</td><td class="num">${num(x.reach)}</td><td class="num">${num(x.engagement)}</td><td class="num">${x.engagement_rate ?? ""}</td></tr>`))}
     <h3 class="so-h">Top posts</h3>${tbl(["Date","Channel","Type","Text","Reach","Engagement",""], a.top.map(x => `<tr><td>${esc(fmtDate(x.when))}</td><td>${esc(CH[x.channel])}</td><td>${esc(x.format)}</td><td class="txt" style="max-width:360px">${esc(x.text)}</td><td class="num">${num(x.reach)}</td><td class="num">${num(x.engagement)}</td><td><a href="${esc(x.url)}" target="_blank" rel="noopener">Open</a></td></tr>`))}

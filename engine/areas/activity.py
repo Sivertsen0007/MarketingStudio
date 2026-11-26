@@ -264,6 +264,44 @@ def sync_status(now=None):
     return out
 
 
+PLAIN = (  # (pieces of a raw error, the plain sentence shown instead); the raw text stays in the tooltip
+    (("nodename nor servname", "name or service not known", "getaddrinfo", "temporary failure in name resolution",
+      "network is unreachable", "no route to host"), "Could not reach it: this Mac seems to be offline, or the address is wrong."),
+    (("timed out", "timeout"), "It did not answer in time. Try Refresh in a minute."),
+    (("connection refused", "connection reset", "remote end closed", "eof occurred"), "The server closed the connection. Try Refresh in a minute."),
+    (("certificate", "ssl"), "The secure connection failed (a certificate problem on this Mac or the server)."),
+    (("401", "unauthor", "invalid_grant", "expired", "oauth", "access token", "invalid token"),
+     "The sign-in was refused or has expired: connect it again in Setup."),
+    (("403", "forbidden", "permission"), "Access was refused: the account has no permission to read this."),
+    (("404", "not found"), "The address was not found: check the settings in Setup."),
+    (("429", "rate limit", "too many"), "Too many requests just now: try Refresh in a few minutes."),
+    (("500", "502", "503", "504", "server error", "bad gateway", "unavailable"), "The service had a problem on its side: try again later."),
+)
+
+
+def plain_error(raw):
+    """A raw error (Python exception text, HTTP errors) -> one plain sentence for the page."""
+    t = str(raw or "")
+    low = t.lower()
+    head, sep, rest = t.partition(": ")
+    who = f"{head}: " if sep and len(head) <= 40 and "<" not in head and "error" not in head.lower() else ""
+    for keys, msg in PLAIN:
+        if any(k in low for k in keys):
+            return who + msg
+    if any(x in t for x in ("Traceback", "Errno", "<urlopen", "Error(", "Exception", "object has no attribute", "NoneType")):
+        return who + "Could not read it (details in the tooltip)."
+    return t
+
+
+def _plain(res):
+    """Errors in a source result -> plain sentences in "errors", the raw text in "error_details"."""
+    errs = [str(e) for e in res.get("errors") or []]
+    if errs:
+        res["error_details"] = errs
+        res["errors"] = list(dict.fromkeys(plain_error(e) for e in errs))
+    return res
+
+
 def _scrub(ex):
     try:
         from health import _scrub as hs  # noqa: PLC0415
@@ -384,14 +422,14 @@ def load_source(src, p, force=False):
     try:
         raw = _cached(_key(src, p), lambda: _load_raw(src, p, force), force=force)
     except Exception as ex:  # noqa: BLE001
-        return {"src": src, "label": SOURCES[src], "status": "error", "note": "", "errors": [_scrub(ex)], "rows": [], "prev_count": 0,
-                "count": 0, "by_tile": {}, "prev_by_tile": {}}
+        return _plain({"src": src, "label": SOURCES[src], "status": "error", "note": "", "errors": [_scrub(ex)], "rows": [], "prev_count": 0,
+                       "count": 0, "by_tile": {}, "prev_by_tile": {}})
     cur, prev = split(raw["rows"], p)
     cf = per.parse(raw["covered_from"]) if raw.get("covered_from") else None
-    return {"complete": not cf or cf <= p["start"], "prev_complete": not cf or cf <= p["prev_start"],"src": src, "label": SOURCES[src], "status": raw["status"], "note": raw.get("note", ""), "errors": raw.get("errors", []),
+    return _plain({"complete": not cf or cf <= p["start"], "prev_complete": not cf or cf <= p["prev_start"],"src": src, "label": SOURCES[src], "status": raw["status"], "note": raw.get("note", ""), "errors": raw.get("errors", []),
             "coverage": raw.get("coverage"), "rows": sorted(cur, key=lambda r: r["ts"], reverse=True),
             "count": sum(1 for r in cur if counted(r)), "prev_count": sum(1 for r in prev if counted(r)),
-            "by_tile": _by_tile(cur), "prev_by_tile": _by_tile(prev)}
+            "by_tile": _by_tile(cur), "prev_by_tile": _by_tile(prev)})
 
 
 def split(rows, p):
@@ -440,7 +478,9 @@ def summarise(results, p):
         src = "blog" if k.startswith("blog") else k
         st = (results.get(src) or {}).get("status", "not_loaded")
         res = results.get(src) or {}
-        tiles.append({"key": k, "label": label, "v": v, "prev": pv, "delta": v - pv, "status": st,
+        if st in ("error", "not_connected"):  # not read: no number (never a 0 that looks like nothing happened)
+            v = pv = None
+        tiles.append({"key": k, "label": label, "v": v, "prev": pv, "delta": None if v is None else v - pv, "status": st,
                       "complete": res.get("complete", True), "prev_complete": res.get("prev_complete", True)})
     days = {d: 0 for d in per.days(p["start"], p["end"], p["tz"])}
     for r in results.values():
@@ -451,7 +491,8 @@ def summarise(results, p):
                     days[d] += 1
     return {"period": _period_out(p),
             "tiles": tiles, "days": [{"day": d, "n": n} for d, n in days.items()],
-            "sources": {s: {"status": r["status"], "note": r.get("note", ""), "errors": r.get("errors", []), "count": r["count"],
+            "sources": {s: {"status": r["status"], "note": r.get("note", ""), "errors": r.get("errors", []),
+                            "count": r["count"] if r["status"] in ("ok", "demo") else None,
                             "prev_count": r["prev_count"], "complete": r.get("complete", True), "prev_complete": r.get("prev_complete", True)}
                         for s, r in results.items()}}
 
@@ -525,7 +566,7 @@ def g_config(q):
 
 
 def _period_out(p):
-    return {"name": p["name"], "label": p["label"], "tz": p["tz"], "start": per.iso(p["start"]), "end": per.iso(p["end"]),
+    return {"name": p["name"], "label": p["label"], "tz": p["tz"], "notes": p.get("notes", []), "start": per.iso(p["start"]), "end": per.iso(p["end"]),
             "prev_start": per.iso(p["prev_start"]), "prev_end": per.iso(p["prev_end"]), "days": per.days(p["start"], p["end"], p["tz"])}
 
 
@@ -609,6 +650,9 @@ def overview(days="7"):
     note = f"Activities in the last {n} days, per channel. Open the Activity tab for the full list."
     if loading:
         note += " Still loading: " + ", ".join(loading) + "."
+    bad = [SOURCES[k] for k, v in s["sources"].items() if v["status"] == "error"]
+    if bad:
+        note += " Could not read: " + ", ".join(bad) + " (see the Activity tab)."
     if s["sources"].get("email", {}).get("status") == "demo":
         note += " Email is demo data and is not counted."
     return {"title": "Activity", "tiles": tiles or [{"k": "Activities", "v": "0", "hi": ""}], "note": note}

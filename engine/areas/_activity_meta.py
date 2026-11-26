@@ -67,7 +67,10 @@ def plain_event(event_type, translated=""):
     return (event_type or "change").replace("_", " ").capitalize()
 
 
-def _val(v, money=False):
+OFFSET_1 = ("CLP", "COP", "CRC", "HUF", "ISK", "IDR", "JPY", "KRW", "PYG", "TWD", "VND")  # Meta money in whole units
+
+
+def _val(v, money=False, cur=""):
     if v is None or v == "":
         return ""
     if isinstance(v, dict) and "content" in v:  # targeting summaries: {"content": "Location:", "children": [...]}
@@ -75,11 +78,13 @@ def _val(v, money=False):
     if isinstance(v, dict):
         for k in ("new_value", "value", "name", "text"):
             if k in v:
-                return _val(v[k], money)
+                return _val(v[k], money, cur)
         return json.dumps(v, ensure_ascii=False)[:160]
     if isinstance(v, list):
-        return "; ".join(_val(x) for x in v)[:300]
+        return "; ".join(_val(x, money, cur) for x in v)[:300]
     if money and isinstance(v, (int, float)) or (money and isinstance(v, str) and v.isdigit()):
+        if str(cur or "").upper() in OFFSET_1:  # JPY, KRW, ...: Meta sends whole units
+            return f"{int(v):,}"
         return f"{int(v) / 100:,.2f}"  # Meta money is in the account's minor unit (cents)
     return str(v)[:200]
 
@@ -98,7 +103,7 @@ def old_new(event_type, extra):
     if isinstance(old, dict) and "old_value" in old:
         old = old["old_value"]
     cur = d.get("currency", "")
-    o, n = _val(old, money), _val(new, money)
+    o, n = _val(old, money, cur), _val(new, money, cur)
     if money and cur:
         o, n = (f"{o} {cur}" if o else ""), (f"{n} {cur}" if n else "")
     return o, n

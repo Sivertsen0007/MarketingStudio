@@ -42,19 +42,30 @@ def _shift_same_stretch(start, now, prev_start, tz):
 
 
 def period(name="last_30", now=None, tz="Europe/London", start=None, end=None):
-    """-> {"name", "label", "tz", "start", "end", "prev_start", "prev_end"} (aware datetimes in tz).
-    custom: start and end are dates (YYYY-MM-DD, both days included)."""
+    """-> {"name", "label", "tz", "start", "end", "prev_start", "prev_end", "notes"} (aware datetimes in tz).
+    custom: start and end are dates (YYYY-MM-DD, both days included). Dates the wrong way round are swapped, a to date
+    after today ends the period today, and a from date after today is refused; "notes" says what was changed."""
     tz = _tz(tz)
     now = (now or dt.datetime.now(dt.timezone.utc)).astimezone(tz)
     today = now.date()
     name = name if name in PERIODS else "last_30"
+    notes = []
     if name == "custom":
         if not start or not end:
             raise ValueError("Custom period needs a from and a to date.")
-        d0 = dt.date.fromisoformat(str(start)[:10])
-        d1 = dt.date.fromisoformat(str(end)[:10])
+        try:
+            d0 = dt.date.fromisoformat(str(start)[:10])
+            d1 = dt.date.fromisoformat(str(end)[:10])
+        except ValueError:
+            raise ValueError("Custom period: use dates like 2026-11-01.") from None
         if d1 < d0:
             d0, d1 = d1, d0
+            notes.append(f"The from and to dates were the wrong way round, so they were swapped ({fmt_day(d0)} to {fmt_day(d1)}).")
+        if d0 > today:
+            raise ValueError(f"The from date ({fmt_day(d0)}) is after today: pick a date up to today ({fmt_day(today)}).")
+        if d1 > today:
+            notes.append(f"The to date ({fmt_day(d1)}) is after today, so the period ends today ({fmt_day(today)}).")
+            d1 = today
         s, e = _midnight(d0, tz), _midnight(d1 + dt.timedelta(days=1), tz)
         n = (d1 - d0).days + 1
         ps, pe = _midnight(d0 - dt.timedelta(days=n), tz), s
@@ -89,7 +100,7 @@ def period(name="last_30", now=None, tz="Europe/London", start=None, end=None):
         ps = _midnight(_quarter_start(today, 1), tz)
         pe = _shift_same_stretch(s, now, ps, tz)
         label = PERIODS[name]
-    return {"name": name, "label": label, "tz": str(tz), "start": s, "end": e, "prev_start": ps, "prev_end": pe}
+    return {"name": name, "label": label, "tz": str(tz), "start": s, "end": e, "prev_start": ps, "prev_end": pe, "notes": notes}
 
 
 def days(start, end, tz="Europe/London"):

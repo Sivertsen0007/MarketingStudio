@@ -51,6 +51,37 @@ def now():
     return dt.datetime.now(dt.timezone.utc).astimezone()
 
 
+TZ_DEFAULT = "Europe/London"
+
+
+def posting_tz_name():
+    """The posting time zone's name. SoMe and Email share it: Setup's EMAIL_TIMEZONE (Email > Send timezone), default
+    Europe/London. SOCIAL_TZ overrides it (tests, the VPS job). Never this Mac's own zone unless the user picks it."""
+    name = os.environ.get("SOCIAL_TZ") or ""
+    if not name:
+        try:
+            import appconfig  # noqa: PLC0415 - Studio's folder; not there on the VPS job
+            name = appconfig.get("EMAIL_TIMEZONE") or ""
+        except Exception:  # noqa: BLE001
+            name = ""
+    return name if _zone(name) else TZ_DEFAULT
+
+
+def _zone(name):
+    if not name:
+        return None
+    try:
+        from zoneinfo import ZoneInfo  # noqa: PLC0415
+        return ZoneInfo(name)
+    except Exception:  # noqa: BLE001 - a typo in Setup must not break SoMe
+        return None
+
+
+def posting_tz():
+    """Slots, quick picks, best time and the editor's time field use this zone (a tzinfo)."""
+    return _zone(posting_tz_name()) or dt.timezone.utc
+
+
 def iso(t):
     return t.isoformat(timespec="seconds") if t else ""
 

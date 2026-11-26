@@ -1419,5 +1419,236 @@ class DataPolicy(unittest.TestCase):
         self.assertEqual(self.n, before)
 
 
+def mp4_box(seconds, w, h, rotate=False, mdat=0, scale=1000):
+    """A small MP4 that walks like a real one: ftyp, a big mdat first (only its header is real), then moov with mvhd
+    and a video tkhd (w x h, a 90 degree matrix when rotate)."""
+    mvhd = b"\x00" * 4 + b"\x00" * 8 + struct.pack(">II", scale, int(seconds * scale)) + b"\x00" * 80
+    mvhd = struct.pack(">I4s", 8 + len(mvhd), b"mvhd") + mvhd
+    matrix = struct.pack(">9i", 0, 65536, 0, -65536, 0, 0, 0, 0, 1 << 30) if rotate else struct.pack(">9i", 65536, 0, 0, 0, 65536, 0, 0, 0, 1 << 30)
+    tk = b"\x00" * 4 + b"\x00" * 20 + b"\x00" * 8 + b"\x00" * 8 + matrix + struct.pack(">II", w << 16, h << 16)
+    tkhd = struct.pack(">I4s", 8 + len(tk), b"tkhd") + tk
+    trak = struct.pack(">I4s", 8 + len(tkhd), b"trak") + tkhd
+    moov = struct.pack(">I4s", 8 + len(mvhd) + len(trak), b"moov") + mvhd + trak
+    ftyp = struct.pack(">I4s", 16, b"ftyp") + b"mp42\x00\x00\x00\x00"
+    return ftyp + struct.pack(">I4s", 8 + mdat, b"mdat") + b"\x00" * mdat + moov
+
+
+class V023Checks(unittest.TestCase):
+    """v0.2.3: media facts from file heads (cached), LinkedIn / Facebook / Reel media rules, hashtags with the first
+    comment, LinkedIn connection, the split scheduling messages."""
+
+    def post(self, **kw):
+        return {**store.blank(), "channels": ["facebook"], "caption": "Seven nights in the Red Sea.", **kw}
+
+    def test_mp4_facts_from_the_moov_box_only(self):
+        f = write("clip.mp4", mp4_box(42.5, 1920, 1080, mdat=3 * 1024 * 1024))
+        reads = []
+        real_open = open
+
+        class Spy:
+            def __init__(self, fh):
+                self.fh = fh
+
+            def read(self, n=-1):
+                b = self.fh.read(n)
+                reads.append(len(b))
+                return b
+
+            def __getattr__(self, k):
+                return getattr(self.fh, k)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.fh.close()
+
+        with mock.patch("builtins.open", lambda *a, **k: Spy(real_open(*a, **k))):
+            facts = checks.media_facts(f, "video", "mp4")
+        self.assertEqual((facts["seconds"], facts["width"], facts["height"]), (42.5, 1920, 1080))
+        self.assertEqual(facts["size"], f.stat().st_size)
+        self.assertLess(sum(reads), 64 * 1024)  # the 3 MB mdat is skipped, not read
+        rot = checks.media_facts(write("rot.mp4", mp4_box(10, 1920, 1080, rotate=True)), "video", "mp4")
+        self.assertEqual((rot["width"], rot["height"]), (1080, 1920))  # shown upright: vertical
+        self.assertEqual(checks.media_facts(write("old.mp4", mp4(12.5)), "video", "mp4")["seconds"], 12.5)  # a file that does not walk
+
+    def test_media_facts_cached_per_file(self):
+        img = write("cache.jpg", jpg(1080, 1350))
+        calls = []
+        real = checks.media_facts
+        with mock.patch.object(social, "media_lookup", lambda mid: (img, "jpg", "image")), \
+                mock.patch.object(social.checks, "media_facts", lambda *a: calls.append(a) or real(*a)):
+            social._facts.clear()
+            p = self.post(media=[{"media_id": "c1", "kind": "image"}], alt_text="x")
+            social.check(p, links=False)
+            social.check(p, links=False)
+            self.assertEqual(len(calls), 1)  # one read for two checks
+            os.utime(img, ns=(1, 1))
+            social.check(p, links=False)
+            self.assertEqual(len(calls), 2)  # the file changed: read again
+            pub_post = {**p, "results": {"facebook": {"status": "published"}}}
+            self.assertEqual(store.status(pub_post), "published")
+            with mock.patch.object(social, "media_facts", lambda post: self.fail("published posts are not measured")):
+                social.check(pub_post, links=False)
+
+    def test_linkedin_and_facebook_video_rules_and_reels(self):
+        long_li = {"kind": "video", "ext": "mp4", "size": 6 * 1024 ** 3, "seconds": 31 * 60, "width": 1920, "height": 1080}
+        p, w = checks.media_problems("linkedin", "video", [long_li])
+        self.assertTrue(any("5 GB" in x for x in p))
+        self.assertTrue(any("3 s to 30 min" in x for x in p))
+        self.assertEqual(checks.media_problems("linkedin", "video", [{**long_li, "size": 10, "seconds": 2}])[0][-1],
+                         "LinkedIn: video is 2 s, LinkedIn videos are 3 s to 30 min")
+        self.assertEqual(checks.media_problems("facebook", "video", [{**long_li, "seconds": 120 * 60}])[0], [])
+        self.assertTrue(any("240 min" in x for x in checks.media_problems("facebook", "video", [{**long_li, "seconds": 241 * 60}])[0]))
+        p, w = checks.media_problems("instagram", "reel", [{"kind": "video", "ext": "mp4", "size": 10, "seconds": 20, "width": 1920, "height": 1080}])
+        self.assertEqual(p, [])
+        self.assertTrue(any("not vertical" in x for x in w))
+        p, w = checks.media_problems("instagram", "reel", [{"kind": "video", "ext": "mp4", "size": 10, "seconds": 20, "width": 1080, "height": 1920}])
+        self.assertFalse(any("vertical" in x for x in w))
+
+    def test_carousel_limits_per_channel(self):
+        img = {"kind": "image", "ext": "jpg", "size": 1, "width": 1080, "height": 1080}
+        self.assertEqual(checks.media_problems("linkedin", "carousel", [img] * 15)[0], [])
+        self.assertTrue(any("2 to 20" in x for x in checks.media_problems("linkedin", "carousel", [img] * 21)[0]))
+        self.assertTrue(any("2 to 10" in x for x in checks.media_problems("instagram", "carousel", [img] * 11)[0]))
+
+    def test_first_comment_hashtags_count(self):
+        img = [{"kind": "image", "ext": "jpg", "size": 1000, "width": 1080, "height": 1080}]
+        tags = lambda a, b: " ".join(f"#t{i}" for i in range(a, b))  # noqa: E731
+        p = self.post(channels=["instagram"], hashtags=tags(0, 20), first_comment=tags(20, 31), media=[{"media_id": "x", "kind": "image"}])
+        r = checks.check_post(p, store.caption_for, img)
+        self.assertTrue(any("31 hashtags (caption and first comment together)" in x for x in r["problems"]))
+        r = checks.check_post({**p, "first_comment": tags(20, 30)}, store.caption_for, img)
+        self.assertFalse(any("hashtags" in x for x in r["problems"]))
+
+    def test_caption_length_counts_characters(self):
+        p = self.post(channels=["linkedin"], caption="\U0001F42C" * 3000)  # 3000 emoji = 3000 characters (6000 in UTF-16)
+        r = checks.check_post(p, store.caption_for, None)
+        self.assertEqual(r["channels"]["linkedin"]["length"], 3000)
+        self.assertFalse(any("caption is" in x for x in r["problems"]))
+        js = (HERE / "static" / "social.js").read_text()
+        self.assertIn("const nChars = t => [...String(t", js)  # the editor counts the same way
+        self.assertIn("nChars(textFor(p, c))", js)
+
+    def test_linkedin_not_connected_is_a_problem(self):
+        p = self.post(channels=["facebook", "linkedin"])
+        r = checks.check_post(p, store.caption_for, None, linkedin_connected=False)
+        self.assertTrue(any("LinkedIn is not connected" in x for x in r["channels"]["linkedin"]["problems"]))
+        self.assertEqual(r["channels"]["facebook"]["problems"], [])
+        self.assertTrue(checks.check_post(p, store.caption_for, None, linkedin_connected=True)["ok"])
+        self.assertTrue(checks.check_post(p, store.caption_for, None)["ok"])  # not known: not checked
+
+    def test_schedule_messages_are_split(self):
+        now = store.now()
+        soon = checks.schedule_route("facebook", now + dt.timedelta(minutes=5), now, False)[1][0]
+        far = checks.schedule_route("facebook", now + dt.timedelta(days=40), now, False)[1][0]
+        ig = checks.schedule_route("instagram", now + dt.timedelta(hours=2), now, False)[1][0]
+        self.assertIn("at least 10 minutes", soon)
+        self.assertIn("30 days ahead at most", far)
+        self.assertNotIn("API", far)
+        self.assertIn("no scheduling of its own through the API", ig)
+        self.assertNotIn("30 days", ig)
+
+
+class V023Schedule(unittest.TestCase):
+    """v0.2.3: the Schedule dialog shows the engine's own answer (schedule_preview), with the clash warnings inside."""
+
+    def setUp(self):
+        fresh()
+        social._fakes.clear()
+        self.img = write("pv.jpg", jpg(1080, 1350))
+        self.ml = mock.patch.object(social, "media_lookup", lambda mid: (self.img, "jpg", "image"))
+        self.ml.start()
+        self.lc = mock.patch.object(social, "link_check", lambda u: "")
+        self.lc.start()
+
+    def tearDown(self):
+        self.ml.stop()
+        self.lc.stop()
+
+    def new(self, **kw):
+        return store.save({"caption": "Seven nights on the Red Sea reefs.", "channels": ["facebook", "instagram"],
+                           "media": [{"media_id": "m1", "kind": "image"}], "alt_text": "Reef", **kw})
+
+    def test_preview_matches_schedule(self):
+        p = self.new(when=store.iso(store.now() + dt.timedelta(hours=3)))
+        with mock.patch.object(social, "_clashes", lambda post, chs: [{"rule": "gap", "message": "Facebook: something 1 h from this one"}]):
+            pv = social.schedule_preview({"id": p["id"]})
+        self.assertEqual(pv["routes"], {"facebook": "meta", "instagram": None})
+        self.assertIn("instagram", pv["refused"])
+        self.assertEqual(pv["options"], [{"label": "Schedule Facebook only", "channels": ["facebook"]}])
+        self.assertEqual([c["rule"] for c in pv["clashes"]], ["gap"])  # listed in the dialog, before confirming
+        self.assertEqual(pv["posting_tz"], store.posting_tz_name())
+        r = social.schedule({"id": p["id"], "pressed": "user"})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["options"], pv["options"])  # the engine refuses what the dialog did not offer
+        self.assertTrue(social.schedule({"id": p["id"], "pressed": "user", "channels": pv["options"][0]["channels"]})["ok"])
+
+    def test_no_option_when_every_channel_is_refused(self):
+        p = self.new(when=store.iso(store.now() + dt.timedelta(minutes=5)))
+        pv = social.schedule_preview({"id": p["id"]})
+        self.assertEqual(pv["options"], [])
+        self.assertTrue(any("10 minutes" in x for x in pv["refused"]["facebook"]))
+        past = self.new(when=store.iso(store.now() - dt.timedelta(hours=1)))
+        pv = social.schedule_preview({"id": past["id"]})
+        self.assertEqual(pv["options"], [])
+        self.assertTrue(all("past" in v[0] for v in pv["refused"].values()))
+
+    def test_check_problems_scoped_to_the_channels(self):
+        p = self.new(when=store.iso(store.now() + dt.timedelta(hours=3)), captions={"instagram": "Bahamas next"})
+        pv = social.schedule_preview({"id": p["id"]})
+        self.assertTrue(any("Bahamas" in x for x in pv["problems"]))  # all channels: Instagram's problem shows
+        self.assertEqual(pv["options"][0]["channels"], ["facebook"])  # Facebook alone has none
+
+    def test_linkedin_not_connected_refused(self):
+        p = self.new(channels=["facebook", "linkedin"], when=store.iso(store.now() + dt.timedelta(hours=3)))
+        social.save_settings({"local_scheduler": True})
+        try:
+            with mock.patch.object(social, "linkedin_connected", lambda: False):
+                pv = social.schedule_preview({"id": p["id"]})
+                self.assertEqual(pv["refused"]["linkedin"], [social.LI_NOT_CONNECTED])
+                self.assertTrue(any("LinkedIn is not connected" in x for x in social.check(store.get(p["id"]), links=False)["problems"]))
+                self.assertEqual(pv["options"], [{"label": "Schedule Facebook only", "channels": ["facebook"]}])
+        finally:
+            social.save_settings({"local_scheduler": False})
+
+
+class V023TimeZone(unittest.TestCase):
+    """v0.2.3: one posting time zone (Email's EMAIL_TIMEZONE, default Europe/London) for slots, quick picks and the best time."""
+
+    def setUp(self):
+        fresh()
+
+    def test_default_and_override(self):
+        with mock.patch.dict(os.environ, {"SOCIAL_TZ": ""}):
+            self.assertEqual(store.posting_tz_name(), "Europe/London")
+        with mock.patch.dict(os.environ, {"SOCIAL_TZ": "Asia/Bangkok"}):
+            self.assertEqual(store.posting_tz_name(), "Asia/Bangkok")
+        with mock.patch.dict(os.environ, {"SOCIAL_TZ": "Not/AZone"}):
+            self.assertEqual(store.posting_tz_name(), "Europe/London")
+        with self.assertRaises(ValueError):
+            social.set_posting_tz("Mars/Olympus")
+
+    def test_slots_and_quick_picks_in_the_posting_zone(self):
+        from zoneinfo import ZoneInfo
+        from areas import _social_plan as plan
+        lon, bkk = ZoneInfo("Europe/London"), ZoneInfo("Asia/Bangkok")
+        mon = dt.datetime(2026, 11, 16, 8, 0, tzinfo=bkk)  # Monday 08:00 in Bangkok = 01:00 in London
+        t = plan.next_free_slot({"instagram": ["Tue 09:00"]}, ["instagram"], [], mon, tz=lon)
+        self.assertEqual(t, dt.datetime(2026, 11, 17, 9, 0, tzinfo=lon))  # 09:00 London, not 09:00 Bangkok
+        q = plan.quick_times(mon, t, [], tz=lon)
+        self.assertEqual(q[0]["label"], "Today 18:00")
+        self.assertEqual(store.parse_when(q[0]["when"]), dt.datetime(2026, 11, 16, 18, 0, tzinfo=lon))
+        self.assertIn("Next queue slot (Tue 09:00)", [x["label"] for x in q])
+        with mock.patch.dict(os.environ, {"SOCIAL_TZ": "Europe/London"}):
+            social.save_settings({"slots": {"instagram": ["Wed 07:30"]}})
+            day = (store.now() + dt.timedelta(days=14)).date()
+            while day.weekday() != 2:
+                day += dt.timedelta(days=1)
+            s = social.get_slot({"day": day.isoformat(), "channels": "instagram"})
+            self.assertEqual(store.parse_when(s["when"]).astimezone(lon).strftime("%H:%M"), "07:30")
+            self.assertEqual(social.get_state({})["posting_tz"], "Europe/London")
+
+
 if __name__ == "__main__":
     unittest.main()

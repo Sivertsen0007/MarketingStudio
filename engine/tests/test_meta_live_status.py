@@ -371,7 +371,7 @@ class VideoUpload(VideoBase):
         u = self.graph()
         ref = meta.upload_media(self.mid)
         self.assertEqual(ref["video_id"], "v1")
-        self.assertEqual(u.calls, [("GET", "v1", "status")])  # no upload, one check
+        self.assertEqual(u.calls, [("GET", "v1", "status"), ("GET", "v1/thumbnails", "uri,is_preferred")])  # no upload: a check + fresh thumbnail
 
     def test_reused_video_still_processing_is_waited_for(self):
         self.graph(statuses=[{"video_status": "processing", "processing_progress": 10}, {"video_status": "ready"}])
@@ -455,7 +455,7 @@ class Routes(VideoBase):
         u2 = self.graph()
         ref = meta.upload_media(self.mid)
         self.assertEqual((ref["video_id"], ref["image_url"]), ("v1", "https://thumb/v1.jpg"))
-        self.assertEqual(u2.calls, [("GET", "v1", "status")])
+        self.assertEqual(u2.calls, [("GET", "v1", "status"), ("GET", "v1/thumbnails", "uri,is_preferred")])  # fresh thumbnail (M15)
 
     def test_prepare_by_media_id_and_full_path(self):
         self.graph()

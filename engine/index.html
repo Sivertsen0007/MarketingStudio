@@ -1355,6 +1355,7 @@ function renderPreview(p, acct){
     ${(i.warnings || []).map(x => `<div class="warnl">${esc(x)}</div>`).join("")}</div>`).join("");
   const spendTick = was => { const n = spendN(); return n ? `<label class="tick"><input type="checkbox" id="lv_spend" ${was ? "checked" : ""}> <span>${n} change${n > 1 ? "s" : ""} can raise spend. I know.</span></label>` : "" };
   const body = `<table class="tally">${counts.map(([l, n]) => `<tr><td>${esc(l)}</td><td>${n}</td></tr>`).join("")}</table>
+    ${p.connection ? `<div class="prob">${esc(p.connection)}</div>` : ""}
     ${bad.length ? `<div class="prob">${bad.length} change${bad.length > 1 ? "s" : ""} can't go live as ${bad.length > 1 ? "they are" : "it is"}. Open details, then Undo or fix ${bad.length > 1 ? "them" : "it"} in the Draft tab.</div>` : ""}
     ${meta ? `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.meta_new ? "checked" : ""}> <span>Create new ads as <b>Active</b> (they deliver once Meta approves them; new campaigns and ad sets stay Paused)</span></label>`
       : `<label class="tick"><input type="checkbox" id="lv_new" ${LIVE.enable_new ? "checked" : ""}> <span>Create new ad groups, keywords and ads as <b>Enabled</b> (default: Paused)</span></label>`}
@@ -1832,6 +1833,7 @@ const META_ADD = {
     if (!ads.length){ ads = (await api("/api/grid?" + qs({acct:S.acct, kind:"ads"}))).filter(a => a.editable && !a._new); where = "the account" }
     let media = null;
     showDialog("New ad in " + sc.ad_group, `<p class="hint">New ads are created <b>Paused</b>. Nothing changes on Meta until you push live.</p>
+      <p class="hint">This makes a single image or video ad with one text. Carousels and ads with several texts (headlines, primary texts) are made via Claude: ask Claude to add one to the draft.</p>
       <div class="row"><label>Image or video</label><span>
         <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="copy" ${ads.length ? "checked" : "disabled"}> Copy the image/video of an existing ad${ads.length ? "" : " (none to copy)"}</label>
         <label class="tick" style="margin:2px 0"><input type="radio" name="f_src" value="upload" ${ads.length ? "" : "checked"}> Upload a new image or video</label>
@@ -1886,10 +1888,11 @@ const META_ADD = {
       const f = e.target.files[0]; media = null; $("#upPrev").innerHTML = ""; if (!f) return;
       $("#upOut").textContent = `Reading ${f.name} ...`;
       try {
-        const data = await readFile(f);
         $("#upOut").textContent = `Storing ${f.name} on this Mac ...`;
-        media = await api("/api/meta/media", {filename:f.name, data});
-        $("#upOut").innerHTML = `${esc(media.name)} · ${esc(media.kind)} · ${(media.size / 1048576).toFixed(1)} MB · stored, uploaded to Meta when you push live, or now: <button class="link" id="upPrep">Prepare for Meta</button><div id="upPrepOut" class="hint"></div>`;
+        const r = await fetch("/api/meta/media/raw?" + qs({acct:S.acct, name:f.name}), {method:"POST", headers:{"Content-Type":"application/octet-stream", "X-Studio-Press":PRESS}, body:f});
+        media = await r.json().catch(() => ({error:`Studio answered ${r.status}`}));
+        if (!r.ok || media.error) throw new Error(media.error || `Studio answered ${r.status}`);
+        $("#upOut").innerHTML = `${esc(media.name)} · ${esc(media.kind)} · ${(media.size / 1048576).toFixed(1)} MB${media.width ? ` · ${media.width}x${media.height}` : ""}${media.duration ? ` · ${Math.round(media.duration)} s` : ""} · stored, uploaded to Meta when you push live, or now: <button class="link" id="upPrep">Prepare for Meta</button><div id="upPrepOut" class="hint"></div>${(media.warnings || []).map(w => `<div class="warnl">${esc(w)}</div>`).join("")}`;
         const mid = media.media_id; libLoaded = false;
         $("#upPrep").onclick = () => { $("#upPrep").disabled = true; prepareForMeta(mid, $("#upPrepOut"), () => { $("#upPrep").outerHTML = `<span class="chip ok">On Meta</span>` }, () => { $("#upPrep").disabled = false }) };
         const mu = mediaUrl(media.media_id);

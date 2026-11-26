@@ -80,9 +80,12 @@ class Fake:
         self.insights = {}
         self.objective_results = {}
         self.fail_on = None
+        self.state = {}  # what pushes wrote per object id (read back by undo's guard, S2b M25)
 
     def get(self, path, **params):
         self.gets.append((path, params))
+        if path in self.state and set((params.get("fields") or "").split(",")) <= set(self.state[path]):
+            return {"id": path, **self.state[path]}
         if path.endswith("/insights"):
             return {"data": self.insights.get(path.split("/")[0], [])}
         if path in ("s1", "s2"):
@@ -113,6 +116,8 @@ class Fake:
             return {"success": True}
         if self.fail_on and self.fail_on in path:
             raise meta.MetaError({"message": "refused", "code": 100})
+        if "/" not in path and not any(s["id"] == path for s in STUDIES):
+            self.state.setdefault(path, {}).update(json.loads(json.dumps(params)))
         self.n += 1
         return {"id": f"new{self.n}", "success": True}
 

@@ -334,9 +334,12 @@ class MFake:
     def __init__(self):
         self.posts, self.gets, self.deletes, self.n = [], [], [], 0
         self.live_adsets = [{"id": "s1", "name": "Set one", "effective_status": "ACTIVE", "targeting": TG}]
+        self.state = {}  # what pushes wrote per ad set / ad (read back by undo's guard, S2b M25)
 
     def get(self, path, **params):
         self.gets.append((path, params))
+        if path in self.state:
+            return {"id": path, **json.loads(json.dumps(self.state[path]))}
         if path in ("w1", "w2"):
             return {"id": path, "name": next(a["name"] for a in AUDS if a["id"] == path), "subtype": "WEBSITE", "description": "",
                     "rule": json.dumps(WRULE), "retention_days": 30}
@@ -361,6 +364,8 @@ class MFake:
                 raise AssertionError("an audience must never get a validate_only POST (not proven on Meta)")
         if validate:
             return {"success": True}
+        if "/" not in path and path not in {a["id"] for a in AUDS}:
+            self.state.setdefault(path, {}).update(json.loads(json.dumps(params)))
         self.n += 1
         return {"id": f"new{self.n}", "success": True}
 

@@ -944,25 +944,98 @@ PRICE = re.compile(r"(?:[$£€]\s?\d(?:[\d,.]*\d)?|\d(?:[\d,.]*\d)?\s?(?:USD|GB
 PCT = re.compile(r"\d{1,2}\s?%")
 
 
-def _page_text(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh) AdsStudio/1.0"})
-    raw = urllib.request.urlopen(req, timeout=15).read().decode("utf-8", "replace")
+LINK_TTL = 600       # seconds a landing page read is reused (draft saves and checks stay fast)
+LINK_TTL_ERR = 60    # ... when the page could not be read (network trouble): tried again sooner
+LINK_TIMEOUT = 15    # seconds for one landing page to answer
+LINK_MAX_BYTES = 3 * 1024 * 1024  # page bytes read for the price check
+LINK_CACHE_MAX = 500
+LINK_WORKERS = 6     # landing pages read side by side in one check
+_link_cache = {}     # url -> (time.monotonic() when read, {"code", "text", "error"})
+_link_busy = {}      # url -> threading.Event while one thread reads it (the others wait for that read)
+_link_lock = threading.Lock()
+
+
+def _fetch_link(url):
+    """One GET of a landing page -> {"code": HTTP error code or None, "text": page text or None, "error": "" or why}."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh) AdsStudio/1.0"})
+        with urllib.request.urlopen(req, timeout=LINK_TIMEOUT) as r:
+            raw = r.read(LINK_MAX_BYTES).decode("utf-8", "replace")
+    except urllib.error.HTTPError as ex:
+        return {"code": ex.code, "text": None, "error": f"HTTP {ex.code}"}
+    except Exception as ex:  # noqa: BLE001 - network trouble is reported by the caller, never raised
+        return {"code": None, "text": None, "error": str(ex) or ex.__class__.__name__}
     raw = re.sub(r"(?s)<(script|style)[^>]*>.*?</\1>", " ", raw)
-    return html.unescape(re.sub(r"<[^>]+>", " ", raw))
+    return {"code": None, "text": html.unescape(re.sub(r"<[^>]+>", " ", raw)), "error": ""}
+
+
+def _link(url):
+    """The landing page read, cached per URL (LINK_TTL; LINK_TTL_ERR after network trouble). Two checks of the same URL at
+    once share one read. Never holds the draft lock: only this module's own small lock, never during the read."""
+    while True:
+        with _link_lock:
+            hit = _link_cache.get(url)
+            if hit:
+                ttl = LINK_TTL if (hit[1]["code"] or not hit[1]["error"]) else LINK_TTL_ERR
+                if time.monotonic() - hit[0] < ttl:
+                    return hit[1]
+            ev = _link_busy.get(url)
+            if ev is None:
+                ev = _link_busy[url] = threading.Event()
+                break
+        if not ev.wait(LINK_TIMEOUT * 2 + 5):
+            return _fetch_link(url)
+    try:
+        res = _fetch_link(url)
+        with _link_lock:
+            if len(_link_cache) >= LINK_CACHE_MAX:
+                for k, _v in sorted(_link_cache.items(), key=lambda kv: kv[1][0])[:LINK_CACHE_MAX // 5]:
+                    _link_cache.pop(k, None)
+            _link_cache[url] = (time.monotonic(), res)
+        return res
+    finally:
+        with _link_lock:
+            _link_busy.pop(url, None)
+        ev.set()
+
+
+def forget_links():
+    with _link_lock:
+        _link_cache.clear()
+
+
+def _page_text(url):
+    r = _link(url)
+    if r["code"]:
+        raise urllib.error.HTTPError(url, r["code"], r["error"], None, None)
+    if r["error"]:
+        raise OSError(r["error"])
+    return r["text"]
 
 
 def link_problem(url):
     """A link that answers 404/410 would send every click to a missing page."""
     if not url or "{{" in url:
         return ""
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh) AdsStudio/1.0"})
-        urllib.request.urlopen(req, timeout=15).close()
-        return ""
-    except urllib.error.HTTPError as ex:
-        return f"the link answers {ex.code}: {url}" if ex.code in (404, 410) else ""
-    except Exception:  # noqa: BLE001 - network trouble is not a dead link
-        return ""
+    code = _link(url)["code"]
+    return f"the link answers {code}: {url}" if code in (404, 410) else ""  # network trouble is not a dead link
+
+
+def _warm_links(urls, copy):
+    """Read every landing page of one check side by side (cached), so the checks after it answer from the cache."""
+    prices = bool(PRICE.findall(copy or "") + PCT.findall(copy or ""))
+
+    def one(u):
+        try:
+            link_problem(u)
+            if prices and "{{" in u:
+                _page_text(u.split("?")[0])
+        except Exception as ex:  # noqa: BLE001 - only a speed-up: the check itself reports it
+            return ex
+        return None
+    urls = sorted({u for u in urls if u})
+    if len(urls) > 1:
+        _pmap(one, urls, LINK_WORKERS)
 
 
 def page_check(text, url):
@@ -1338,6 +1411,13 @@ def check(c, d=None, items=None):
                 ct = creative_text(src.get("creative"))
                 if not ct["editable"]:
                     problems.append(f"can't copy that ad: {ct['why_not']}")
+            if c.get("media_id") or c.get("cards"):  # size / aspect / length per placement of the ad set (M23)
+                tg_ = _adset_targeting(c.get("adset_id"), d, items)
+                if c.get("media_id") and c["media_id"] in _media_index():
+                    warnings += media_warnings(c["media_id"], tg_)
+                for i, x in enumerate(c.get("cards") or []):
+                    if isinstance(x, dict) and x.get("media_id") in _media_index():
+                        warnings += media_warnings(x["media_id"], tg_, f"card {i + 1}")
             if c.get("media_id"):
                 if c["media_id"] not in _media_index():
                     problems.append("media_id not found: upload the file again")
@@ -1491,6 +1571,7 @@ def check(c, d=None, items=None):
             if pt and re.search(r"[$£€]\d{1,3},\d{3}", pt):
                 warnings.append(f"{k}: remove the comma in prices ($1155 not $1,155) - Meta misreads it")
         copy = " ".join(v for k, v in texts if COPY_LABEL.match(k))
+        _warm_links([u for u, _ in links], copy)
         for link in sorted({u for u, _ in links if u}):
             dead = link_problem(link)
             if dead:
@@ -1583,27 +1664,52 @@ def add(changes, by="you", note=None):
         if ch.get("type") in TEST_TYPES and ch.get("ads"):
             ch["ads"] = ["d-" + refs[_ref(o)] if _ref(o) in refs else o for o in ch["ads"]]
     pool = _items(items)
-    for it in items:
+    for it, (probs, warns) in zip(items, _checks([it["change"] for it in items], d, pool)):
         c = it["change"]
-        it["problems"], it["warnings"] = check(c, d, pool)
+        it["problems"], it["warnings"] = probs, warns
         try:
             it["summary"] = summarise(c, d, pool)
         except (KeyError, TypeError, ValueError):
             it["summary"] = json.dumps(c, ensure_ascii=False)
-    with core._locked(acct()) as dr:
+    with core._locked(acct()) as dr:  # no network inside the lock: the checks (landing pages too) ran above
         dr["items"].extend(items)
     return items
+
+
+CHECK_WORKERS = 4  # draft items checked side by side (each reads its landing pages, cached per URL)
+
+
+def _checks(changes, d, pool):
+    """check() of several changes side by side -> [(problems, warnings)] in order. Raises what check() raised."""
+    def one(c):
+        try:
+            return check(c, d, pool)
+        except Exception as ex:  # noqa: BLE001 - raised again below, on the calling thread
+            return ex
+    out = _pmap(one, changes, CHECK_WORKERS)
+    for r in out:
+        if isinstance(r, BaseException):
+            raise r
+    return out
 
 
 def validate():
     """Re-check every draft item against the cached Meta data (the local checks; Meta's own check, on live data, runs in
     the live preview). In auto mode the cache is first re-pulled when older than a minute."""
     d = load(max_age=60, wait=True)
+    snap = core.draft(acct())["items"]  # checked outside the draft lock (landing pages are read over the network)
+    pool = {it["id"]: it for it in snap}
+    got = {it["id"]: (json.dumps(it["change"], sort_keys=True, default=str), r)
+           for it, r in zip(snap, _checks([it["change"] for it in snap], d, pool))}
     results = []
     with core._locked(acct()) as dr:
-        pool = {it["id"]: it for it in dr["items"]}
         for it in dr["items"]:
-            it["problems"], it["warnings"] = check(it["change"], d, pool)
+            g = got.get(it["id"])
+            if g and g[0] == json.dumps(it["change"], sort_keys=True, default=str):
+                it["problems"], it["warnings"] = g[1]
+            else:  # added or edited while the checks ran: its own check (from add) stays
+                it.setdefault("problems", [])
+                it.setdefault("warnings", [])
             results.append({"id": it["id"], "summary": it["summary"], "ok": not it["problems"], "problems": it["problems"], "warnings": it["warnings"]})
     return results
 
@@ -2483,14 +2589,33 @@ def _validate(s):
     return ""
 
 
+NO_ANSWER = "Couldn't reach Meta, nothing was checked"
+
+
+class _Unchecked(str):
+    """A check that got no answer from Meta (network / Meta down): not a problem of the change itself."""
+
+
+def _no_answer(ex):
+    """True when Meta did not answer at all (timeout, DNS, connection reset) or answered with a server hiccup (5xx /
+    is_transient): the change was never checked, so it is a connection problem, not something to fix or undo."""
+    if not isinstance(ex, MetaError):
+        return isinstance(ex, (ConnectionError, TimeoutError))  # never a file error (OSError) or a refusal
+    if ex.rate_limited:
+        return False
+    return (getattr(ex, "status", None) is None and str(ex).startswith("no answer from Meta")) or bool(ex.transient)
+
+
 def _check_step(s):
     """Meta's own validate_only for one step. Returns an error string or ''. A rate-limited check pauses the whole
     ad account (shared hold) and is tried once more; still rate-limited, it is a problem (BUSY): a push never sends
-    a change Meta did not check."""
+    a change Meta did not check. No answer at all: an _Unchecked string (plan() reports it as a connection problem)."""
     for attempt in (1, 2):
         try:
             return _validate(s)
         except MetaError as ex:
+            if _no_answer(ex):
+                return _Unchecked(f"no answer from Meta: {ex}")
             if not ex.rate_limited:
                 return f"Meta: {ex}"
             if attempt == 2:
@@ -2613,7 +2738,7 @@ def forget_checks():
         _reuse.clear()
 
 
-def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, checks=None):
+def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, checks=None, on_phase=None):
     """Every draft item -> steps, each checked by Meta (validate_only). Live values are read for this plan only:
     batched per level, then cached until the plan returns. on_check(done, total, line, item id) after each check.
     workers: checks at a time (default WORKERS; 1 = one after the other, as before).
@@ -2625,6 +2750,13 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, c
     steps, per_item, touched = [], [], {}
     staged = []  # (item, entry, rechecked, steps that passed the local rules, error that stopped the item)
     _plan_tls.live = {}
+    if on_phase:  # the live reads come first: say so (a big draft takes a few seconds before the first check)
+        try:
+            on_phase("Reading the live values from Meta")
+        except Exception:  # noqa: BLE001
+            pass
+    if tick:
+        progress.phase(acct(), "checking", "Reading the live values from Meta")
     try:
         try:
             _prefetch([it["change"] for it in items if not it.get("problems") and isinstance(it.get("change"), dict)], workers,
@@ -2633,7 +2765,7 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, c
             pass
         for it in items:
             entry = {"id": it.get("id"), "summary": it.get("summary") or "", "by": it.get("by", ""), "lines": [], "spend": [],
-                     "permanent": [], "problems": list(it.get("problems") or [])}
+                     "permanent": [], "problems": list(it.get("problems") or []), "unchecked": []}
             if not isinstance(it.get("change"), dict):
                 entry["problems"].append("invalid change: the draft item has no change")
                 staged.append((it, entry, False, [], None, None))
@@ -2675,6 +2807,8 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, c
     finally:
         _plan_tls.live = None
         _plan_tls.reads = None
+    if tick:
+        progress.phase(acct(), "checking", "Meta is checking each change")
     jobs = [(it["id"], s) for it, _e, _r, ok_steps, _s, _l in staged for s in ok_steps]
     keys = [_reuse_key(s, live) if live and s.get("kind") in REUSE_KINDS else None
             for _it, _e, _r, ok_steps, _s, live in staged for s in ok_steps]
@@ -2704,7 +2838,9 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, c
             if isinstance(err, BaseException):  # as before: the item stops at the step whose check broke
                 stop = err
                 break
-            if err:
+            if isinstance(err, _Unchecked):
+                entry["unchecked"].append(f'{s["line"]}: {err}')
+            elif err:
                 entry["problems"].append(err)
             s["item"] = it["id"]
             steps.append(s)
@@ -2715,13 +2851,18 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, c
                 entry["spend"].append(f"undo or rollback: {s['undo_spend']}")
             if s.get("permanent"):
                 entry["permanent"].append(s["line"])
-        if stop is not None:
+        if stop is not None and _no_answer(stop):  # a live read got no answer: not the change's fault
+            entry["unchecked"].append(f"no answer from Meta: {stop}")
+        elif stop is not None:
             _refusal(entry, stop, rechecked)
         per_item.append(entry)
     steps.sort(key=lambda s: PHASE.get(s.get("phase"), 3))  # campaign -> ad set -> ad -> edits; stable within a phase
-    return {"items": per_item, "steps": steps, "ok": bool(steps) and not any(e["problems"] for e in per_item),
+    conn = any(e["unchecked"] for e in per_item)
+    return {"items": per_item, "steps": steps, "ok": bool(steps) and not conn and not any(e["problems"] for e in per_item),
             "spend": any(e["spend"] for e in per_item), "permanent": any(e["permanent"] for e in per_item), "channel": "meta",
-            "checks_reused": sum(1 for r in reused if r)}
+            "checks_reused": sum(1 for r in reused if r),
+            # one banner for the dialog instead of a problem on every item (M16): nothing is wrong with the changes
+            "connection": (NO_ANSWER + ". Check the internet connection and try again; the draft is unchanged.") if conn else None}
 
 
 def _live_digest(c, steps):
@@ -2747,7 +2888,8 @@ def preview(enable_new=False, only=None, progress=None, workers=None):
     """progress(done, total, label, item_key, "checked") after each of Meta's checks (optional). The steps that pass
     are remembered for a push right after it (REUSE_CHECKS)."""
     p = plan(only=only, enable_new=enable_new, workers=workers, checks="store",
-             on_check=(lambda n, tot, line, key: _notify(progress, n, tot, line, key, "checked")) if progress else None)
+             on_check=(lambda n, tot, line, key: _notify(progress, n, tot, line, key, "checked")) if progress else None,
+             on_phase=(lambda label: _notify(progress, None, None, label, None, "reading")) if progress else None)
     return {k: v for k, v in p.items() if k != "steps"}
 
 
@@ -2761,7 +2903,7 @@ def _do(s, ctx=None):
     ctx = {} if ctx is None else ctx
     if s["kind"] == "update":
         post(s["id"], s["params"])
-        return {"line": s["line"], "id": s["id"], "undo": s["undo"], **({"final": s["final"]} if s.get("final") else {}),
+        return {"line": s["line"], "id": s["id"], "undo": s["undo"], "pushed": s["params"], **({"final": s["final"]} if s.get("final") else {}),
                 **({"undo_spend": s["undo_spend"]} if s.get("undo_spend") else {})}
     if s["kind"] == "copy":
         new = post(f"{act()}/adcreatives", s["creative"])["id"]
@@ -2841,8 +2983,85 @@ def _keep(done):
     return [r for r in done if id(r) in keep], [r for r in done if id(r) not in keep]
 
 
-def _reverse(done, tick=None):
-    """tick(record, ok) after each reversal (for the progress list)."""
+_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?([+-]\d{2}:?\d{2}|Z)?$")
+
+
+def _num(v):
+    try:
+        return float(v) if not isinstance(v, bool) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _when(v):
+    if isinstance(v, str) and _ISO.match(v):
+        try:
+            x = dt.datetime.fromisoformat(re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", v.replace("Z", "+00:00")))
+            return x if x.tzinfo else x.replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _blank(v):
+    return v in (None, "", 0, "0", [], {})
+
+
+def _same(live, pushed):
+    """Is the value read now still the value the push wrote? Lenient where Meta reshapes what it stores: numbers as
+    text, dates in another offset format, extra keys Meta adds to a dict, lists of plain values in another order."""
+    if _blank(pushed):
+        return _blank(live)
+    if isinstance(pushed, dict):
+        return isinstance(live, dict) and all(_same(live.get(k), v) for k, v in pushed.items())
+    if isinstance(pushed, (list, tuple)):
+        if not isinstance(live, (list, tuple)) or len(live) != len(pushed):
+            return False
+        if all(not isinstance(x, (dict, list)) for x in pushed):
+            return sorted(str(x) for x in pushed) == sorted(str(x) for x in live)
+        return all(any(_same(y, x) for y in live) for x in pushed)
+    a, b = _when(pushed), _when(live)
+    if a and b:
+        return a == b
+    a, b = _num(pushed), _num(live)
+    if a is not None and b is not None:
+        return a == b
+    return str(pushed) == str(live)
+
+
+def _undo_guard(r):
+    """Before undo writes old values back: read the object now. -> (params to write, [fields left as they are]).
+    A field that no longer holds what the push wrote was changed since (Ads Manager, another push): it is skipped, so
+    undo never overwrites a newer change. A copied creative is pointed back only while the ad still uses Studio's one.
+    Raises MetaError when the object can't be read (then nothing is written for it)."""
+    u = r.get("undo")
+    if not isinstance(u, dict) or r.get("created"):
+        return u, []  # objects Studio made in that push are deleted as before; audiences: their own rules
+    if r.get("created_creative") and "creative" in u:
+        now = str(((get(str(r["id"]), fields="creative{id}") or {}).get("creative") or {}).get("id") or "")
+        if now and now != str(r["created_creative"]):
+            return {}, [f"{r['line']}: the ad uses another creative now ({now}), so it was left as it is"]
+        return u, []
+    pushed = r.get("pushed")
+    if not isinstance(pushed, dict):
+        return u, []  # a push logged before Studio kept what it wrote: written back as before
+    keys = [k for k in u if k in pushed]
+    if not keys:
+        return u, []
+    live = get(str(r["id"]), fields=",".join(sorted(keys))) or {}
+    out, skipped = dict(u), []
+    for k in keys:
+        if not _same(live.get(k), pushed[k]):
+            out.pop(k)
+            shown = live.get(k)
+            shown = "changed" if isinstance(shown, (dict, list)) else f"now {shown if not _blank(shown) else 'empty'}"
+            skipped.append(f"{r['line']}: {k} was changed after the push ({shown}), so it was left as it is")
+    return out, skipped
+
+
+def _reverse(done, tick=None, guard=False, skipped=None):
+    """tick(record, ok) after each reversal (for the progress list). guard (undo): read each object first and leave
+    fields changed since the push as they are (_undo_guard); those go to `skipped`."""
     errors = []
     for r in reversed(done):
         if r.get("undo") is None:  # a test made or ended on Meta: nothing can reverse it (meta_tests.py)
@@ -2854,7 +3073,20 @@ def _reverse(done, tick=None):
             if r["undo"] == "delete-audience":  # [audiences] an audience Studio made in that push
                 delete(r["id"])
             else:
-                post(r["id"], r["undo"])
+                params = r["undo"]
+                if guard:
+                    try:
+                        params, left = _undo_guard(r)
+                    except MetaError as ex:
+                        errors.append(f"{r['line']}: couldn't read it first to check it was not changed since ({ex}); "
+                                      "not undone")
+                        if tick:
+                            tick(r, False)
+                        continue
+                    if skipped is not None:
+                        skipped += left
+                if params:
+                    post(r["id"], params)
             ok = True
         except MetaError as ex:
             ok = False
@@ -3226,11 +3458,16 @@ def _notify(cb, *args):
 
 def _push(enable_new=False, accept_spend=False, accept_permanent=False, only=None, progress_cb=None, refresh=True, workers=None):
     p = plan(tick=True, only=only, enable_new=enable_new, workers=workers, checks="reuse",
-             on_check=lambda n, tot, line, key: _notify(progress_cb, n, tot, line, key, "checked"))
+             on_check=lambda n, tot, line, key: _notify(progress_cb, n, tot, line, key, "checked"),
+             on_phase=lambda label: _notify(progress_cb, None, None, label, None, "reading"))
     for e in p["items"]:
         if e["problems"]:
             progress.mark(acct(), e["id"], "failed")
     pub = {k: v for k, v in p.items() if k != "steps"}
+    if p.get("connection") and not any(e["problems"] for e in p["items"]):
+        why = f"Not pushed - {NO_ANSWER}. Nothing was sent; try again when Meta answers."
+        return {"ok": False, "connection": p["connection"], "message": why, "preview": pub, "results": _results(p["items"], why=why),
+                "summary": "Not pushed"}
     for why, cond in (("Not pushed - fix the problems in the preview first.", not p["ok"]),
                       ("Not pushed - this push can raise spend; tick the box to accept.", p["spend"] and not accept_spend),
                       ("Not pushed - this push has changes that can't be undone (tests); tick the box to accept.",
@@ -3353,8 +3590,10 @@ def undo(push_id, accept_spend=False):
         return {"ok": False, "message": refused, "not_undone": [refused], "errors": None}
     progress.start(a, "undo", [(n, "Undo: " + o["line"], 1) for n, o in enumerate(ops)], "sending", "Reversing on Meta, one change at a time")
     idx = {id(o): n for n, o in enumerate(ops)}
+    skipped = []
     try:
-        errors = _reverse(ops, lambda r, ok: progress.sent(a, idx[id(r)]) if ok else progress.mark(a, idx[id(r)], "failed"))
+        errors = _reverse(ops, lambda r, ok: progress.sent(a, idx[id(r)]) if ok else progress.mark(a, idx[id(r)], "failed"),
+                          guard=True, skipped=skipped)
     except Exception:
         progress.finish(a, False, "Stopped with an error")
         raise
@@ -3368,8 +3607,11 @@ def undo(push_id, accept_spend=False):
     except MetaError:
         pass
     n = len(rec["ops"]) - len(errors)
-    return {"ok": not errors, "message": f"Undone: {n} change(s) reversed." if not errors else f"Partly undone ({n} of {len(rec['ops'])}).",
-            "not_undone": errors, "errors": None}
+    msg = f"Undone: {n} change(s) reversed." if not errors else f"Partly undone ({n} of {len(rec['ops'])})."
+    if skipped:
+        msg += (f" Left as they are, because they were changed after the push: {len(skipped)} field(s) "
+                f"({'; '.join(skipped)}).")
+    return {"ok": not errors, "message": msg, "not_undone": errors, "skipped": skipped, "errors": None}
 
 
 def last_push():
@@ -3536,21 +3778,265 @@ def _sniff(ext, data):
     return data[4:8] in (b"ftyp", b"moov", b"wide", b"mdat", b"free", b"skip")
 
 
-def store_media(filename, data):
-    """Keep an image (jpg/png, up to 30 MB) or video (mp4/mov, up to 250 MB) on this Mac for a new ad. Nothing goes to
-    Meta here: the file is uploaded to the ad account by Push live. data: bytes, or a base64 string.
-    -> {media_id, kind, name, size}. Use media_id in a meta_new_ad change."""
-    if isinstance(data, str):
-        try:
-            data = base64.b64decode(data.split(",", 1)[1] if data.startswith("data:") else data, validate=True)
-        except ValueError:
-            raise ValueError("the file is not valid base64") from None
+# ---------- media facts: size, length and aspect read from the file headers (warnings per placement, never blocks) ----------
+
+HEAD_MAX = 2 * 1024 * 1024      # bytes of an image read to find its size (JPEG: the frame header after EXIF)
+MOOV_MAX = 64 * 1024 * 1024     # biggest MP4 / MOV index (moov box) read to find the video's size and length
+_SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+
+
+def _png_size(b):
+    if b[:8] == b"\x89PNG\r\n\x1a\n" and b[12:16] == b"IHDR" and len(b) >= 24:
+        return int.from_bytes(b[16:20], "big"), int.from_bytes(b[20:24], "big")
+    return None
+
+
+def _jpeg_size(b):
+    i = 2
+    while i + 9 < len(b):
+        if b[i] != 0xFF:
+            i += 1
+            continue
+        mk = b[i + 1]
+        if mk == 0xFF:
+            i += 1
+            continue
+        if mk in (0xD8, 0x01) or 0xD0 <= mk <= 0xD7:
+            i += 2
+            continue
+        seg = int.from_bytes(b[i + 2:i + 4], "big")
+        if mk in _SOF:
+            h, w = int.from_bytes(b[i + 5:i + 7], "big"), int.from_bytes(b[i + 7:i + 9], "big")
+            return (w, h) if w and h else None
+        if seg < 2:
+            return None
+        i += 2 + seg
+    return None
+
+
+def _boxes(b, start=0, end=None):
+    """(type, payload start, payload end) of the ISO-BMFF boxes in b[start:end]."""
+    end = len(b) if end is None else end
+    i = start
+    while i + 8 <= end:
+        size, typ, hdr = int.from_bytes(b[i:i + 4], "big"), b[i + 4:i + 8], 8
+        if size == 1 and i + 16 <= end:
+            size, hdr = int.from_bytes(b[i + 8:i + 16], "big"), 16
+        elif size == 0:
+            size = end - i
+        if size < hdr or i + size > end:
+            return
+        yield typ, i + hdr, i + size
+        i += size
+
+
+def _fix(b, o):
+    return int.from_bytes(b[o:o + 4], "big", signed=True) / 65536.0
+
+
+def _moov_facts(b):
+    """From a moov box payload: {"width", "height", "duration"} of the first video track (rotation applied)."""
+    out = {}
+    for typ, s0, e0 in _boxes(b):
+        if typ == b"mvhd" and e0 - s0 >= 32:
+            v = b[s0]
+            ts, du = ((int.from_bytes(b[s0 + 12:s0 + 16], "big"), int.from_bytes(b[s0 + 16:s0 + 20], "big")) if v == 0 else
+                      (int.from_bytes(b[s0 + 20:s0 + 24], "big"), int.from_bytes(b[s0 + 24:s0 + 32], "big")))
+            if ts:
+                out["duration"] = round(du / ts, 2)
+        elif typ == b"trak" and "width" not in out:
+            for t2, s1, e1 in _boxes(b, s0, e0):
+                if t2 != b"tkhd":
+                    continue
+                w_at = 76 if b[s1] == 0 else 88
+                if e1 - s1 < w_at + 8:
+                    continue
+                w, h = _fix(b, s1 + w_at), _fix(b, s1 + w_at + 4)
+                if w > 0 and h > 0:
+                    m0 = s1 + w_at - 36
+                    a, bb = _fix(b, m0), _fix(b, m0 + 4)
+                    if abs(a) < 0.01 and abs(bb) > 0.5:  # turned 90 or 270 degrees: shown portrait / landscape the other way
+                        w, h = h, w
+                    out["width"], out["height"] = int(round(w)), int(round(h))
+    return out
+
+
+def _video_facts(f, size):
+    pos = 0
+    while pos + 8 <= size:
+        f.seek(pos)
+        hd = f.read(16)
+        if len(hd) < 8:
+            break
+        n, typ, hdr = int.from_bytes(hd[:4], "big"), hd[4:8], 8
+        if n == 1:
+            n, hdr = int.from_bytes(hd[8:16], "big"), 16
+        elif n == 0:
+            n = size - pos
+        if n < hdr:
+            break
+        if typ == b"moov":
+            if n - hdr > MOOV_MAX:
+                return {}
+            f.seek(pos + hdr)
+            return _moov_facts(f.read(n - hdr))
+        pos += n
+    return {}
+
+
+def _facts_of(path, kind):
+    """{"width", "height"} (+ "duration" in seconds for a video) from the file headers; {} when they can't be read."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            if kind == "video":
+                return _video_facts(f, size)
+            head = f.read(HEAD_MAX)
+    except OSError:
+        return {}
+    wh = _png_size(head) or _jpeg_size(head)
+    return {"width": wh[0], "height": wh[1]} if wh else {}
+
+
+def media_facts(media_id):
+    """The stored file's facts (read once, then kept in the media index)."""
+    m = media_info(media_id)
+    if isinstance(m.get("facts"), dict):
+        return m["facts"]
+    facts = _facts_of(MEDIA_DIR / m["file"], m["kind"])
+
+    def upd(idx):
+        if media_id in idx:
+            idx[media_id]["facts"] = facts
+    _media_save(upd)
+    return facts
+
+
+FEED_POS = {"facebook": {"feed", "marketplace", "video_feeds", "search", "profile_feed", "biz_disco_feed", "notification"},
+            "instagram": {"stream", "explore", "explore_home", "profile_feed", "ig_search"}, "messenger": set(),
+            "audience_network": {"classic"}, "threads": {"threads_stream"}}
+STORY_POS = {"facebook": {"story"}, "instagram": {"story"}, "messenger": {"story"}}
+REELS_POS = {"facebook": {"facebook_reels", "facebook_reels_overlay"}, "instagram": {"reels", "profile_reels"}}
+IMG_MIN = 600         # px: below this on the short side Meta's own guide calls the image too small (1080 recommended)
+VID_MIN = 600         # px, the same for video
+FEED_RATIO = (0.8, 1.91)  # 4:5 .. 1.91:1: wider or taller is cropped in feeds
+FULL_RATIO = 0.65     # Stories / Reels fill the screen at 9:16 (0.5625); wider than this shows with space around it
+STORY_MAX = 120       # seconds: Facebook Stories ads (Instagram Stories cut longer videos into 60 s cards)
+REELS_MAX = 15 * 60   # seconds: Reels ads
+FEED_MAX = 241 * 60   # seconds: Feed videos
+
+
+def _groups(tg):
+    """Placement groups an ad set shows in: feed / story / reels (None = Advantage+ placements: Meta picks, all three)."""
+    tg = tg or {}
+    plats = tg.get("publisher_platforms")
+    if not plats:
+        return None
+    out = set()
+    for p in plats:
+        pos = tg.get(f"{p}_positions")
+        for g, table in (("feed", FEED_POS), ("story", STORY_POS), ("reels", REELS_POS)):
+            if (set(pos) & table.get(p, set())) if pos else table.get(p):
+                out.add(g)
+    return out
+
+
+def _adset_targeting(sid, d, items):
+    """The targeting a new ad lands in: the live ad set's, or a new draft ad set's placements. {} when not known."""
+    r = _ref(sid)
+    if r:
+        it = (items or {}).get(r) or {}
+        ch = it.get("change") or {}
+        pl = ch.get("placements") or {}
+        return _apply_placements({}, pl) if pl else {}
+    try:
+        return _find(d, "adset", sid).get("targeting") or {}
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
+def media_warnings(media_id, targeting=None, label=""):
+    """Warnings for an uploaded file per placement (resolution, aspect, length). Never blocks: Meta decides.
+    targeting: the ad set's (placements); None or no placement lists = Advantage+ placements (every group)."""
+    try:
+        m = media_info(media_id)
+        f = media_facts(media_id)
+    except ValueError:
+        return []
+    w, h = f.get("width"), f.get("height")
+    groups = _groups(targeting)
+    auto = groups is None
+    groups = {"feed", "story", "reels"} if auto else groups
+    pre = f"{label}: " if label else ""
+    out = []
+    kind = m["kind"]
+    if not w or not h:
+        return [f"{pre}Studio couldn't read the {kind}'s size; check it in Meta's preview"] if kind == "video" or m["ext"] in ("jpg", "png") else []
+    r = w / h
+    if min(w, h) < (IMG_MIN if kind == "image" else VID_MIN):
+        out.append(f"{pre}the {kind} is {w}x{h} px: small for Meta (1080 px recommended), it can look blurry")
+    if "feed" in groups and not FEED_RATIO[0] - 0.01 <= r <= FEED_RATIO[1] + 0.01:
+        out.append(f"{pre}Feed{' (if Meta shows it there)' if auto else ''}: the {kind} is {w}x{h}, Feed shows 1.91:1 to 4:5, "
+                   "so it is cropped")
+    full = sorted(groups & {"story", "reels"})
+    if full and r > FULL_RATIO:
+        where = " and ".join({"story": "Stories", "reels": "Reels"}[g] for g in full)
+        out.append(f"{pre}{where}{' (if Meta shows it there)' if auto else ''}: the {kind} is {w}x{h}, full screen is 9:16 "
+                   "(e.g. 1080x1920), so it shows smaller with space around it")
+    dur = f.get("duration")
+    if kind == "video" and isinstance(dur, (int, float)):
+        if dur < 1:
+            out.append(f"{pre}the video is {dur:g} s long: Meta needs at least 1 second")
+        if "story" in groups and dur > STORY_MAX:
+            out.append(f"{pre}Stories: the video is {round(dur)} s; Stories ads take up to {STORY_MAX} s (Instagram cuts it into 60 s cards)")
+        elif "story" in groups and dur > 60:
+            out.append(f"{pre}Instagram Stories: the video is {round(dur)} s, longer than 60 s is shown in parts")
+        if "reels" in groups and dur > REELS_MAX:
+            out.append(f"{pre}Reels: the video is {round(dur / 60)} min; Reels ads take up to {REELS_MAX // 60} minutes")
+        if "feed" in groups and dur > FEED_MAX:
+            out.append(f"{pre}Feed: the video is {round(dur / 60)} min; Feed videos can be up to {FEED_MAX // 60} minutes")
+    return out
+
+
+def _media_name(filename):
     name = Path(str(filename or "upload")).name[:120]
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     ext = {"jpeg": "jpg"}.get(ext, ext)
     if ext not in MEDIA_TYPES:
         raise ValueError("only .jpg, .png, .mp4 and .mov files")
-    kind = MEDIA_TYPES[ext][0]
+    return name, ext, MEDIA_TYPES[ext][0]
+
+
+def _media_keep(name, ext, kind, sha, size, part):
+    """A stored upload (already at `part`) -> its place in the library + index entry + the reply."""
+    path = MEDIA_DIR / f"{sha}.{ext}"
+    if path.exists():
+        part.unlink(missing_ok=True)  # the same file is already in the library
+    else:
+        part.replace(path)
+    facts = _facts_of(path, kind)
+
+    def upd(idx):
+        e = idx.setdefault(sha, {"uploads": {}, "stored": dt.datetime.now().isoformat(timespec="seconds")})
+        e.update(name=name, ext=ext, kind=kind, size=size, file=path.name, facts=facts)
+        return e
+    _media_save(upd)
+    return {"media_id": sha, "kind": kind, "name": name, "size": size, **{k: facts[k] for k in ("width", "height", "duration") if k in facts},
+            "warnings": media_warnings(sha)}
+
+
+def store_media(filename, data):
+    """Keep an image (jpg/png, up to 30 MB) or video (mp4/mov, up to 250 MB) on this Mac for a new ad. Nothing goes to
+    Meta here: the file is uploaded to the ad account by Push live. data: bytes, or a base64 string (a big file is better
+    sent with store_media_stream: raw bytes, never held in memory).
+    -> {media_id, kind, name, size, width, height, duration (video), warnings (per placement, never blocking)}.
+    Use media_id in a meta_new_ad change."""
+    if isinstance(data, str):
+        try:
+            data = base64.b64decode(data.split(",", 1)[1] if data.startswith("data:") else data, validate=True)
+        except ValueError:
+            raise ValueError("the file is not valid base64") from None
+    name, ext, kind = _media_name(filename)
     if not data:
         raise ValueError("the file is empty")
     if len(data) > MEDIA_MAX[kind]:
@@ -3559,18 +4045,49 @@ def store_media(filename, data):
         raise ValueError(f"the file does not look like a .{ext}")
     sha = hashlib.sha256(data).hexdigest()
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-    path = MEDIA_DIR / f"{sha}.{ext}"
-    if not path.exists():
-        tmp = MEDIA_DIR / f"{sha}.part"
+    tmp = MEDIA_DIR / f"{sha}.part"
+    if not (MEDIA_DIR / f"{sha}.{ext}").exists():
         tmp.write_bytes(data)
-        tmp.replace(path)
+    return _media_keep(name, ext, kind, sha, len(data), tmp)
 
-    def upd(idx):
-        e = idx.setdefault(sha, {"uploads": {}, "stored": dt.datetime.now().isoformat(timespec="seconds")})
-        e.update(name=name, ext=ext, kind=kind, size=len(data), file=path.name)
-        return e
-    _media_save(upd)
-    return {"media_id": sha, "kind": kind, "name": name, "size": len(data)}
+
+STREAM_PIECE = 1024 * 1024
+
+
+def store_media_stream(filename, stream, length):
+    """store_media for raw bytes read from `stream` (the request body, application/octet-stream): written to disk piece
+    by piece while hashing, never held whole in memory, no base64. length: Content-Length (required, checked first)."""
+    name, ext, kind = _media_name(filename)
+    try:
+        length = int(length)
+    except (TypeError, ValueError):
+        raise ValueError("the upload needs its length") from None
+    if length <= 0:
+        raise ValueError("the file is empty")
+    if length > MEDIA_MAX[kind]:
+        raise ValueError(f"{kind}s can be up to {MEDIA_MAX[kind] // (1024 * 1024)} MB")
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = MEDIA_DIR / f"in-{uuid.uuid4().hex}.part"
+    sha, left, head = hashlib.sha256(), length, b""
+    try:
+        with open(tmp, "wb") as out:
+            while left > 0:
+                b = stream.read(min(STREAM_PIECE, left))
+                if not b:
+                    raise ValueError("the upload stopped before the whole file arrived")
+                if len(head) < 16:
+                    head += b[:16]
+                    if len(head) >= 16 and not _sniff(ext, head):
+                        raise ValueError(f"the file does not look like a .{ext}")
+                sha.update(b)
+                out.write(b)
+                left -= len(b)
+        if not _sniff(ext, head):
+            raise ValueError(f"the file does not look like a .{ext}")
+        return _media_keep(name, ext, kind, sha.hexdigest(), length, tmp)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def media_info(media_id):
@@ -3786,9 +4303,15 @@ def _wait_video(video_id, limit=None, report=None, first=None):
                                         "push again in a while (the upload is reused)"})
         time.sleep(POLL_EVERY)
         st = None
+    return _thumb_url(video_id)
+
+
+def _thumb_url(video_id):
+    """A fresh thumbnail URL of a processed video (Meta's thumbnail URLs are signed and expire, so one saved at an earlier
+    upload is never sent again: it is read here, right before the creative is made)."""
     th = get(f"{video_id}/thumbnails", fields="uri,is_preferred").get("data") or []
     pick = next((x for x in th if x.get("is_preferred")), th[0] if th else None)
-    if not pick:
+    if not pick or not pick.get("uri"):
         raise MetaError({"message": "Meta made no thumbnail for the video"})
     return pick["uri"]
 
@@ -3796,7 +4319,8 @@ def _wait_video(video_id, limit=None, report=None, first=None):
 def upload_media(media_id, report=None):
     """Put a stored file into the ad account's media library (Push live, or Prepare for Meta).
     -> {"hash"} or {"video_id", "image_url"}. An earlier upload to the same ad account is reused; a reused video is
-    checked once (one GET) and waited for if Meta is still processing it. Library media are not deleted by undo.
+    checked once (one GET) and waited for if Meta is still processing it, and its thumbnail URL is always read again
+    (Meta's thumbnail URLs expire). Library media are not deleted by undo.
     report(label, status, pct): "uploading" / "processing" progress."""
     a = act()
     with _upload_lock(a, media_id):
@@ -3824,7 +4348,9 @@ def upload_media(media_id, report=None):
                 ref, first = {}, None  # gone from the ad account's library: upload it again
             if first and first.get("video_status") == "error":
                 ref, first = {}, None  # Meta could not process the saved upload: treat it as missing, upload it again
-            if first and first.get("video_status") == "ready" and ref.get("image_url"):
+            if first and first.get("video_status") == "ready":  # reused: a fresh thumbnail URL, the saved one may have expired
+                ref["image_url"] = _thumb_url(ref["video_id"])
+                _remember_upload(media_id, ref)
                 return ref
         if not ref.get("video_id"):
             ref = {"video_id": _upload_video(path, m["name"], report)}

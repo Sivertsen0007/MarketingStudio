@@ -210,11 +210,13 @@ class NativeEditTest(unittest.TestCase):
         page = (HERE / "index.html").read_text()
         body = page[page.index("function changeFor("):page.index("document.querySelectorAll(\"[data-bulk]\")")]
         self.assertNotRegex(body, r"toDisp|fxRate|curFmt")
-        for name in ("function editAdset(", "function editCampaign("):
+        # the Meta Edit panel builds its budget change in budgetChange() (daily or lifetime), called by editAdset / editCampaign
+        for name in ("function budgetChange(", "function editAdset(", "function editCampaign("):
             fn = page[page.index(name):]
             fn = fn[:fn.index("\n}\n")]
-            pushes = re.findall(r"budget:[^,}]+", fn)
+            pushes = re.findall(r"budget:[^,}]+", fn) if name == "function budgetChange(" else ["budgetChange("] if "budgetChange(" in fn else []
             self.assertTrue(pushes and all("toDisp" not in p and "fxRate" not in p for p in pushes), name)
+            self.assertNotRegex(fn, r"toDisp|fxRate|curFmt", name)
         self.assertNotIn(EM, page[page.index("// ---- display currency"):page.index("async function loadFx")])
 
 

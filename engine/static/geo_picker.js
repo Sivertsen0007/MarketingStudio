@@ -15,6 +15,8 @@
   }
   const name = c => (byCode[c] || {}).name || c;
   const parse = v => [...new Set(String(v || "").toUpperCase().split(/[^A-Z]+/).filter(Boolean))];
+  // two country lists hold the same countries (order and repeats don't matter): removing and adding a country back is no change
+  const same = (a, b) => { const x = [...new Set(a || [])].sort(), y = [...new Set(b || [])].sort(); return x.length === y.length && x.every((c, i) => c === y[i]) };
   const placesIn = (geo, code) => ((geo && geo.places) || []).filter(p => p.country === code);
   const phrase = p => p.name === "a map pin" ? p.name : `the ${p.kind} ${p.name}`;
   // the ad set's country groups (eea, worldwide, ...) that hold this country; unknown groups can't be checked
@@ -91,7 +93,7 @@
       const f = FIELDS[id] || {}, cur = parse(document.getElementById(id).value);
       const got = await open({codes:cur, geo:f.geo, title:f.title});
       b.focus();
-      if (!got || got.join(",") === cur.join(",")) return;
+      if (!got || same(got, cur)) return;
       setField(id, got);
       document.getElementById(id).dispatchEvent(new Event("change", {bubbles:true})); // the Edit panel autosaves on change
     };
@@ -182,6 +184,6 @@
       d.showModal(); $q.focus();
     });
   }
-  window.GeoPicker = {load, field, wire, read, open, problems, summaryText, name};
+  window.GeoPicker = {load, field, wire, read, open, problems, summaryText, name, same};
   load().catch(() => {});
 })();

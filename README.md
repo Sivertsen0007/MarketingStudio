@@ -2,7 +2,7 @@
 
 # Marketing Studio
 
-**Google Ads, Meta, Email, SEO and social in one Mac app. Every change goes into a draft first, and nothing goes live until you press Push.**
+**Google Ads, Meta, Email, SEO and social in one Mac app. Every change goes into a draft first, and nothing goes live until you press Push live.**
 
 ![platform](https://img.shields.io/badge/platform-macOS%2013%2B-111827)
 ![engine](https://img.shields.io/badge/engine-Python%203%20(stdlib)-3776AB)
@@ -13,7 +13,7 @@
 
 ![Marketing Studio: Google Ads campaigns](docs/screenshots/ads-google-campaigns.png)
 
-<sub>All screenshots use anonymised demo data: names, numbers, images and IDs are replaced.</sub>
+<sub>All screenshots show v0.2.2 with anonymised demo data: names, numbers, images and IDs are replaced.</sub>
 
 </div>
 
@@ -100,7 +100,7 @@ Marketing Studio updates itself from this repository's GitHub Releases.
   signed with **the same certificate** as the app you have. Then it swaps the app and restarts. If anything fails, your old version stays.
 - Your drafts, history and keys are not touched by an update: they live outside the app (see [Where your data lives](#where-your-data-lives)).
 
-The version you run is shown bottom left (*Marketing Studio v0.2.1*).
+The version you run is shown bottom left (*Marketing Studio v0.2.2*).
 
 **Which copies get updates**
 
@@ -117,14 +117,16 @@ have, so nobody else can push code into your copy.
 
 ## The window
 
+The look is light and calm: white cards on a pale grey canvas, soft shadows, one strong blue and Manrope type. The open tab and the
+selected row or menu item are tinted blue, so you always see where you are. Every colour, size and component is described in
+[docs/design-system.md](docs/design-system.md).
+
 | Part | What it does |
 |---|---|
-| **Overview** (top left) | Switches between the dashboard and the editor |
-| **Ads · Alerts · Email · SEO · SoMe · Activity** | The areas |
+| **Overview · Ads · Alerts · Email · SEO · SoMe · Activity · Calendar** | The tabs along the top. Overview is the dashboard; the Alerts tab carries a red counter for alerts you have not looked at |
 | **Account picker** | First in the bar under the top bar, next to when the data was fetched: switch between your Google Ads accounts and Meta ad accounts. Meta accounts can be added in Settings |
-| **↻** | Re-reads the current account from the API |
 | **Refresh data ▾** | Fetch again per source: one Google account, one Meta account, Email, SEO, SoMe, Activity, rates, or all |
-| **Push** | Turns blue with a count when the draft has changes. Opens the push summary |
+| **Push live** | Turns blue with a count when the draft has changes. Opens the push summary |
 | **Connections** | Read-only health check of every connection (tokens, API versions, access, rate limits) |
 | **Setup** | Keys and sign-in |
 | **Settings** | Saved views, Meta ad accounts, display currency, data refresh (manual or automatic) and background jobs |
@@ -139,7 +141,8 @@ and links open in your normal browser.
 
 ![Google Ads keywords](docs/screenshots/ads-google-keywords.png)
 
-**Left: the tree.** All campaigns, open one for its ad groups (Google) or ad sets (Meta). Search filters it. Under **MANAGE** you
+**Left: the tree.** Campaigns; open one and its ad groups (Google) or ad sets (Meta) sit indented under it. **Active** (the default)
+shows only running campaigns and anything in the draft; **All** shows the paused ones too. Search filters it and always looks through all. Under **MANAGE** you
 pick what the grid shows:
 
 | Google Ads | Meta |
@@ -152,7 +155,7 @@ pick what the grid shows:
 - **Search this view**, **date range** (7, 14, 30, 90 days or custom) for the stats columns.
 - **Views**: built-in *Data* and *Edit* views per grid, plus your own (Settings). **Columns** picks and orders columns; columns can also be dragged.
 - **Status and amounts** (budget, max CPC) are edited right in the cell. Select rows for **Enable / Pause / Remove** in bulk.
-- **+ Add**: new campaign, ad group, keywords, negatives, callouts, sitelinks, excluded locations, PMax assets, audiences, shared lists,
+- **New** (the dark button above the grid, e.g. *New campaign*, *New ad set*): new campaign, ad group, keywords, negatives, callouts, sitelinks, excluded locations, PMax assets, audiences, shared lists,
   responsive search ads; on Meta new campaigns, ad sets, ads (image or video), carousel and multi-text copy.
 - Rows in the draft are tinted: the old value struck through, the new one next to it.
 
@@ -167,6 +170,8 @@ pick what the grid shows:
 - **Preview:** Meta's own rendering of the ad (Facebook feed, Instagram feed, Stories, Reels, desktop). It loads by itself, shows
   *With your changes* when you have edited the copy, and the next few ads are fetched ahead so arrowing down is instant.
 - **Meta ad sets:** status, name, daily budget, countries, age, end date, placements (Advantage+ or pick platforms and positions).
+  **Choose countries** opens a pop-up list with search and quick groups (EU, EEA, Europe, worldwide and more). It follows Meta's
+  rules, so an ad set is not rejected: countries Meta does not allow can't be picked, and regions or cities already on the ad set stay.
 - **Meta campaigns:** status, name, campaign budget.
 - Thumbnails get bigger when you hover them.
 
@@ -180,11 +185,11 @@ There is no Save button. About a second after you stop typing, the change is in 
 ## The draft and Push live
 
 **The Draft tab** lists every change: who made it (*You* or *Claude*), when, what, and any problems or warnings. **Undo** removes
-one change. **Check** re-runs every check. **Clear** empties the draft.
+one change. **Check draft** re-runs every check. **Clear draft** empties the draft.
 
 ![The draft](docs/screenshots/ads-draft-panel.png)
 
-**Push** (top bar) opens a short summary of the whole draft, the way Google Ads Editor does:
+**Push live** (top bar) opens a short summary of the whole draft, the way Google Ads Editor does:
 
 ![Push summary](docs/screenshots/push-dialog.png)
 
@@ -197,11 +202,11 @@ one change. **Check** re-runs every check. **Clear** empties the draft.
 | | Google Ads | Meta |
 |---|---|---|
 | How it is sent | One request: all of it goes live or none of it | One change at a time; if Meta refuses one, the ones already done are reversed |
-| New objects | Campaigns always **paused**; ad groups, keywords and ads paused unless you tick *create as enabled* | Campaigns, ad sets and ads always **paused** |
+| New objects | Campaigns always **paused**; ad groups, keywords and ads paused unless you tick *create as enabled* | Campaigns and ad sets always **paused**; ads paused unless you tick *Create new ads as Active* (they deliver once Meta approves them) |
 | Copy changes | RSA headlines and descriptions are replaced | A new creative with the same image or video; the ad goes back to Meta review |
 | Deleting | Removals are permanent in Google Ads (flagged) | Studio never deletes or archives anything that existed before |
 
-**Push history** (link in the Push window) lists earlier pushes with what changed. **Undo** puts the values from before the push back.
+**Push history** (link in the Push live window) lists earlier pushes with what changed. **Undo** puts the values from before the push back.
 
 ![Push history](docs/screenshots/push-history.png)
 
@@ -211,7 +216,7 @@ Not everything can be undone automatically: removed keywords, ads or ad groups i
 
 ## Alerts
 
-**Alerts** (next to Ads, or the **Alerts** button in the top bar with the number still to look at) watches Google Ads
+**Alerts** (the tab next to Ads, with a red counter for the alerts still to look at) watches Google Ads
 and Meta for you. Nothing is ever changed: alerts only read.
 
 - **Rules** per account (or every account), per campaign, per Meta ad set, or account-wide: a metric (spend, clicks,
@@ -711,8 +716,8 @@ The app bundle holds no personal data, and the build refuses to package anything
 
 ## Data refresh policy
 
-Studio fetches each source **once** and keeps it until you ask for fresh data: **↻** for the current account, or **Refresh data ▾**
-for one source or all of them. Nothing is fetched in the background on a timer, on page load or when you switch tabs. The exceptions:
+Studio fetches each source **once** and keeps it until you ask for fresh data: **Refresh data ▾**
+for one account, one source or all of them. Nothing is fetched in the background on a timer, on page load or when you switch tabs. The exceptions:
 a period you have never fetched is fetched once, and after **Push live** or **Undo** that account is read again so you see the live values.
 The bar under the top bar shows when the data you are looking at was fetched, next to the account picker.
 
@@ -814,7 +819,7 @@ VERSION        the version, stamped into the app at build time
 | Google: "Not signed in to Google" | Setup > Sign in with Google (needs the OAuth client id and secret first) |
 | Google sign-in gives no refresh token | Remove Marketing Studio at myaccount.google.com/permissions and sign in again |
 | Meta: rate-limit errors (#4, #17, #613) | Wait a minute; Studio already retries. Apply for Full access in Meta App Review |
-| Numbers look old | Studio keeps data until you refresh: **↻** or **Refresh data ▾** |
+| Numbers look old | Studio keeps data until you refresh: **Refresh data ▾** |
 | Update says it can't install | Your copy was built and signed elsewhere: download the latest release and replace the app once |
 | Something else | Look in `~/Library/Logs/MarketingStudio/engine.log`, and **Connections** for a health check |
 

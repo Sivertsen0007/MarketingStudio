@@ -39,6 +39,8 @@ const CSS = `
 .tm-type.root{background:var(--accent);color:var(--ink-text)} .tm-type.hub{background:var(--violet-bg);color:var(--violet)} .tm-type.commercial{background:var(--warn-bg);color:var(--c4)}
 .tm-st{display:inline-flex;align-items:center;height:22px;font-size:11px;font-weight:600;padding:0 8px;border-radius:var(--r-sm);white-space:nowrap}
 .tm-st.gap{background:var(--bad-bg);color:var(--bad-text, #c8303a)} .tm-st.update{background:var(--warn-bg);color:var(--warn)} .tm-st.ok{background:var(--ok-bg);color:var(--ok)}
+.tm-st.unknown{background:var(--sunken);color:var(--muted)}
+#tmErr:empty{display:none} #tmErr .seo-errs{margin:0 28px 12px}
 .tm-sec{font-size:10.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .tm-prop{margin:0 28px 12px;padding:14px 18px;border-radius:var(--r-lg);background:var(--accent-bg);box-shadow:0 0 0 1px var(--accent-soft)}
 .tm-prop>b{color:var(--accent);font-weight:600}
@@ -48,6 +50,7 @@ const CSS = `
 .tm-f{margin-bottom:12px} .tm-f label{display:block;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:5px} .tm-f input,.tm-f textarea,.tm-f select{width:100%;box-sizing:border-box}
 .tm-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tm-iss{font-size:12px;font-weight:500;margin:4px 0;padding:7px 10px;border-radius:var(--r-sm);background:var(--warn-bg);color:var(--warn)} .tm-iss.gap{background:var(--bad-bg);color:var(--bad)}
+.tm-iss.unknown{background:var(--sunken);color:var(--muted)}
 .tm-q{width:100%;font-size:12px;margin:0 0 6px} .tm-q th{height:30px;background:var(--head);color:var(--muted);font-weight:600;border-right:0;font-size:11px}
 .tm-q td{height:30px;padding:0 6px;border-right:0;border-bottom:1px solid var(--line2)}
 .tm-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
@@ -66,7 +69,9 @@ const S = {el: null, ctx: null, data: null, filter: localGet("tm.filter") || "al
 const N = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
 const TY = {root: "R", hub: "H", attribute: "A", commercial: "C"};
 const TYN = {root: "Root: the central topic", hub: "Hub: groups the pages under it", attribute: "Attribute: one detail of a topic", commercial: "Commercial: a page that sells"};
-const STATE = {gap: "Gap", update: "Update", ok: "OK"};
+const STATE = {gap: "Gap", update: "Update", ok: "OK", unknown: "Unknown"};
+const D = v => v == null ? "-" : N(v);  // a source that could not be read: "-", never 0
+const scOff = () => !!(S.data && S.data.sources && S.data.sources.search_console === false);
 
 function render(el, ctx){ S.el = el; S.ctx = ctx; S.sel = null; shell(); load() }
 async function load(force){
@@ -75,7 +80,7 @@ async function load(force){
   draw();
 }
 function shell(){
-  S.el.innerHTML = `<div class="tm-covs" id="tmCov"></div><div class="tm-sub">
+  S.el.innerHTML = `<div id="tmErr"></div><div class="tm-covs" id="tmCov"></div><div class="tm-sub">
       <div class="fpills" id="tmPills"></div>
       <input type="search" id="tmSearch" placeholder="Search nodes, queries, URLs" value="${esc(S.search)}">
       <span class="spacer"></span>
@@ -97,11 +102,16 @@ function shell(){
 function draw(){
   const d = S.data; if (!d) return;
   const $ = s => S.el.querySelector(s);
-  const cov = d.coverage || {};
-  $("#tmCov").innerHTML = ["core", "outer"].map(s => cov[s] && cov[s].nodes ? `<span class="tm-cov" title="Live = the node has a page with impressions or a WordPress post"><span class="tm-sec">${s}</span><b>${cov[s].pct}%</b><span>live · ${cov[s].gaps} gaps · ${cov[s].update} to update</span><span class="tm-bar"><i style="width:${Math.max(0, Math.min(100, +cov[s].pct || 0))}%"></i></span></span>` : "").join(" ");
+  const cov = d.coverage || {}, off = scOff();
+  // [C2] the errors behind the numbers, on the map itself; without Search Console one box instead of numbers
+  const errs = (d.errors || []).filter(e => !(off && /^Search Console/.test(e)));
+  $("#tmErr").innerHTML = (off && S.ctx.scBox ? S.ctx.scBox(d.errors, "The map shows which nodes have a WordPress post or page; clicks, impressions, gaps from search data and unmapped demand are hidden until it can be read.") : "")
+    + (errs.length ? `<p class="seo-errs">${errs.map(esc).join("<br>")}</p>` : "");
+  $("#tmCov").innerHTML = ["core", "outer"].map(s => cov[s] && cov[s].nodes ? `<span class="tm-cov" title="Live = the node has a page with impressions, or a WordPress post or page"><span class="tm-sec">${s}</span><b>${cov[s].pct}%</b><span>live · ${cov[s].gaps} gaps · ${cov[s].update} to update${cov[s].unknown ? ` · ${cov[s].unknown} unknown` : ""}</span><span class="tm-bar"><i style="width:${Math.max(0, Math.min(100, +cov[s].pct || 0))}%"></i></span></span>` : "").join(" ");
   const cnt = k => d.nodes.filter(n => k === "all" || (k === "draft" ? n.new_post || n.in_draft : n.state === k)).length;
-  $("#tmPills").innerHTML = [["all", "All"], ["gap", "Gaps"], ["update", "Needs update"], ["ok", "OK"], ["draft", "In draft"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l} <span class="n">${cnt(k)}</span></button>`).join("")
-    + `<button data-f="unmapped" class="${S.filter === "unmapped" ? "on" : ""}" title="Search Console demand with no node in the map">Unmapped demand <span class="n">${(d.unmapped || []).length}</span></button>`;
+  if ((off && S.filter === "unmapped") || (S.filter === "unknown" && !cnt("unknown"))) S.filter = "all";
+  $("#tmPills").innerHTML = [["all", "All"], ["gap", "Gaps"], ["update", "Needs update"], ["ok", "OK"], ...(cnt("unknown") ? [["unknown", "Unknown"]] : []), ["draft", "In draft"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l} <span class="n">${cnt(k)}</span></button>`).join("")
+    + (off ? "" : `<button data-f="unmapped" class="${S.filter === "unmapped" ? "on" : ""}" title="Search Console demand with no node in the map">Unmapped demand <span class="n">${(d.unmapped || []).length}</span></button>`);
   const site = d.site || {};
   $("#tmSiteLine").innerHTML = site.central_entity || site.source_context ? `<b>Central entity:</b> ${esc(site.central_entity || "-")} · <b>Source context:</b> ${esc(site.source_context || "-")} · <b>Central search intent:</b> ${esc(site.central_search_intent || "-")}${(site.exclude || []).length ? ` · <span title="${esc(site.exclude.map(x => x.path + (x.why ? " - " + x.why : "")).join("\n"))}">${site.exclude.length} left out on purpose</span>` : ""}`
     : `No central entity yet. Press <b>Site</b>, or ask Claude to build the map (MCP: seo_map_propose).`;
@@ -144,12 +154,13 @@ function drawMain(){
   const rows = [];
   const walk = (pid, depth) => (kids[pid] || []).forEach(n => { if (!show.has(n.id)) return; rows.push([n, depth]); walk(n.id, depth + 1) });
   walk("", 0);
-  const dc = v => v ? `<span class="${v > 0 ? "seo-up" : "seo-down"}">${v > 0 ? "+" : ""}${N(v)}</span>` : "";
-  main.innerHTML = rows.length ? `<table><thead><tr><th>Node</th><th>Section</th><th class="num">Clicks</th><th class="num">vs prev</th><th class="num">Impr.</th><th class="num">Pos.</th><th class="num">Sessions</th><th>State</th><th>Issues</th></tr></thead><tbody>
+  const dc = v => v == null ? "-" : v ? `<span class="${v > 0 ? "seo-up" : "seo-down"}">${v > 0 ? "+" : ""}${N(v)}</span>` : "";
+  const off = scOff();  // [T10] no Search Console: its columns are left out, not filled with zeros
+  main.innerHTML = rows.length ? `<table><thead><tr><th>Node</th><th>Section</th>${off ? "" : `<th class="num">Clicks</th><th class="num">vs prev</th><th class="num">Impr.</th><th class="num">Pos.</th>`}<th class="num">Sessions</th><th>State</th><th>Issues</th></tr></thead><tbody>
     ${rows.map(([n, depth]) => `<tr class="tm-row ${strong.has(n.id) ? "" : "dim"} ${S.sel === n.id ? "sel" : ""}" data-id="${n.id}">
       <td><span class="tm-t" style="padding-left:${depth * 18}px"><span class="tm-type ${n.type}" title="${esc(TYN[n.type] || n.type)}">${TY[n.type] || "?"}</span>${esc(n.title)}${n.children ? ` <span class="hint">(${n.children})</span>` : ""}${n.new_post ? ` <span class="tm-dr" title="A new page is waiting in the SEO draft">new page in draft</span>` : n.in_draft ? ` <span class="tm-dr" title="Edits waiting in the SEO draft">${n.in_draft} in draft</span>` : ""}</span></td>
-      <td><span class="tm-sec">${esc(n.section)}</span></td><td class="num">${N(n.clicks)}</td><td class="num">${dc(n.delta_clicks)}</td><td class="num">${N(n.impressions)}</td>
-      <td class="num">${n.position ? n.position.toFixed(1) : ""}</td><td class="num">${N(n.sessions)}</td>
+      <td><span class="tm-sec">${esc(n.section)}</span></td>${off ? "" : `<td class="num">${D(n.clicks)}</td><td class="num">${dc(n.delta_clicks)}</td><td class="num">${D(n.impressions)}</td>
+      <td class="num">${n.position ? n.position.toFixed(1) : n.position == null && n.clicks == null ? "-" : ""}</td>`}<td class="num">${D(n.sessions)}</td>
       <td><span class="tm-st ${n.state}">${STATE[n.state]}</span></td><td class="wrap">${(n.issues || []).length ? `<span class="tm-clamp" title="${esc(n.issues.map(i => i.text).join(" "))}">${esc(n.issues.map(i => i.text).join(" "))}</span>` : ""}</td></tr>`).join("")}</tbody></table>`
     : `<div class="tm-empty">Nothing matches this filter.</div>`;
   main.onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr){ S.sel = tr.dataset.id; drawMain(); openNode(S.sel) } };
@@ -175,7 +186,7 @@ function openNode(id, parent, preset){
   side.innerHTML = `<div class="tm-shd"><b>${id ? "Node" : "New node"}</b><button class="link" id="tmClose">Close</button></div>
     ${id ? pageBox(n) : ""}
     ${(n.issues || []).map(i => `<div class="tm-iss ${i.level}">${esc(i.text)}</div>`).join("")}
-    ${id && n.url ? `<p class="hint" style="margin:8px 0">${N(n.clicks)} clicks · ${N(n.impressions)} impressions · CTR ${((n.ctr || 0) * 100).toFixed(1)}% · position ${n.position ? n.position.toFixed(1) : "-"} · ${N(n.sessions)} sessions · ${N(n.key_events)} key events</p>` : ""}
+    ${id && n.url ? `<p class="hint" style="margin:8px 0">${n.clicks == null ? "Search Console: not available" : `${N(n.clicks)} clicks · ${N(n.impressions)} impressions · CTR ${((n.ctr || 0) * 100).toFixed(1)}% · position ${n.position ? n.position.toFixed(1) : "-"}`} · ${D(n.sessions)} sessions · ${D(n.key_events)} key events</p>` : ""}
     <div class="tm-f"><label>Title</label><input id="tmTitle" value="${esc(n.title)}"></div>
     <div class="tm-2"><div class="tm-f"><label>Section</label><select id="tmSecSel">${opts(n.section, ["core", "outer"])}</select></div>
       <div class="tm-f"><label>Type</label><select id="tmType">${opts(n.type, ["root", "hub", "attribute", "commercial"])}</select></div></div>
@@ -218,6 +229,8 @@ function pageBox(n){
     <div class="hint" style="margin-top:6px">Ask Claude to rewrite or update it (MCP: seo_add_draft): the change shows in the editor and in Draft.</div></div>`;
   if (n.new_post) return `<div class="tm-page"><div class="h"><span><b>New page in the draft</b> · ${esc(n.new_post.title)} · ${Number(n.new_post.words || 0).toLocaleString("en-GB")} words · by ${esc(n.new_post.by)}</span>
     <button class="primary" data-pg="new">Edit text</button></div><div class="hint" style="margin-top:4px">Publish creates it in WordPress and points this node at its URL.</div></div>`;
+  if (n.url && n.state === "unknown") return `<div class="tm-page"><div class="h"><span><b>Page unknown</b> · not a WordPress post or page, and Search Console could not be read</span><a href="${esc(n.url)}" target="_blank" rel="noopener">Open</a></div>
+    <div class="hint" style="margin-top:4px">Studio can't tell if a page is there. Open the URL to check, or sign in to Search Console.</div></div>`;
   if (!n.url || n.state === "gap" && !n.live) return `<div class="tm-page"><div class="h"><span><b>No page yet</b></span><button class="primary" data-pg="write">Write page</button></div>${ask}</div>`;
   return `<div class="tm-page"><div class="h"><span><b>Page</b> · not a blog post (a WordPress page, trip or destination page)</span><a href="${esc(n.url)}" target="_blank" rel="noopener">Open</a></div>
     <div class="hint" style="margin-top:4px">Studio edits blog posts only. Edit this one in wp-admin.</div></div>`;

@@ -580,7 +580,7 @@ out = None
             seo_put("c1", {{"post_id": 5, "post_title": "Post five", "url": "https://example.test/five/", "field": "title",
                            "old": "Old", "new": "New title"}})
             from areas import seo
-            seo.chk.check_change = lambda x, link_check=None: []
+            seo.chk.check_change = lambda x, link_check=None, **kw: []
             class _W(seo.wp.DryRunWriter):  # behaves as live WordPress for post 5 (never calls WordPress)
                 live = True
                 def current(self, post_id):

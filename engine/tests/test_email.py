@@ -177,6 +177,91 @@ class Checks(Base):
             urllib.request.urlopen = old
         self.assertEqual(seen, ["HEAD", "GET"])
 
+    def test_unsubscribe_must_be_a_link(self):  # C10
+        body = GOOD_HTML.replace('<a href="{{unsubscribe_url}}">Unsubscribe</a>', "")
+        for h in (body.replace("</body>", "<p>Unsubscribe: {{unsubscribe_url}}</p></body>"),
+                  body.replace("</body>", '<!-- <a href="{{unsubscribe_url}}">Unsubscribe</a> --></body>')):
+            p = em.run_checks(good(html=h), links=False)
+            self.assertIn("{{unsubscribe_url}} is not in a link", msgs(p, "error"))
+        self.assertIn("is missing", msgs(em.run_checks(good(html=body), links=False), "error"))
+        ok = body.replace("</body>", "<a class=u href={{unsubscribe_url}}>Unsubscribe</a></body>")  # unquoted href is still a link
+        self.assertEqual(em.run_checks(good(html=ok), links=False), [])
+
+    def test_merge_tags(self):  # C8
+        listed = em.known_merge_tags(type("P", (), {"merge_tags": lambda self: ["first_name", "unsubscribe_url"]})())
+        self.assertTrue(listed.listed)
+        p = em.run_checks(good(subject="Hi {{first_nme}}", preview_text="*|FNAME|*, {first_name}"), links=False, tags=listed)
+        self.assertIn("Unknown merge tag {{first_nme}} (subject)", msgs(p, "error"))
+        self.assertIn("Mailchimp-style", msgs(p, "warn"))
+        self.assertIn("{first_name} has single braces", msgs(p, "warn"))
+        # no list from the platform: an unknown tag is a warning (it may be one Studio doesn't know), never a stop
+        p = em.run_checks(good(subject="Hi {{first_nme}}"), links=False)
+        self.assertIn("Unknown merge tag {{first_nme}}", msgs(p, "warn"))
+        self.assertIn("did not list its tags", msgs(p, "warn"))
+        self.assertEqual(msgs(p, "error"), "")
+        p = em.run_checks(good(html=GOOD_HTML.replace("Hi {{first_name}}", "Hi {{ first_name")), links=False)
+        self.assertIn("Unbalanced merge tag braces", msgs(p, "warn"))
+        self.assertEqual(msgs(p, "error"), "")
+        p = em.run_checks(good(html=GOOD_HTML.replace("{{first_name}}", "{{first name}}")), links=False)
+        self.assertIn("{{first name}} is not valid", msgs(p, "error"))
+        fine = GOOD_HTML.replace("<p>", "<style>p{color:red}</style><!-- {{old_tag}} --><p>", 1)
+        self.assertEqual(em.run_checks(good(html=fine, text="Hi {{{first_name}}}"), links=False, tags=listed), [])
+        # ML Suite has no fallback syntax: "|there" would go out as text
+        p = em.run_checks(good(html=GOOD_HTML.replace("{{first_name}}", "{{first_name|there}}")), links=False, tags=listed)
+        self.assertIn("no fallback syntax", msgs(p, "warn"))
+        self.assertEqual(msgs(p, "error"), "")
+        # a tag the platform knows or the EMAIL_MERGE_TAGS setting adds is fine
+        loyal = good(html=GOOD_HTML.replace("{{first_name}}", "{{loyalty_tier}}"))
+        self.assertIn("Unknown merge tag {{loyalty_tier}}", msgs(em.run_checks(loyal, links=False, tags=listed), "error"))
+
+        class Plat:
+            def merge_tags(self):
+                return ["loyalty_tier"]
+        self.assertEqual(em.run_checks(loyal, links=False, tags=em.known_merge_tags(Plat())), [])
+        os.environ["EMAIL_MERGE_TAGS"] = "{{loyalty_tier}}, trip_name"
+        try:
+            self.assertEqual(em.run_checks(loyal, links=False), [])
+        finally:
+            del os.environ["EMAIL_MERGE_TAGS"]
+
+        class Broken:
+            def merge_tags(self):
+                raise em.AdapterError("no such tool")
+        k = em.known_merge_tags(Broken())
+        self.assertIn("first_name", k)
+        self.assertFalse(k.listed)
+
+    def test_ml_suite_merge_tag_list(self):  # the shape ML Suite's email.list_merge_tags returns
+        r = {"note": "Tokens are Mustache-style ...", "mergeTags": [
+            {"token": "{{first_name}}", "label": "First name", "fallback": "there"}, {"token": "{{trip}}", "label": "Trip"},
+            {"token": "{{departure}}", "label": "Departure"}, {"token": "{{boat}}", "label": "Boat"},
+            {"token": "{{unsubscribe_url}}", "label": "Unsubscribe link"}]}
+        self.assertEqual(em.parse_merge_tags(r), ["first_name", "trip", "departure", "boat", "unsubscribe_url"])
+        self.assertIsNone(em.parse_merge_tags({"text": "unknown tool"}))
+        a = em.McpAdapter("http://127.0.0.1:9/mcp", "tok", cache_path=Path(self.tmp.name) / "mcp.json")
+        answers = [em.AdapterError("MCP: unknown tool"), r]
+
+        def call(tool, args=None, timeout=None):
+            x = answers.pop(0)
+            if isinstance(x, Exception):
+                raise x
+            return x
+        a.call = call
+        self.assertIsNone(a.merge_tags())  # failed: None, and not cached
+        tags = em.known_merge_tags(a)  # asks again, now it answers
+        self.assertTrue(tags.listed)
+        trip = good(subject="Your {{trip}} on {{boat}}", html=GOOD_HTML.replace("{{first_name}}", "{{first_name}}, {{departure}}"))
+        self.assertEqual(em.run_checks(trip, links=False, tags=tags), [])
+        self.assertEqual(a.merge_tags(), ["first_name", "trip", "departure", "boat", "unsubscribe_url"])  # cached now
+        self.assertEqual(answers, [])
+
+    def test_gmail_clipping(self):  # C9: UTF-8 bytes, warn at 90 KB, error at 102 KB
+        pad = lambda kb, ch="x": GOOD_HTML.replace("</body>", "<p>" + ch * (kb * 1024) + "</p></body>")  # noqa: E731
+        self.assertEqual(em.run_checks(good(html=pad(80)), links=False), [])
+        self.assertIn("close to Gmail's 102 KB", msgs(em.run_checks(good(html=pad(91)), links=False), "warn"))
+        self.assertIn("Gmail clips", msgs(em.run_checks(good(html=pad(103)), links=False), "error"))
+        self.assertIn("Gmail clips", msgs(em.run_checks(good(html=pad(52, "\u00f8")), links=False), "error"))  # 2 bytes each
+
     def test_render_local_highlights_text_only(self):
         out = em.render_local('<a href="{{unsubscribe_url}}">Hi {{first_name}}</a>')
         self.assertIn('href="{{unsubscribe_url}}"', out)

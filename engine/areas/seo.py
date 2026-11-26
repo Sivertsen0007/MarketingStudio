@@ -65,13 +65,9 @@ def writer(s=None):
 def get_settings(q=None):
     s = settings()
     sc = g.scopes()
-    snippet = None
-    try:
-        snippet = any(p.get("focus_kw") is not None for p in wp.posts()["posts"])
-    except Exception:  # noqa: BLE001
-        pass
+    snippet = snippet_installed()
     return {**s, "writer": "WordPress REST" if s["mode"] == "live" and s["connected"] else "Dry run (records only)",
-            "secrets_file": str(c.SECRETS), "sites": _sites(), "snippet_installed": snippet,
+            "secrets_file": str(c.SECRETS), "sites": _sites(), "snippet_installed": snippet, "yoast_vars": chk.yoast_vars(site_name=site_name()),
             "scopes": {"search_console_read": "https://www.googleapis.com/auth/webmasters.readonly" in sc or "https://www.googleapis.com/auth/webmasters" in sc,
                        "url_inspection": "https://www.googleapis.com/auth/webmasters.readonly" in sc or "https://www.googleapis.com/auth/webmasters" in sc,
                        "sitemap_submit": "https://www.googleapis.com/auth/webmasters" in sc,
@@ -125,12 +121,20 @@ def disconnect(body=None):
 
 # ---------- posts grid ----------
 
+def _family(label):
+    return next((f for f in ("Search Console", "GA4", "WordPress") if label.startswith(f)), label.split(":")[0])
+
+
 def _safe(fn, errors, label):
+    """fn() or None when it fails; the error goes to errors once (the same failure from another read of that source is
+    not repeated: one Search Console problem is one line, not three)."""
     try:
         return fn()
     except Exception as ex:  # noqa: BLE001 - one source failing must not hide the grid
-        errors.append(f"{label}: {c.scrub(ex)}")
-        return {}
+        msg = c.scrub(ex)
+        if not any(e.endswith(": " + msg) and _family(e) == _family(label) for e in errors):
+            errors.append(f"{label}: {msg}")
+        return None
 
 
 def losing(cur, prev):
@@ -146,6 +150,9 @@ def get_posts(q):
     cur = _safe(lambda: g.gsc_pages(s, e, force), errors, "Search Console")
     prev = _safe(lambda: g.gsc_pages(ps, pe, force), errors, "Search Console (previous period)")
     ga = _safe(lambda: g.ga4_landing(s, e, force), errors, "GA4")
+    # A source that could not be read gives None (shown as "-"), never 0: no data is not the same as no clicks.
+    sc_ok, prev_ok, ga_ok = cur is not None, cur is not None and prev is not None, ga is not None
+    cur, prev, ga = cur or {}, prev or {}, ga or {}
     insp = c.read_json("seo_inspect.json", {})
     drafted = {}
     for ch in _draft()["changes"]:
@@ -155,15 +162,18 @@ def get_posts(q):
         m, pm, a = cur.get(p["key"]) or {}, prev.get(p["key"]) or {}, ga.get(p["key"]) or {}
         ix = insp.get(p["url"])
         r = {k: v for k, v in p.items() if k not in ("content", "rendered", "linked_from", "links_to")}
-        r.update({"clicks": m.get("clicks", 0), "impressions": m.get("impressions", 0), "ctr": m.get("ctr", 0), "position": m.get("position"),
-                  "prev_clicks": pm.get("clicks", 0), "delta_clicks": m.get("clicks", 0) - pm.get("clicks", 0),
-                  "losing": losing(m, pm), "sessions": a.get("sessions", 0), "select_cabin": a.get("select_cabin", 0),
+        sc = (lambda k, d=0: m.get(k, d)) if sc_ok else (lambda k, d=0: None)
+        r.update({"clicks": sc("clicks"), "impressions": sc("impressions"), "ctr": sc("ctr"), "position": sc("position", None),
+                  "prev_clicks": pm.get("clicks", 0) if prev_ok else None,
+                  "delta_clicks": m.get("clicks", 0) - pm.get("clicks", 0) if prev_ok else None,
+                  "losing": losing(m, pm) if prev_ok else None,
+                  "sessions": a.get("sessions", 0) if ga_ok else None, "select_cabin": a.get("select_cabin", 0) if ga_ok else None,
                   "index": (ix or {}).get("coverage"), "indexed": g.indexed(ix) if ix else None,
                   "draft": [{"field": x["field"], "old": x.get("old"), "new": x.get("new"), "kind": x.get("kind")} for x in drafted.get(str(p["id"]), [])]})
         rows.append(r)
     return {"rows": rows, "range": {"start": s, "end": e, "prev_start": ps, "prev_end": pe}, "authed": data.get("authed", False),
-            "fetched": data.get("at"), "errors": errors, "snippet_installed": any(p.get("focus_kw") is not None for p in data["posts"]),
-            "settings": settings()}
+            "fetched": data.get("at"), "errors": errors, "snippet_installed": snippet_installed(data["posts"]),
+            "sources": {"search_console": sc_ok, "previous_period": prev_ok, "ga4": ga_ok}, "settings": settings()}
 
 
 def _qp_for(key, qp):
@@ -190,7 +200,8 @@ def get_post(q):
     p = dict(wp.post(q["id"]))
     s, e, ps, pe = g.date_range(q)
     errors = []
-    qp = _safe(lambda: g.gsc_query_page(s, e), errors, "Search Console") or []
+    qp = _safe(lambda: g.gsc_query_page(s, e), errors, "Search Console")
+    sc_ok, qp = qp is not None, qp or []
     all_posts = wp.posts()["posts"]
     titles = {x["key"]: x["title"] for x in all_posts}
     queries = sorted(([r[0], r[2], r[3], r[4], r[5]] for r in _qp_for(p["key"], qp)), key=lambda r: -r[2])[:100]
@@ -211,11 +222,13 @@ def get_post(q):
             "draft": [x for x in _draft()["changes"] if x["post_id"] == p["id"]], "range": {"start": s, "end": e},
             "map_nodes": [{"id": nid, "title": n["title"], "type": n.get("type"), "queries": n.get("queries", [])}
                           for nid, n in tmap.load()["nodes"].items() if tmap._key(n.get("url")) == tmap._key(p["url"])],
-            "errors": errors, "quota_left": g.quota_left()}
+            "errors": errors, "quota_left": g.quota_left(), "sources": {"search_console": sc_ok},
+            "snippet_installed": snippet_installed(all_posts), "yoast_vars": chk.yoast_vars(p, site_name(all_posts))}
 
 
 def get_categories(q=None):
-    return wp.categories()
+    """The category list. When WordPress does not answer: the last list read (stale) and an error field, never a 400."""
+    return wp.categories_safe()
 
 
 def get_sitemaps(q=None):
@@ -289,7 +302,7 @@ def opportunities_from(posts_, qp, cur, prev, insp, days):
         if not (p.get("meta_desc") or "").strip():
             out["no_meta"].append({"post_id": p["id"], "title": p["title"], "impressions": (cur.get(p["key"]) or {}).get("impressions", 0),
                                    "suggest": {"post_id": p["id"], "field": "meta_desc",
-                                               "note": "No meta description: Google writes its own. Write one of 70-160 characters."}})
+                                               "note": "No meta description: Google writes its own. Write one of 120-156 characters."}})
         if p.get("links_in", 0) == 0:
             rel = wp.related(p, posts_, 2)
             out["few_links"].append({"post_id": p["id"], "title": p["title"], "links_in": 0,
@@ -307,11 +320,17 @@ def get_opportunities(q):
     days = (dt.date.fromisoformat(e) - dt.date.fromisoformat(s)).days + 1
     errors = []
     posts_ = wp.posts()["posts"]
-    qp = _safe(lambda: g.gsc_query_page(s, e), errors, "Search Console") or []
-    cur = _safe(lambda: g.gsc_pages(s, e), errors, "Search Console")
+    qp = _safe(lambda: g.gsc_query_page(s, e), errors, "Search Console queries")
+    cur = _safe(lambda: g.gsc_pages(s, e), errors, "Search Console pages")
     prev = _safe(lambda: g.gsc_pages(ps, pe), errors, "Search Console (previous period)")
-    out = opportunities_from(posts_, qp, cur, prev, c.read_json("seo_inspect.json", {}), days)
-    return {**out, "range": {"start": s, "end": e, "prev_start": ps, "prev_end": pe}, "errors": errors}
+    sc_ok = qp is not None and cur is not None
+    out = opportunities_from(posts_, qp or [], cur or {}, (prev or {}) if cur is not None else {}, c.read_json("seo_inspect.json", {}), days)
+    if not sc_ok:  # no Search Console: no "few clicks" or "losing" rows (they would be built on zeros)
+        out["low_ctr"], out["losing"] = [], []
+    if prev is None:
+        out["losing"] = []
+    return {**out, "range": {"start": s, "end": e, "prev_start": ps, "prev_end": pe}, "errors": errors,
+            "sources": {"search_console": sc_ok, "previous_period": prev is not None}}
 
 
 # ---------- the SEO draft ----------
@@ -330,6 +349,55 @@ def _norm(f, v):
     if f == "categories":
         return sorted(int(x) for x in (v or []))
     return (v or "").strip() if isinstance(v, str) or v is None else v
+
+
+_CTX_KEYS = ("title", "slug", "seo_title", "meta_desc", "focus_kw", "excerpt", "content", "category_names", "noindex", "canonical", "url")
+
+
+def site_name(ps=None):
+    """The site's name as WordPress/Yoast gives it (og_site_name of the posts already read), for %%sitename%%. "" when unknown."""
+    if ps is None:
+        try:
+            ps = wp.posts()["posts"]
+        except Exception:  # noqa: BLE001
+            return ""
+    names = [p.get("site_name") for p in ps or () if p.get("site_name")]
+    return max(set(names), key=names.count) if names else ""
+
+
+def snippet_installed(ps=None):
+    """True when Yoast shares its fields over REST (the Studio snippet), False when not, None when unknown (no posts read)."""
+    if ps is None:
+        try:
+            ps = wp.posts()["posts"]
+        except Exception:  # noqa: BLE001
+            return None
+    return any(p.get("focus_kw") is not None for p in ps) if ps else None
+
+
+def _checker(changes=(), new_posts=()):
+    """ctx(post_id) / ctx(new_post=...) for chk.check_change: the post with the draft's other edits applied, whether the
+    Yoast snippet is installed, and every page's focus keyphrase (for duplicates). Reads WordPress once."""
+    try:
+        ps = wp.posts()["posts"]
+    except Exception:  # noqa: BLE001 - no WordPress: only the checks that need nothing else
+        ps = []
+    snip = snippet_installed(ps) if ps else None
+    site = site_name(ps)
+    by_id = {p["id"]: p for p in ps}
+    edits = {}
+    for x in changes or ():
+        if x.get("kind") != "todo":
+            edits.setdefault(int(x["post_id"]), {})[x["field"]] = x.get("new")
+    others = [{"id": p["id"], "title": p["title"], "focus_kw": edits.get(p["id"], {}).get("focus_kw", p.get("focus_kw"))} for p in ps]
+    others += [{"id": x.get("id"), "title": x.get("title"), "focus_kw": x.get("focus_kw")} for x in new_posts or ()]
+
+    def ctx(pid=None, new_post=None):
+        if new_post is not None:
+            return {"post": {k: new_post.get(k) for k in _CTX_KEYS}, "snippet": snip, "others": others, "self_id": new_post.get("id"), "new": True, "site_name": site}
+        p = by_id.get(int(pid)) or {}
+        return {"post": {**{k: p.get(k) for k in _CTX_KEYS}, **edits.get(int(pid), {})}, "snippet": snip, "others": others, "self_id": int(pid), "site_name": site}
+    return ctx
 
 
 def add_draft(change, by="claude"):
@@ -365,15 +433,18 @@ def add_draft(change, by="claude"):
         v = d["version"]
     if not row:
         return {"ok": True, "unchanged": True, "version": v}
-    return {"ok": True, "change": row, "issues": chk.check_change(row, link_check=lambda u: 200), "version": v}
+    d = _draft()
+    ctx = _checker(d["changes"], d.get("new_posts", ()))
+    return {"ok": True, "change": row, "issues": chk.check_change(row, link_check=lambda u: 200, ctx=ctx(pid)), "version": v}
 
 
 def list_drafts():
     """The SEO draft with quick checks per change (links are checked in Check and before Publish)."""
     d = _draft()
+    ctx = _checker(d["changes"], d.get("new_posts", ()))
     return {"version": d["version"], "changes": [{**x, "label": wp.LABELS.get(x["field"], x["field"]),
-                                                   "issues": chk.check_change(x, link_check=lambda u: 200)} for x in d["changes"]],
-            "new_posts": [{**x, "issues": _new_checks(x)} for x in d.get("new_posts", [])]}
+                                                   "issues": chk.check_change(x, link_check=lambda u: 200, ctx=ctx(x["post_id"]))} for x in d["changes"]],
+            "new_posts": [{**x, "issues": _new_checks(x, ctx)} for x in d.get("new_posts", [])]}
 
 
 def remove_drafts(ids):
@@ -409,12 +480,13 @@ def slugify(s):
     return re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:80]
 
 
-def _new_checks(np_):
+def _new_checks(np_, ctx=None):
     out = []
+    cx = (ctx or _checker(new_posts=[np_]))(new_post=np_)
     for f in NEW_FIELDS:
         v = np_.get(f)
-        if f in ("title", "slug", "categories") or (v not in (None, "") and f != "focus_kw"):
-            out += chk.check_change({"field": f, "new": v if v is not None else "", "old": "", "kind": "edit"}, link_check=lambda u: 200)
+        if f in ("title", "slug", "categories") or v not in (None, ""):
+            out += chk.check_change({"field": f, "new": v if v is not None else "", "old": "", "kind": "edit"}, link_check=lambda u: 200, ctx=cx)
     if not wp.text_of(np_.get("content") or "").strip():
         out.append({"level": "error", "field": "content", "msg": "The body is empty."})
     return out
@@ -455,7 +527,8 @@ def save_new_post(body, by="claude"):
             row["note"] = (body.get("note") or "")[:600]
         d["version"] += 1
         out = dict(row)
-    return {"ok": True, "new_post": {**out, "issues": _new_checks(out)}}
+    d = _draft()
+    return {"ok": True, "new_post": {**out, "issues": _new_checks(out, _checker(d["changes"], d.get("new_posts", ())))}}
 
 
 def remove_new_post(body):
@@ -467,7 +540,9 @@ def remove_new_post(body):
 
 def check_all(body=None, link_check=None):
     d = _draft()
-    return {"changes": [{**x, "label": wp.LABELS.get(x["field"], x["field"]), "issues": chk.check_change(x, link_check)} for x in d["changes"]],
+    ctx = _checker(d["changes"], d.get("new_posts", ()))
+    return {"changes": [{**x, "label": wp.LABELS.get(x["field"], x["field"]), "issues": chk.check_change(x, link_check, ctx=ctx(x["post_id"]))}
+                        for x in d["changes"]],
             "version": d["version"]}
 
 
@@ -498,18 +573,19 @@ def publish_preview(body=None, link_check=None):
     edits = [x for x in d["changes"] if x.get("kind") != "todo"]
     news = d.get("new_posts", [])
     edits, news, team_plan = _team_gate(edits, news, body)
+    ctx = _checker(d["changes"], d.get("new_posts", ()))
     by_post = {}
     for x in edits:
         by_post.setdefault(x["post_id"], {"post_id": x["post_id"], "title": x["post_title"], "url": x["url"], "fields": [], "issues": []})
         b = by_post[x["post_id"]]
         b["fields"].append({"id": x["id"], "field": x["field"], "label": wp.LABELS.get(x["field"], x["field"]), "old": x.get("old"), "new": x["new"]})
-        b["issues"] += chk.check_change(x, link_check)
+        b["issues"] += [i for i in chk.check_change(x, link_check, ctx=ctx(x["post_id"])) if i["msg"] not in {j["msg"] for j in b["issues"]}]
     posts_ = list(by_post.values())
     for x in news:
         posts_.append({"post_id": x["id"], "new": True, "status": x.get("status", "publish"), "node_title": x.get("node_title", ""),
                        "title": x["title"], "url": f"{c.SITES[s['target']]}/{x.get('slug')}/",
                        "fields": [{"id": x["id"], "field": f, "label": wp.LABELS.get(f, f), "old": "", "new": v} for f, v in _new_fields(x).items()],
-                       "issues": _new_checks(x)})
+                       "issues": _new_checks(x, ctx)})
     errs = sum(chk.summarise(p["issues"])["errors"] for p in posts_)
     out = {"target": s["target"], "writer": w.name, "live": w.live, "posts": posts_, "errors": errs, "new_pages": len(news),
            "warnings": sum(chk.summarise(p["issues"])["warnings"] for p in posts_), "blocked": errs > 0 or not posts_,
@@ -561,7 +637,8 @@ def publish(body, link_check=None, w=None):
     by_post = {}
     for x in edits:
         by_post.setdefault(x["post_id"], []).append(x)
-    issues = [i for x in edits for i in chk.check_change(x, link_check)] + [i for x in news for i in _new_checks(x)]
+    ctx = _checker(d["changes"], d.get("new_posts", ()))
+    issues = [i for x in edits for i in chk.check_change(x, link_check, ctx=ctx(x["post_id"]))] + [i for x in news for i in _new_checks(x, ctx)]
     if chk.summarise(issues)["errors"]:
         raise ValueError("The draft has errors. Fix them before publishing.")
     push_id = uuid.uuid4().hex[:10]
@@ -861,15 +938,17 @@ def get_map(q):
     errors = []
     cur = _safe(lambda: g.gsc_pages(s_, e, force), errors, "Search Console")
     prev = _safe(lambda: g.gsc_pages(ps, pe, force), errors, "Search Console (previous period)")
-    qp = _safe(lambda: g.gsc_query_page(s_, e, force), errors, "Search Console queries") or []
+    qp = _safe(lambda: g.gsc_query_page(s_, e, force), errors, "Search Console queries")
     ga = _safe(lambda: g.ga4_landing(s_, e, force), errors, "GA4")
     posts = []
     try:
         posts = wp.posts().get("posts", [])
     except Exception as ex:  # noqa: BLE001 - the map still works without the link graph
-        errors.append(f"WordPress: {ex}")
+        errors.append(f"WordPress: {c.scrub(ex)}")
+    pages = _safe(wp.page_keys, errors, "WordPress pages") or []
+    sources = {"search_console": cur is not None and qp is not None, "previous_period": prev is not None, "ga4": ga is not None}
     r = tmap.report(cur or {}, prev or {}, qp if isinstance(qp, list) else [], ga or {}, posts, c.read_json("seo_inspect.json", {}),
-                    min_imps=_min_imps((dt.date.fromisoformat(e) - dt.date.fromisoformat(s_)).days + 1))
+                    min_imps=_min_imps((dt.date.fromisoformat(e) - dt.date.fromisoformat(s_)).days + 1), sources=sources, pages=pages)
     by_key = {p["key"]: p for p in posts}
     d = _draft()
     edits = {}

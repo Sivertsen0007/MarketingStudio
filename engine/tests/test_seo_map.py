@@ -95,6 +95,21 @@ class Map(unittest.TestCase):
         pages = [g["page"] for g in r["unmapped"]]
         self.assertIn("/egypt-guide", pages)  # demand with no node
         self.assertNotIn("/blue-horizon", pages)
+        # C2: Search Console could not be read: no false gaps, no zeros; WordPress posts and pages and the home page are live
+        tm.edit([{"op": "update", "id": by["Liveaboard Diving"]["id"], "node": {"url": "https://example.com/"}}])
+        r4 = tm.report({}, {}, [], posts=posts, pages=["/red-sea-liveaboards"], min_imps=50, sources={"search_console": False})
+        st = {x["title"]: x for x in r4["nodes"]}
+        self.assertEqual(st["Liveaboard Diving"]["state"], "ok")  # the home page
+        self.assertEqual(st["Red Sea Liveaboards"]["state"], "ok")  # a WordPress page
+        self.assertTrue(st["Blue Horizon"]["live"])  # a WordPress post
+        self.assertEqual(st["Hammerhead Sharks"]["state"], "gap")  # no URL at all is still a gap
+        self.assertIsNone(st["Blue Horizon"]["clicks"])
+        self.assertIsNone(st["Blue Horizon"]["delta_clicks"])
+        r5 = tm.report({}, {}, [], posts=[], min_imps=50, sources={"search_console": False})
+        self.assertEqual({x["title"]: x["state"] for x in r5["nodes"]}["Blue Horizon"], "unknown")
+        self.assertEqual(r5["coverage"]["core"]["unknown"], 2)  # Red Sea hub + Blue Horizon; the home page is live
+        self.assertFalse(r5["sources"]["search_console"])
+        tm.edit([{"op": "update", "id": by["Liveaboard Diving"]["id"], "node": {"url": "https://example.com/liveaboard-diving"}}])
         tm.edit([{"op": "site", "site": {"exclude": [{"path": "/egypt-guide", "why": "old page"}, "/de/"]}}])
         r3 = tm.report(cur, prev, qp + [["x", "/de/egypt", 1, 900, 0.1, 3.0]], posts=posts, min_imps=50)
         self.assertNotIn("/egypt-guide", [g["page"] for g in r3["unmapped"]])

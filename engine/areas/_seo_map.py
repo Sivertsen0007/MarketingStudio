@@ -339,13 +339,21 @@ def _key(url):
     return path.rstrip("/") or "/"
 
 
-def report(cur_pages, prev_pages, qp, ga=None, posts=None, inspect=None, min_imps=20):
+def report(cur_pages, prev_pages, qp, ga=None, posts=None, inspect=None, min_imps=20, sources=None, pages=None):
     """Pure join, so it can be tested without Google. cur/prev_pages: {key: {clicks, impressions, ctr, position}};
-    qp: [[query, key, clicks, impressions, ctr, position]]; posts: WordPress posts with key + links_to."""
+    qp: [[query, key, clicks, impressions, ctr, position]]; posts: WordPress posts with key + links_to; pages: keys of
+    WordPress pages (not posts), which count as live too.
+    sources: {search_console, previous_period, ga4}: False when that source could not be read. Then its numbers are None
+    (not 0) and a node whose URL is not a WordPress post or page is "unknown", never a false gap."""
     m = load()
     nodes = m["nodes"]
     ga, inspect = ga or {}, inspect or {}
+    src = {"search_console": True, "previous_period": True, "ga4": True, **(sources or {})}
+    sc_ok = bool(src["search_console"])
+    prev_ok = sc_ok and bool(src["previous_period"])
+    ga_ok = bool(src["ga4"])
     posts_by_key = {p["key"]: p for p in (posts or [])}
+    wp_keys = set(posts_by_key) | set(pages or ()) | {"/"}  # the home page is always there
     by_query = {}
     for q, k, cl, im, ctr, pos in qp:
         by_query.setdefault(q, []).append((k, cl, im, pos))
@@ -360,16 +368,19 @@ def report(cur_pages, prev_pages, qp, ga=None, posts=None, inspect=None, min_imp
         k = node_keys[nid]
         cur, prev, a = cur_pages.get(k) or {}, prev_pages.get(k) or {}, ga.get(k) or {}
         issues = []
-        live = bool(k and (cur.get("impressions") or k in posts_by_key))
+        live = bool(k and (cur.get("impressions") or k in wp_keys))
         if not k:
             issues.append({"kind": "missing_page", "level": "gap", "text": "No page yet: write it or point the node at an existing URL."})
+        elif not live and not sc_ok:
+            issues.append({"kind": "unknown", "level": "unknown",
+                           "text": "Not a WordPress post or page, and Search Console could not be read: Studio can't tell if a page is there."})
         elif not live:
             issues.append({"kind": "page_not_found", "level": "gap",
-                           "text": "No page found at this URL: not a WordPress post and no Search Console impressions. Write it, or point the node at the right URL."})
-        elif not cur.get("impressions"):
+                           "text": "No page found at this URL: not a WordPress post or page and no Search Console impressions. Write it, or point the node at the right URL."})
+        elif sc_ok and not cur.get("impressions"):
             issues.append({"kind": "no_search_data", "level": "warn", "text": "The page has no impressions in Search Console for this period."})
         pc, cc = prev.get("clicks", 0), cur.get("clicks", 0)
-        if pc >= 10 and cc <= pc * 0.7 and pc - cc >= 5:
+        if prev_ok and pc >= 10 and cc <= pc * 0.7 and pc - cc >= 5:
             issues.append({"kind": "losing", "level": "update", "text": f"Losing clicks: {pc} -> {cc}."})
         pos = cur.get("position") or 0
         if cur.get("impressions", 0) >= min_imps and 8 <= pos <= 20:
@@ -403,16 +414,19 @@ def report(cur_pages, prev_pages, qp, ga=None, posts=None, inspect=None, min_imp
                 issues.append({"kind": "missing_links", "level": "update", "text": "Not linking to: " + ", ".join(missing[:6]) + ("..." if len(missing) > 6 else "") + "."})
         out.append({**{f: n.get(f) for f in ("id", "parent", "title", "section", "type", "entity", "attribute", "macro_context", "intent", "priority", "url", "note")},
                     "queries": qstats, "links": n.get("links", []), "children": len(kids.get(nid, [])), "live": live,
-                    "clicks": cc, "impressions": cur.get("impressions", 0), "ctr": cur.get("ctr", 0), "position": cur.get("position"),
-                    "prev_clicks": pc, "delta_clicks": cc - pc, "sessions": a.get("sessions", 0), "key_events": a.get("select_cabin", 0),
+                    "clicks": cc if sc_ok else None, "impressions": cur.get("impressions", 0) if sc_ok else None,
+                    "ctr": cur.get("ctr", 0) if sc_ok else None, "position": cur.get("position") if sc_ok else None,
+                    "prev_clicks": pc if prev_ok else None, "delta_clicks": cc - pc if prev_ok else None,
+                    "sessions": a.get("sessions", 0) if ga_ok else None, "key_events": a.get("select_cabin", 0) if ga_ok else None,
                     "issues": issues,
-                    "state": "gap" if any(i["level"] == "gap" for i in issues) else "update" if any(i["level"] == "update" for i in issues) else "ok"})
+                    "state": "gap" if any(i["level"] == "gap" for i in issues) else "update" if any(i["level"] == "update" for i in issues)
+                    else "unknown" if any(i["level"] == "unknown" for i in issues) else "ok"})
 
     cov = {}
     for s in SECTIONS:
         ns = [r for r in out if r["section"] == s]
         cov[s] = {"nodes": len(ns), "live": sum(1 for r in ns if r["live"]), "gaps": sum(1 for r in ns if r["state"] == "gap"),
-                  "update": sum(1 for r in ns if r["state"] == "update"),
+                  "update": sum(1 for r in ns if r["state"] == "update"), "unknown": sum(1 for r in ns if r["state"] == "unknown"),
                   "pct": round(100 * sum(1 for r in ns if r["live"]) / len(ns)) if ns else 0}
     covered_q = {q for n in nodes.values() for q in n.get("queries", [])}
     excl = [(x["path"].rstrip("/") or "/", x["path"].endswith("/") and x["path"] != "/") for x in m["site"].get("exclude", [])]
@@ -434,5 +448,5 @@ def report(cur_pages, prev_pages, qp, ga=None, posts=None, inspect=None, min_imp
     demand = sorted(unmapped.values(), key=lambda g: -g["impressions"])[:100]
     for g in demand:
         g["queries"] = sorted(g["queries"], key=lambda x: -x["impressions"])[:15]
-    return {"site": m["site"], "nodes": out, "coverage": cov, "unmapped": demand, "version": m.get("version", 0),
+    return {"site": m["site"], "nodes": out, "coverage": cov, "unmapped": demand, "version": m.get("version", 0), "sources": src,
             "proposals": [{k: p[k] for k in ("id", "at", "by", "note", "summary")} for p in m.get("proposals", [])]}

@@ -1686,7 +1686,7 @@ function rsaDialog(r, isNew){
     [[isNew ? "Add to draft" : "Save to draft", () => {
       const get = (sel, max) => [...document.querySelectorAll(sel + " .ln")].map(l => ({text:l.querySelector("input").value.trim(), pin:+l.querySelector("select").value})).filter(x => x.text);
       const c = {type:"rsa", campaign:r.campaign, ad_group:r.ad_group, final_url:val("f_url"), path1:val("f_p1"), path2:val("f_p2"), headlines:get("#hl"), descriptions:get("#ds")};
-      if (!isNew){ Object.assign(c, {edit:true, local_id:r.id}); if (c.final_url === r.final_url) delete c.final_url; delete c.path1; delete c.path2 }
+      if (!isNew){ Object.assign(c, {edit:true, local_id:r.id}, r.ad_id ? {ad_id:r.ad_id} : {}); if (c.final_url === r.final_url) delete c.final_url; delete c.path1; delete c.path2 }
       submit([c], val("f_note"));
     }, "primary"]]);
   const wire = () => { document.querySelectorAll("#hl input.h").forEach(i => counter(i, 30)); document.querySelectorAll("#ds input.d").forEach(i => counter(i, 90)) };

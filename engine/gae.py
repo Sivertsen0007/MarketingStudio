@@ -267,15 +267,32 @@ def _amt(v):
     return f"{float(v):.2f}" if v is not None else None
 
 
+def micros(v):
+    """A money amount -> Google's micros, rounded to whole cents first (half up), so 1.005 is 1010000 and 0.1 + 0.2
+    never turns into 300000.00000000006."""
+    from decimal import Decimal, ROUND_HALF_UP  # noqa: PLC0415
+    return int(Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 1000000)
+
+
+def _texts_into(r, items, label):
+    """RSA headlines / descriptions (plain strings or {"text", "pin"} dicts, the dialog's shape) -> Editor columns
+    "<label> N" and, when pinned, "<label> N position"."""
+    for i, x in enumerate(items, 1):
+        if isinstance(x, dict):
+            r[f"{label} {i}"] = x.get("text")
+            if x.get("pin"):
+                r[f"{label} {i} position"] = str(x["pin"])
+        else:
+            r[f"{label} {i}"] = x
+
+
 def plan_rows(change):
     """One plan change -> list of Editor rows (dicts). Unknown Editor columns can be passed via `columns`."""
     t = change["type"]
     if change.get("edit") and t == "rsa" and change.get("headlines"):
         r = {"Campaign": change["campaign"]}  # lint the new text
-        for i, h in enumerate(change["headlines"], 1):
-            r[f"Headline {i}"] = h["text"] if isinstance(h, dict) else h
-        for i, d in enumerate(change["descriptions"], 1):
-            r[f"Description {i}"] = d["text"] if isinstance(d, dict) else d
+        _texts_into(r, change["headlines"], "Headline")
+        _texts_into(r, change.get("descriptions") or [], "Description")
         return [r]
     if t == "dsa_exclusion" or (t in ("callout", "sitelink") and change.get("remove")):
         return []  # direct-write only (gae apply)
@@ -321,15 +338,8 @@ def plan_rows(change):
         hl, ds = change["headlines"], change["descriptions"]
         if not 3 <= len(hl) <= 15 or not 2 <= len(ds) <= 4:
             raise ValueError("RSA needs 3-15 headlines and 2-4 descriptions")
-        for i, h in enumerate(hl, 1):
-            if isinstance(h, dict):
-                r[f"Headline {i}"] = h["text"]
-                if h.get("pin"):
-                    r[f"Headline {i} position"] = str(h["pin"])
-            else:
-                r[f"Headline {i}"] = h
-        for i, d in enumerate(ds, 1):
-            r[f"Description {i}"] = d
+        _texts_into(r, hl, "Headline")
+        _texts_into(r, ds, "Description")  # {text, pin} dicts too (G1): the pin goes to "Description N position"
         rows.append(r)
     elif t == "sitelink":
         rows.append({**base, "Link Text": change["text"], "Description line 1": change.get("line1"),
@@ -780,7 +790,7 @@ def _edit_campaign(db, c, edits):
     if c.get("budget") is not None:
         if row["sharedBudgetLocalId"]:
             raise ValueError(f'"{c["campaign"]}" uses a shared budget - not edited directly')
-        fields["budgetAmount"] = int(round(float(c["budget"]) * 1e6))
+        fields["budgetAmount"] = micros(c["budget"])
     if c.get("bid_strategy") is not None:
         if str(c["bid_strategy"]).lower() != "target impression share":
             raise ValueError("campaign edit: only bid_strategy 'Target impression share' is supported directly")
@@ -789,7 +799,7 @@ def _edit_campaign(db, c, edits):
         fields.update(biddingStrategyType=15, apiBiddingStrategyType=15,
                       targetImpressionShareGoal=TIS_LOCATION[c.get("tis_location", "top")],
                       targetImpressionShare=float(c["tis_percent"]) / 100,
-                      maxCpcBidCeiling=int(round(float(c["max_cpc_cap"]) * 1e6)))
+                      maxCpcBidCeiling=micros(c["max_cpc_cap"]))
     if c.get("mobile_bid_adjustment") is not None:  # whole percent, e.g. -30 (Editor's int; "none" = -2147483647)
         fields["mobileBidModifier"] = int(c["mobile_bid_adjustment"])
     if c.get("languages") is not None:  # "all" -> '' (how Editor stores All languages), else "en" / "de;en"
@@ -847,10 +857,10 @@ def apply_changes(db, changes, comment, edits=None):
             names = [geo.get(l["id"], (l.get("name", str(l["id"])), ""))[0] for l in locs]
             cid = _insert(db, "Campaign", {
                 "name": c["campaign"], "comment": comment, "status": STATUS_CODE[str(c.get("status", "paused")).lower()],
-                "budgetAmount": int(round(float(c["budget"]) * 1e6)),
+                "budgetAmount": micros(c["budget"]),
                 "biddingStrategyType": BID_CODE[c.get("bid_strategy", "Manual CPC").lower()],
                 "apiBiddingStrategyType": BID_CODE[c.get("bid_strategy", "Manual CPC").lower()],
-                "maxCpcBidCeiling": int(round(float(c["max_cpc_cap"]) * 1e6)) if c.get("max_cpc_cap") else 0,
+                "maxCpcBidCeiling": micros(c["max_cpc_cap"]) if c.get("max_cpc_cap") else 0,
                 "languages": c.get("languages", "en"),
                 "geoTargets": f"{len(names)};0;" + "; ".join(names),
                 "touchedCountries": ";".join(sorted({geo.get(l["id"], ("", ""))[1] for l in locs} - {""})),
@@ -869,21 +879,21 @@ def apply_changes(db, changes, comment, edits=None):
             if c.get("status") is not None:
                 fields["status"] = EDIT_STATUS[str(c["status"]).lower()]
             if c.get("max_cpc") is not None:
-                fields["maxCpc"] = int(round(float(c["max_cpc"]) * 1e6))
+                fields["maxCpc"] = micros(c["max_cpc"])
             if not fields:
                 raise ValueError("ad group edit needs status and/or max_cpc")
             n["ad_group_edit"] += _edit_row(db, "AdGroup", aid, fields, edits)
         elif t == "ad_group":
             aid = _insert(db, "AdGroup", {"parentId": (PARENT_CAMPAIGN << 32) | camp, "name": c["ad_group"], "comment": comment,
                                           "status": STATUS_CODE[str(c.get("status", "enabled")).lower()],
-                                          "maxCpc": int(round(float(c["max_cpc"]) * 1e6)) if c.get("max_cpc") else 0})
+                                          "maxCpc": micros(c["max_cpc"]) if c.get("max_cpc") else 0})
             created["ad_group"][(camp, c["ad_group"])] = aid
             n["ad_group"] += 1
         elif t == "keyword" and c.get("edit"):  # change the max CPC and/or status of existing keywords
             parent = (PARENT_ADGROUP << 32) | _adgroup_id(db, camp, c["ad_group"], created)
             fields = {}
             if c.get("max_cpc") is not None:
-                fields["maxCpc"] = int(round(float(c["max_cpc"]) * 1e6))
+                fields["maxCpc"] = micros(c["max_cpc"])
             if c.get("status") is not None:
                 fields["status"] = EDIT_STATUS[str(c["status"]).lower()]
             if not fields:
@@ -894,7 +904,14 @@ def apply_changes(db, changes, comment, edits=None):
         elif t == "rsa" and c.get("edit"):  # edit the existing (non-removed) RSAs of an ad group: final URL and/or all text
             parent = (PARENT_ADGROUP << 32) | _adgroup_id(db, camp, c["ad_group"], created)
             ids = [r[0] for r in db.execute("select localId from ResponsiveSearchAd where parentId = ? and status != 2", (parent,))]
-            if c.get("local_id") is not None:  # one specific ad (ad groups with several RSAs)
+            if c.get("ad_id") not in (None, ""):  # Google's ad id (rows from the API grids): Editor knows it as remoteId
+                hit = db.execute("select localId from ResponsiveSearchAd where parentId = ? and status != 2 and remoteId = ?",
+                                 (parent, int(c["ad_id"]))).fetchone()
+                if not hit:
+                    raise ValueError(f'RSA with ad id {c["ad_id"]} is not in "{c["campaign"]}" / "{c["ad_group"]}" in Editor '
+                                     f'(in Editor: Get recent changes, then try again)')
+                ids = [hit[0]]
+            elif c.get("local_id") is not None:  # one specific ad (ad groups with several RSAs)
                 if int(c["local_id"]) not in ids:
                     raise ValueError(f'RSA {c["local_id"]} is not in "{c["campaign"]}" / "{c["ad_group"]}"')
                 ids = [int(c["local_id"])]
@@ -952,7 +969,7 @@ def apply_changes(db, changes, comment, edits=None):
             fields, left = {}, dict(c["prices"])
             for i in range(1, 9):
                 if row[f"header{i}"] in left:
-                    fields[f"price{i}"] = int(round(float(left.pop(row[f"header{i}"])) * 1e6))
+                    fields[f"price{i}"] = micros(left.pop(row[f"header{i}"]))
             if left:
                 raise ValueError(f'price asset on {c["campaign"]} has no item {sorted(left)}')
             n["price_edit"] += _edit_row(db, "PriceExtensionV2", ids[0], fields, edits)
@@ -966,7 +983,7 @@ def apply_changes(db, changes, comment, edits=None):
             for kw in c.get("keywords", [c.get("keyword")]):
                 _insert(db, "Keyword", {"parentId": (PARENT_ADGROUP << 32) | aid, "comment": comment, "text": kw,
                                         "criterionType": MATCH_CODE[c["match"].lower()],
-                                        "maxCpc": int(round(float(c["max_cpc"]) * 1e6)) if c.get("max_cpc") else 0})
+                                        "maxCpc": micros(c["max_cpc"]) if c.get("max_cpc") else 0})
                 n["keyword"] += 1
         elif t == "sitelink":
             _asset_with_link(db, "SitelinkV2", {"displayText": c["text"], "description1": c.get("line1"), "description2": c.get("line2"),
@@ -1001,7 +1018,7 @@ def apply_changes(db, changes, comment, edits=None):
                  "currencyCode": c.get("currency", "USD")}
             for i, it in enumerate(c["items"], 1):
                 f.update({f"header{i}": it["header"], f"description{i}": it["description"],
-                          f"price{i}": int(round(float(it["price"]) * 1e6)), f"finalUrl{i}": it["final_url"]})
+                          f"price{i}": micros(it["price"]), f"finalUrl{i}": it["final_url"]})
                 if it.get("unit"):
                     f[f"unit{i}"] = it["unit"]
             _asset_with_link(db, "PriceExtensionV2", f, camp, comment)

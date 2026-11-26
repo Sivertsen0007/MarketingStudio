@@ -180,7 +180,7 @@ out = {
         self.assertEqual(r["g_glued"], [f"row 1 Headline 1: {ban}"])
         self.assertEqual(r["g_digits"], [f"row 1 Description 1: {ban}"])
         self.assertEqual(r["g_url"], [f"row 1 Final URL: {ban}"])
-        self.assertEqual(r["core_glued"], [ban])
+        self.assertEqual(r["core_glued"], [f"Callout text: {ban}"])  # G8: the field stays in core.check's message
         self.assertEqual(r["m_glued"], [])
         self.assertEqual(r["m_word"], ["primary_text: never mention the Bahamas"])
         self.assertEqual(r["m_em"], ["primary_text: em dash - use a normal dash"])

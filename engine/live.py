@@ -565,12 +565,12 @@ def ops_for(ids, c, enable_new):
         budget = ids.tmp("campaignBudgets")
         camp = ids.tmp("campaigns")
         out.append(_create("campaignBudgetOperation", {"resourceName": budget, "name": f"{c['campaign']} budget",
-                                                       "amountMicros": str(int(round(float(c["budget"]) * 1e6))),
+                                                       "amountMicros": str(gae.micros(c["budget"])),
                                                        "deliveryMethod": "STANDARD", "explicitlyShared": False},
                            f"new budget {float(c['budget']):.2f}/day", undoable=False))
         bid = c.get("bid_strategy", "Manual CPC").lower()
         scheme = {"manualCpc": {}} if bid == "manual cpc" else \
-            {"targetSpend": {"cpcBidCeilingMicros": str(int(round(float(c["max_cpc_cap"]) * 1e6)))} if c.get("max_cpc_cap") else {}}
+            {"targetSpend": {"cpcBidCeilingMicros": str(gae.micros(c["max_cpc_cap"]))} if c.get("max_cpc_cap") else {}}
         out.append(_create("campaignOperation", {"resourceName": camp, "name": c["campaign"], "status": "PAUSED",
                                                  "advertisingChannelType": "SEARCH", "campaignBudget": budget, **scheme,
                                                  "networkSettings": {"targetGoogleSearch": True, "targetSearchNetwork": False,
@@ -597,14 +597,14 @@ def ops_for(ids, c, enable_new):
         if c.get("budget") is not None:
             if lb.get("explicitlyShared"):
                 raise ValueError(f'"{c["campaign"]}" uses a shared budget - change it in Google Ads')
-            old, new = int(lb.get("amountMicros", 0)), int(round(float(c["budget"]) * 1e6))
+            old, new = int(lb.get("amountMicros", 0)), gae.micros(c["budget"])
             pct = f" (+{(new - old) / old * 100:.0f}%)" if old and new > old else ""
             out.append(_upd("campaignBudgetOperation", lc["campaignBudget"], {"amountMicros": str(new)}, "amountMicros",
                             {"amountMicros": str(old)}, f"budget {_money(old)}/day", f"{_money(new)}/day",
                             spend=f"budget raise{pct}" if new > old else None))
         if c.get("bid_strategy"):
             tis = {"location": "TOP_OF_PAGE", "locationFractionMicros": str(int(float(c["tis_percent"]) * 10000)),
-                   "cpcBidCeilingMicros": str(int(round(float(c["max_cpc_cap"]) * 1e6)))}
+                   "cpcBidCeilingMicros": str(gae.micros(c["max_cpc_cap"]))}
             op = {"op": {"campaignOperation": {"update": {"resourceName": camp, "targetImpressionShare": tis},
                                                "updateMask": "targetImpressionShare.location,targetImpressionShare.locationFractionMicros,targetImpressionShare.cpcBidCeilingMicros"}},
                   "undo": None, "undo_note": f"was {lc['biddingStrategyType']} - switch back by hand if needed",
@@ -618,7 +618,7 @@ def ops_for(ids, c, enable_new):
         g = ids.tmp("adGroups")
         body = {"resourceName": g, "name": c["ad_group"], "campaign": camp, "status": new_status, "type": "SEARCH_STANDARD"}
         if c.get("max_cpc"):
-            body["cpcBidMicros"] = str(int(round(float(c["max_cpc"]) * 1e6)))
+            body["cpcBidMicros"] = str(gae.micros(c["max_cpc"]))
         out.append(_create("adGroupOperation", body, f'new ad group "{c["ad_group"]}" ({new_status})'))
         ids.new[("g", c["campaign"], c["ad_group"])] = g
         return out
@@ -635,7 +635,7 @@ def ops_for(ids, c, enable_new):
             if fields["status"] == "ENABLED" and live["status"] != "ENABLED":
                 spend.append("enables an ad group")
         if c.get("max_cpc") is not None:
-            new, old = int(round(float(c["max_cpc"]) * 1e6)), int(live.get("cpcBidMicros", 0))
+            new, old = gae.micros(c["max_cpc"]), int(live.get("cpcBidMicros", 0))
             fields["cpcBidMicros"], before["cpcBidMicros"] = str(new), str(old)
             mask.append("cpcBidMicros")
             if new > old:
@@ -650,7 +650,7 @@ def ops_for(ids, c, enable_new):
             if not c.get("edit"):
                 body = {"adGroup": g, "status": new_status, "keyword": {"text": kw, "matchType": MATCH[c["match"].lower()]}}
                 if c.get("max_cpc"):
-                    body["cpcBidMicros"] = str(int(round(float(c["max_cpc"]) * 1e6)))
+                    body["cpcBidMicros"] = str(gae.micros(c["max_cpc"]))
                 out.append(_create("adGroupCriterionOperation", body, f'new keyword "{kw}" ({c["match"]}, {new_status})'))
                 continue
             if grow is None:
@@ -667,7 +667,7 @@ def ops_for(ids, c, enable_new):
                 if fields["status"] == "ENABLED" and live["status"] != "ENABLED":
                     spend.append("enables a keyword")
             if c.get("max_cpc") is not None:
-                new, old = int(round(float(c["max_cpc"]) * 1e6)), int(live.get("cpcBidMicros", 0))
+                new, old = gae.micros(c["max_cpc"]), int(live.get("cpcBidMicros", 0))
                 fields["cpcBidMicros"], before["cpcBidMicros"] = str(new), str(old)
                 mask.append("cpcBidMicros")
                 if new > old:
@@ -954,15 +954,18 @@ def plan(acct, enable_new=False, items=None, source=None):
     ids = Ids(acct, source)
     ops, per_item = [], []
     exps = _plan_experiments(acct, ids, items) if items else experiments.empty()
-    for it in items:
+    dups = core.draft_duplicates([it["change"] for it in items])  # two new campaigns / ad groups with one name
+    for it, dup in zip(items, dups):
         xp, xw = experiments.check(exps, it["change"])
+        # G2: start from core.check only. Stored problems may hold what Editor's dry run (Send to Editor) refused, which
+        # says nothing about a live push; and a synced or merged draft never went through core.add at all.
         entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
-                 "problems": xp + list(it["problems"]), "warnings": xw}
-        try:  # never trust stored problems: a synced or merged draft never went through core.add (core.check is local)
-            again = core.check(it["change"])[0] + core.audiences.refusals(acct, [it["change"]])
+                 "problems": list(xp), "warnings": xw}
+        try:
+            again = core.check(it["change"], acct)[0] + core.audiences.refusals(acct, [it["change"]])
         except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
             again = [f"invalid change: {ex}"]
-        entry["problems"] += [p for p in again if p not in entry["problems"]]
+        entry["problems"] += [p for p in again + dup if p not in entry["problems"]]
         per_item.append(entry)
     if BATCH_READS:
         try:  # only fills the read cache: what it misses is read per item below, exactly as without it

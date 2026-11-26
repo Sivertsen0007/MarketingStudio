@@ -247,6 +247,13 @@ def _save(cid, key, build):
     return d
 
 
+def cached_rows(acct, kind):
+    """Rows of one kind from the structure cache as it is on disk (core.google_rules' live context). Never fetches:
+    None when nothing is cached."""
+    d = _read(_cid(acct), "base")
+    return None if d is None else list((d.get("rows") or {}).get(kind, []))
+
+
 def base(acct, max_age=FRESH, wait=False):
     return _load(_cid(acct), "base", _build_base, max_age, wait)
 

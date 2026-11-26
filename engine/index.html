@@ -2406,7 +2406,7 @@ function wireCounts(){ document.querySelectorAll("#editBody .cnt[data-max]").for
 const AUTO = {t:null, job:null, chain:Promise.resolve(), ids:{}};
 function asStatus(txt, cls){ const s = $("#asState"); if (s){ s.textContent = txt; s.className = "asstate " + (cls || "") } }
 // collect() reads the panel right now -> list of changes (throws Error("why") when it can't be saved yet)
-function autoSave(r, keys, collect){ AUTO.job = {r, keys, collect, acct:S.acct}; clearTimeout(AUTO.t); AUTO.t = setTimeout(asFlush, 1000); asStatus("Saving ...") }
+function autoSave(r, keys, collect, level = MLEVEL[S.kind]){ AUTO.job = {r, keys, collect, level, acct:S.acct}; clearTimeout(AUTO.t); AUTO.t = setTimeout(asFlush, 1000); asStatus("Saving ...") }
 // ---- the Edit panel rewrites the draft items of its row; it must never drop what it can't show ----
 // Fields of a draft change the panel shows (and so rebuilds from its inputs); everything else in an item is kept.
 const PANEL_FIELDS = {meta_status:["status"], meta_rename:["new_name"], meta_budget:["budget", "lifetime"], meta_end:["end_date"],
@@ -2447,22 +2447,40 @@ function panelLeft(oc, keys){
   return n ? {type:oc.type, level:oc.level, id:oc.id, ...out} : null;
 }
 // panel changes + the row's draft items -> what to remove, keep and add (S5c: nothing the panel can't show is lost)
+// take an unchanged item's fields out of the panel's change (it already holds them)
+function panelStrip(pc, oc, keys){
+  for (const k of keys){
+    if (k !== "cards"){ delete pc[k]; continue }
+    for (const c of oc.cards || []){ const y = (pc.cards || []).find(z => z.index === c.index); if (y) PANEL_CARD.forEach(f => { if (f in c) delete y[f] }) }
+    pc.cards = (pc.cards || []).filter(y => Object.keys(y).length > 1); if (!pc.cards.length) delete pc.cards;
+  }
+  return pc;
+}
+const hasFields = c => Object.keys(c).some(k => !MBASE.includes(k));
+const cloneCh = c => ({...c, ...(c.cards ? {cards:c.cards.map(x => ({...x}))} : {})});
 function panelPlan(r, ch, olds){
-  const pcs = ch.map(c => ({...c, ...(c.cards ? {cards:c.cards.map(x => ({...x}))} : {})})), meta = {};
+  const pcs = ch.map(cloneCh), meta = {};
   const pcFor = oc => pcs.find(c => c.type === oc.type && c.level === oc.level && String(c.id) === String(oc.id));
   const v = olds.map(it => { const oc = it.change || {}, keys = panelKeys(oc, r); return {it, oc, keys, pc:pcFor(oc), touched:panelTouched(oc, pcFor(oc), keys)} });
+  // one item per object per kind (targeting, copy, carousel, feed copy): two would clash at push (the engine refuses the same
+  // field twice, or both creatives are built from the live one and one is lost). If the panel still changes anything else of
+  // that kind on the object, every item of that kind is folded into the panel's change (note kept, author announced).
+  for (const pc of pcs){
+    if (MWHOLE.includes(pc.type)) continue;
+    const group = v.filter(x => x.pc === pc); if (!group.length || group.every(x => x.touched)) continue;
+    const rest = cloneCh(pc); group.filter(x => !x.touched).forEach(x => panelStrip(rest, x.oc, x.keys));
+    if (group.some(x => x.touched) || hasFields(rest)) group.forEach(x => { x.touched = true });
+  }
   const keep = [], remove = [], extra = [], announce = [];
   for (const x of v.filter(x => !x.touched)){  // the item already holds what the panel shows: it stays as it is (author, note)
     keep.push(x.it.id);
-    const pc = x.pc; if (!pc || !x.keys.length) continue;
-    if (x.oc.type === "meta_placements" || MWHOLE.includes(x.oc.type)){ pcs.splice(pcs.indexOf(pc), 1); continue }
-    for (const k of x.keys){
-      if (k !== "cards"){ delete pc[k]; continue }
-      for (const c of x.oc.cards || []){ const y = (pc.cards || []).find(z => z.index === c.index); if (y) PANEL_CARD.forEach(f => { if (f in c) delete y[f] }) }
-      pc.cards = (pc.cards || []).filter(y => Object.keys(y).length > 1); if (!pc.cards.length) delete pc.cards;
-    }
-    if (!Object.keys(pc).some(k => !MBASE.includes(k))) pcs.splice(pcs.indexOf(pc), 1);
+    const pc = x.pc; if (!pc || !pcs.includes(pc) || !x.keys.length) continue;
+    if (MWHOLE.includes(x.oc.type)){ pcs.splice(pcs.indexOf(pc), 1); continue }
+    if (!hasFields(panelStrip(pc, x.oc, x.keys))) pcs.splice(pcs.indexOf(pc), 1);
   }
+  // an End test status (with_end) in the draft already sets this status: the panel adds no plain status next to it
+  for (const it of S.draftItems || []){ const oc = it.change || {}; if (oc.type !== "meta_status" || !oc.with_end) continue;
+    const pc = pcFor(oc); if (pc && pvEq("status", pc.status, oc.status)) pcs.splice(pcs.indexOf(pc), 1) }
   for (const x of v.filter(x => x.touched)){  // rebuilt from the panel; what it can't show is folded in, or stays with its author
     remove.push(x.it.id);
     const left = panelLeft(x.oc, x.keys), pc = x.pc && pcs.includes(x.pc) ? x.pc : null;
@@ -2483,7 +2501,9 @@ function asFlush(){
   const key = j.acct + ":" + j.r.id;
   AUTO.chain = AUTO.chain.then(async () => {
     const byId = new Map((S.draftItems || []).map(i => [i.id, i]));
-    const olds = [...new Set([...(AUTO.ids[key] || []), ...draftIdsFor(j.r, j.keys)])].filter(id => byId.has(id)).map(id => byId.get(id));
+    // every draft item on this object (not only what the row knew when the panel opened: Claude may have added one since)
+    const onObj = (S.draftItems || []).filter(i => { const c = i.change || {}; return j.level && c.level === j.level && String(c.id) === String(j.r.id) && !/^meta_new_/.test(c.type || "") }).map(i => i.id);
+    const olds = [...new Set([...(AUTO.ids[key] || []), ...draftIdsFor(j.r, j.keys), ...(j.acct === S.acct ? onObj : [])])].filter(id => byId.has(id)).map(id => byId.get(id));
     if (!olds.length && !ch.length){ asStatus("No changes", ""); return }
     const send = (path, body) => fetch(path, {method:"POST", headers:{"Content-Type":"application/json", "X-Studio-Press":PRESS}, body:JSON.stringify({acct:j.acct, ...body})})
       .then(async r => { const x = await r.json(); if (!r.ok) throw new Error(x.error || r.statusText); return x });
@@ -2513,10 +2533,11 @@ function asFlush(){
 // wire the panel: every edit (except the preview picker) schedules a save; Revert drops this row's draft changes
 function wireAutoSave(r, keys, collect, onInput){
   const b = $("#editBody");
-  const go = e => { if (onInput) onInput(e); if (e.target.closest("#pvPlace, .prevbox")) return; autoSave(r, keys, collect) };
+  const level = MLEVEL[S.kind];  // the panel's own level, even if a save fires after another tab is picked
+  const go = e => { if (onInput) onInput(e); if (e.target.closest("#pvPlace, .prevbox")) return; autoSave(r, keys, collect, level) };
   b.oninput = go; b.onchange = go;
-  const trigger = () => autoSave(r, keys, collect);
-  editFoot([["Revert to live", async () => { AUTO.job = {r, keys, collect:() => [], acct:S.acct}; await asFlush(); renderEdit({...r, _draft:undefined}) }]]);
+  const trigger = () => autoSave(r, keys, collect, level);
+  editFoot([["Revert to live", async () => { AUTO.job = {r, keys, collect:() => [], level, acct:S.acct}; await asFlush(); renderEdit({...r, _draft:undefined}) }]]);
   $("#editFoot").insertAdjacentHTML("beforeend", `<span id="asState" class="asstate">${r._draft && Object.keys(r._draft).length ? "In the draft. Edits save on their own." : "Edits save to the draft on their own."}</span>`);
   return trigger;
 }

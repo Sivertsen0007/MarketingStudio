@@ -540,13 +540,24 @@ class H(BaseHTTPRequestHandler):
 
     def _drain_small(self, limit=1 << 20):
         """Read a small refused body before answering, so closing the connection doesn't reset it and lose the answer.
-        Big bodies are not read (the connection is closed anyway)."""
+        Big bodies are not read (the connection is closed anyway); a client that stops sending gets 2 seconds."""
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            if 0 < n <= limit:
-                self.rfile.read(n)
-        except (ValueError, OSError):
+        except ValueError:
+            return
+        if not 0 < n <= limit:
+            return
+        was = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(2)
+            self.rfile.read(n)
+        except OSError:
             pass
+        finally:
+            try:
+                self.connection.settimeout(was)
+            except OSError:
+                pass
 
     def _stage_video(self, store=None):
         """POST /api/videos/stage?name=<file name>: the raw bytes of a video picked in the page, streamed to Studio's

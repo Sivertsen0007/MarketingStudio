@@ -76,6 +76,11 @@ dialog.seo-wide{width:min(1180px,96vw)}
 .seo-kv b{font-weight:600;color:var(--muted);font-size:12.5px}
 .seo-root .prob{margin:0 28px 12px;padding:10px 14px;border-radius:var(--r);background:var(--bad-bg);color:var(--text);font-size:13px}
 .seo-scroll>.hint{margin:4px 0}
+.seo-scbox{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 28px 12px;padding:14px 18px;border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);font-size:13px;color:var(--text2)}
+.seo-scbox>div{flex:1;min-width:240px} .seo-scbox b{color:var(--text);font-weight:600} .seo-scbox .hint{margin:4px 0 0;font-size:12px}
+.seo-scroll .seo-scbox,.seo-box .seo-scbox,#dlgB .seo-scbox{margin:0 0 12px}
+.seo-f input:disabled,.seo-f textarea:disabled{background:var(--sunken);color:var(--muted);cursor:not-allowed}
+.seo-ask{flex:1;font-weight:600;color:var(--text);font-size:13px;align-self:center}
 `;
 if (!document.getElementById("seo-css")){ const st = document.createElement("style"); st.id = "seo-css"; st.textContent = CSS; document.head.appendChild(st) }
 
@@ -90,6 +95,19 @@ const pct = v => v == null ? "" : (100 * v).toFixed(1) + "%";
 const day = s => s ? window.studioFmt.date(s) : "";  // 25 Nov 2026
 const when = s => s ? window.studioFmt.dateTime(s) : "";
 const LBL = {title: "Title", slug: "Slug", seo_title: "SEO title", meta_desc: "Meta description", focus_kw: "Focus keyphrase", excerpt: "Excerpt", categories: "Categories", content: "Body"};
+const D = v => v == null ? "-" : N(v);  // a number from a source that could not be read shows as "-", never 0
+const YOAST = ["seo_title", "meta_desc", "focus_kw"];
+const META_LEN = [120, 156], TITLE_LEN = [30, 60];
+// Yoast's %%variables%% filled in the way the engine does it (chk.expand_vars), so the counters measure what Google sees
+const expandVars = (t, vars) => String(t || "").replace(/%%\s*([a-z_]+)\s*%%/gi, (m, k) => { const v = (vars || {})[k.toLowerCase()]; return v == null ? "" : v });
+const isSC = e => /^Search Console/.test(e);
+// [T10] Without Search Console: no numbers, one box with the reason and the way to fix it
+function scBox(errors, what){
+  const why = (errors || []).filter(isSC).map(e => e.replace(/^Search Console[^:]*:\s*/, ""))[0] || "";
+  return `<div class="seo-scbox"><div><b>Search Console could not be read</b><p class="hint">${esc(what || "Clicks, impressions and positions are hidden until it can, so nothing here is built on missing numbers.")}${why ? " Reason: " + esc(why) : ""}</p></div>
+    <button class="primary" onclick="window.openSetup && window.openSetup()" title="Setup: Sign in with Google (Search Console access)">Sign in with Google</button></div>`;
+}
+const errLines = errors => (errors || []).filter(e => !isSC(e));
 const short = (v, n = 140) => { const s = Array.isArray(v) ? v.join(", ") : String(v ?? ""); return s.length > n ? s.slice(0, n) + " ..." : s };
 
 // [team live] jump from the Team tab / a mention to an item
@@ -159,7 +177,7 @@ function show(){
   else if (T.tab === "opps"){ b.innerHTML = `<div class="seo-scroll" id="seoOpp"><p class="hint">Loading opportunities ...</p></div>`; loadOpps() }
   else if (T.tab === "draft"){ b.innerHTML = `<div class="seo-scroll" id="seoDraft"></div>`; drawDraft(); loadHistory() }
   else if (T.tab === "map"){ b.innerHTML = `<div id="seoMap" style="flex:1;min-height:0;display:flex;flex-direction:column"></div>`;
-    mapScript().then(() => window.SEO_MAP.render($("#seoMap"), {A, P, rq, openPost, openNewPage, badge: n => { if (T.mapProps !== n){ T.mapProps = n; tabs() } }})).catch(e => { b.innerHTML = `<p class="hint" style="padding:16px">${esc(e.message)}</p>` }) }
+    mapScript().then(() => window.SEO_MAP.render($("#seoMap"), {A, P, rq, openPost, openNewPage, scBox, badge: n => { if (T.mapProps !== n){ T.mapProps = n; tabs() } }})).catch(e => { b.innerHTML = `<p class="hint" style="padding:16px">${esc(e.message)}</p>` }) }
   else { b.innerHTML = `<div class="seo-scroll" id="seoSet"></div>`; drawSettings() }
 }
 
@@ -170,15 +188,16 @@ const COLS = {
     {k: "date", l: "Published", f: day}, {k: "modified", l: "Updated", f: day}, {k: "words", l: "Words", n: 1, f: N},
     {k: "clicks", l: "Clicks", n: 1, f: N}, {k: "impressions", l: "Impr.", n: 1, f: N}, {k: "ctr", l: "CTR", n: 1, f: pct},
     {k: "position", l: "Avg pos.", n: 1, f: v => v == null ? "" : Number(v).toFixed(1)},
-    {k: "delta_clicks", l: "Clicks vs prev.", n: 1, f: v => v ? `<span class="${v > 0 ? "seo-up" : "seo-down"}">${v > 0 ? "+" : ""}${N(v)}</span>` : "0"},
-    {k: "sessions", l: "Organic sessions", n: 1, f: N}, {k: "select_cabin", l: "Select Cabin", n: 1, f: N},
+    {k: "delta_clicks", l: "Clicks vs prev.", n: 1, f: v => v == null ? "-" : v ? `<span class="${v > 0 ? "seo-up" : "seo-down"}">${v > 0 ? "+" : ""}${N(v)}</span>` : "0"},
+    {k: "sessions", l: "Organic sessions", n: 1, f: D}, {k: "select_cabin", l: "Select Cabin", n: 1, f: D},
     {k: "links_in", l: "Links in", n: 1}, {k: "links_out", l: "Links out", n: 1},
     {k: "index", l: "Index", f: (v, r) => r.indexed == null ? `<span class="hint">Not checked</span>` : `<span class="seo-dot ${r.indexed ? "ok" : "bad"}"></span>${esc(v || "")}`}],
   edit: [
-    {k: "title", l: "Title", cls: "title", e: 1}, {k: "slug", l: "Slug", e: 1}, {k: "seo_title", l: "SEO title", e: 1, len: [30, 60]},
-    {k: "meta_desc", l: "Meta description", e: 1, len: [70, 160], cls: "wrap"}, {k: "focus_kw", l: "Focus keyphrase", e: 1},
+    {k: "title", l: "Title", cls: "title", e: 1}, {k: "slug", l: "Slug", e: 1}, {k: "seo_title", l: "SEO title", e: 1, len: TITLE_LEN},
+    {k: "meta_desc", l: "Meta description", e: 1, len: META_LEN, cls: "wrap"}, {k: "focus_kw", l: "Focus keyphrase", e: 1},
     {k: "category_names", l: "Categories", f: v => esc((v || []).join(", "))}, {k: "status", l: "Status"}, {k: "clicks", l: "Clicks", n: 1, f: N}],
 };
+const SC_COLS = ["clicks", "impressions", "ctr", "position", "delta_clicks"];
 const FILTERS = [["all", "All"], ["publish", "Published"], ["drafts", "Drafts"], ["losing", "Losing clicks"], ["noindex", "Not indexed"], ["indraft", "In draft"]];
 function pass(r, f){
   switch (f || T.filter){
@@ -205,31 +224,35 @@ function wirePosts(){
 async function loadPosts(force){
   if (T.tab !== "posts") return;
   try { T.data = await A("posts", {...rq(), ...(force ? {force: 1} : {})}) } catch(e) { const t = $("#seoTable"); if (t) t.innerHTML = `<tbody><tr><td class="prob">${esc(e.message)}</td></tr></tbody>`; return }
-  T.settings = T.data.settings || T.settings; targetChip(); drawPosts();
+  T.settings = {...(T.settings || {}), ...(T.data.settings || {})}; targetChip(); drawPosts();
 }
 function drawPosts(){
   if (!T.data || !$("#seoTable")) return;
-  const d = T.data, rows = d.rows;
+  const d = T.data, rows = d.rows, src = d.sources || {};
+  const scOff = src.search_console === false, prevOff = scOff || src.previous_period === false;
+  if (prevOff && T.filter === "losing") T.filter = "all";
   $("#seoView").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === T.view));
-  $("#seoF").innerHTML = FILTERS.map(([k, l]) => { const dis = k === "drafts" && !d.authed;
+  $("#seoF").innerHTML = FILTERS.filter(([k]) => !(k === "losing" && prevOff)).map(([k, l]) => { const dis = k === "drafts" && !d.authed;
     return `<button data-f="${k}" class="${k === T.filter ? "on" : ""}" ${dis ? "disabled title=\"WordPress drafts need the Marketing Studio login (Settings)\"" : ""}>${l}${k !== "all" ? `<span class="n">${rows.filter(r => pass(r, k)).length}</span>` : ""}</button>` }).join("");
   $("#seoRangeLbl").textContent = `${d.range.start} to ${d.range.end} vs ${d.range.prev_start} to ${d.range.prev_end}`;
-  const notes = [];
-  if (d.errors && d.errors.length) notes.push(d.errors.map(esc).join("<br>"));
-  if (T.view === "edit" && !d.snippet_installed) notes.push("Focus keyphrase is blank: Yoast does not share it over the REST API until the Studio snippet is installed . SEO title shows the title Google sees.");
+  const notes = [], other = scOff ? errLines(d.errors) : (d.errors || []);
+  if (other.length) notes.push(other.map(esc).join("<br>"));
+  if (T.view === "edit" && d.snippet_installed === false) notes.push("SEO title, meta description and focus keyphrase can't be edited: Yoast does not share them over the REST API until the Studio snippet is installed (see Settings). SEO title shows the title Google sees.");
   if (T.filter === "noindex") notes.push("Index status comes from URL Inspection. Check a post (open it) or run Check index status in Opportunities.");
-  $("#seoNote").innerHTML = notes.length ? `<p class="seo-errs">${notes.join("<br>")}</p>` : "";
+  $("#seoNote").innerHTML = (scOff ? scBox(d.errors) : "") + (notes.length ? `<p class="seo-errs">${notes.join("<br>")}</p>` : "");
   const s = T.search.toLowerCase();
   let list = rows.filter(r => pass(r) && (!s || [r.title, r.url, r.seo_title, r.meta_desc, r.focus_kw].some(x => (x || "").toLowerCase().includes(s))));
   const {key, dir} = T.sort;
   list.sort((a, b) => { const x = a[key], y = b[key]; return (typeof x === "number" || typeof y === "number" ? ((x ?? -1e9) - (y ?? -1e9)) : String(x ?? "").localeCompare(String(y ?? ""))) * dir });
-  const cols = COLS[T.view];
+  const noYoast = d.snippet_installed === false;
+  const cols = COLS[T.view].filter(c => !(scOff && SC_COLS.includes(c.k)) && !(prevOff && c.k === "delta_clicks")).map(c => noYoast && YOAST.includes(c.k) ? {...c, e: 0} : c);
+  const yv = (T.settings || {}).yoast_vars || {};
   const head = `<thead><tr>${cols.map(c => `<th data-k="${c.k}" class="${c.k === key ? "sorted" : ""}">${c.l}${c.k === key ? (dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead>`;
   const body = list.map(r => { const dr = {}; (r.draft || []).forEach(x => { if (x.kind !== "todo") dr[x.field] = x });
     return `<tr class="seo-row" data-id="${r.id}">${cols.map(c => {
       const ch = dr[c.k], v = ch ? ch.new : r[c.k];
       let html = c.f ? c.f(v, r) : esc(v ?? "");
-      if (c.len){ const n = (v || "").length; html += `<span class="seo-len ${n && (n < c.len[0] || n > c.len[1]) ? "bad" : ""}">${n}</span>` }
+      if (c.len){ const n = expandVars(v, {...yv, title: r.title, primary_category: (r.category_names || [])[0] || ""}).length; html += `<span class="seo-len ${n && (n < c.len[0] || n > c.len[1]) ? "bad" : ""}">${n}</span>` }
       if (c.k === "title" && (r.draft || []).length) html += ` <span class="chip draft">${r.draft.length} in draft</span>`;
       const cl = [c.cls || "", c.n ? "num" : "", ch ? "changed" : "", c.e && T.view === "edit" ? "edit" : ""].join(" ");
       return `<td class="${cl}" data-k="${c.k}" title="${esc(short(v, 300))}">${ch && c.k !== "content" ? `<span class="old">${esc(short(r[c.k], 40))}</span>` : ""}${html}</td>` }).join("")}</tr>` }).join("");
@@ -253,13 +276,20 @@ function inlineEdit(td, id){
   inp.onblur = save;
 }
 
+// categories: 200 with {categories, error, stale}; an empty list is not kept, so the next editor asks again
+async function loadCats(){
+  if (T.cats && T.cats.length) return;
+  try { const r = await A("categories"); T.cats = Array.isArray(r) ? r : (r.categories || []); T.catsErr = Array.isArray(r) ? "" : (r.error || "") }
+  catch(e) { T.cats = []; T.catsErr = e.message }
+}
+const catsNote = () => T.catsErr ? `<span class="hint">${esc(T.cats.length ? T.catsErr : "Categories could not be read: " + T.catsErr)}</span>` : "";
 // ---- post dialog ----
 let dlgWired = false;
 function wide(on){ const d = $("#dlg"); d.classList.toggle("seo-wide", on); if (!dlgWired){ dlgWired = true; d.addEventListener("close", () => d.classList.remove("seo-wide")) } }
 async function openPost(id, startPane){
   wide(true); showDialog("Loading post ...", `<p class="hint">Reading the post and its Search Console queries ...</p>`, []);
   let d; try { d = await A("post", {id, ...rq()}) } catch(e) { $("#dlgB").innerHTML = `<div class="prob">${esc(e.message)}</div>`; return }
-  if (!T.cats){ try { T.cats = await A("categories") } catch(e) { T.cats = [] } }
+  await loadCats();
   const p = d.post, dr = {}; d.draft.forEach(x => { if (x.kind !== "todo") dr[x.field] = x.new });
   if (window.TeamReviews) TeamReviews.ownerNote([`seo/post/${id}`, "seo"]); // [team reviews] "Owned by ..."
   const val = k => dr[k] !== undefined ? dr[k] : (p[k] ?? "");
@@ -267,45 +297,62 @@ async function openPost(id, startPane){
   const catBoxes = (T.cats || []).map(c => `<label><input type="checkbox" value="${c.id}" ${init.categories.includes(c.id) ? "checked" : ""}>${esc(c.name)}</label>`).join("");
   const host = (p.url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
   const ins = d.inspection;
+  // [C5] without the Studio snippet Yoast's fields can't be written: greyed out, and the engine refuses them as an error
+  const noYoast = d.snippet_installed === false, yDis = noYoast ? ` disabled title="Install the Studio snippet (Settings) to edit Yoast's fields"` : "";
+  const yHint = noYoast ? ` <span class="hint" style="margin:0">needs the Studio snippet</span>` : "";
   const edit = `<div class="seo-grid2"><div>
       <div class="seo-f"><label>Title</label><input id="sp_title" value="${esc(init.title)}"></div>
       <div class="seo-f"><label>Slug <span class="hint" style="margin:0">masterliveaboards.com/<b>slug</b>/</span></label><input id="sp_slug" value="${esc(init.slug)}"></div>
-      <div class="seo-f"><label>SEO title <span class="cnt" id="sp_tn"></span></label><input id="sp_seo_title" value="${esc(init.seo_title)}"></div>
-      <div class="seo-f"><label>Meta description <span class="cnt" id="sp_mn"></span></label><textarea id="sp_meta_desc" rows="3">${esc(init.meta_desc)}</textarea></div>
-      <div class="seo-f"><label>Focus keyphrase ${p.focus_kw == null ? `<span class="hint" style="margin:0">not shared by Yoast yet: install the Studio snippet</span>` : ""}</label><input id="sp_focus_kw" value="${esc(init.focus_kw || "")}"></div>
+      <div class="seo-f"><label>SEO title${yHint} <span class="cnt" id="sp_tn"></span></label><input id="sp_seo_title" value="${esc(init.seo_title)}"${yDis}></div>
+      <div class="seo-f"><label>Meta description${yHint} <span class="cnt" id="sp_mn"></span></label><textarea id="sp_meta_desc" rows="3"${yDis}>${esc(init.meta_desc)}</textarea></div>
+      <div class="seo-f"><label>Focus keyphrase ${p.focus_kw == null ? `<span class="hint" style="margin:0">not shared by Yoast yet: install the Studio snippet</span>` : ""}</label><input id="sp_focus_kw" value="${esc(init.focus_kw || "")}"${yDis}></div>
     </div><div>
       <div class="seo-f"><label>Google preview</label><div class="seo-snip"><div class="u">${esc(host.replace(/\/[^/]*$/, ""))} › <span id="sp_su">${esc(init.slug)}</span></div><div class="t" id="sp_st"></div><div class="d" id="sp_sd"></div></div></div>
       <div class="seo-f"><label>Excerpt</label><textarea id="sp_excerpt" rows="3">${esc(init.excerpt)}</textarea></div>
-      <div class="seo-f"><label>Categories</label><div class="seo-cats" id="sp_cats">${catBoxes || `<span class="hint">Categories could not be read.</span>`}</div></div>
+      <div class="seo-f"><label>Categories</label><div class="seo-cats" id="sp_cats">${catBoxes || (T.catsErr ? "" : `<span class="hint">Categories could not be read.</span>`)}</div>${catsNote()}</div>
       <div class="seo-f"><label>Featured image</label>${p.image ? `<img class="seo-img" src="${esc(p.image)}" alt="${esc(p.image_alt || "")}">` : `<span class="hint">None</span>`}</div>
     </div></div>
     <div class="seo-f"><label>Body (HTML) <span class="hint" style="margin:0">${p.content_base === "raw" ? "WordPress source" : "Published HTML: once WordPress is connected the editor loads the WordPress source"} · ${N(p.words)} words · ${p.links_out} internal links out, ${p.links_in} in</span></label>
       <div class="seo-grid2"><textarea id="sp_content" class="code">${esc(init.content)}</textarea><iframe id="sp_prev" class="seo-prev" sandbox="" title="Body preview"></iframe></div></div>`;
   const qrows = d.queries.slice(0, 60).map(q => `<tr><td>${esc(q.query)}</td><td class="num">${N(q.clicks)}</td><td class="num">${N(q.impressions)}</td><td class="num">${pct(q.ctr)}</td><td class="num">${q.position.toFixed(1)}</td></tr>`).join("");
   const can = d.cannibalisation.map(c => `<tr><td>${esc(c.query)}</td><td class="num">${N(c.this.impressions)} · ${c.this.position.toFixed(1)}</td><td>${c.others.slice(0, 3).map(o => `${esc(o.title || o.key)} <span class="hint">(${N(o.impressions)} impr., pos. ${o.position.toFixed(1)})</span>`).join("<br>")}</td></tr>`).join("");
-  const gsc = `<div class="seo-box"><h3>Index status</h3><div id="sp_ins">${insHTML(ins)}</div>
+  const scOff = (d.sources || {}).search_console === false;
+  const gsc = `${scOff ? scBox(d.errors, "This post's queries and competing pages need Search Console.") : ""}<div class="seo-box"><h3>Index status</h3><div id="sp_ins">${insHTML(ins)}</div>
       <p style="margin:8px 0 0"><button id="sp_inspect">${ins ? "Inspect again" : "Inspect now"}</button> <span class="hint">Uses 1 of ${N(d.quota_left)} URL Inspection calls left today.</span>
       <a href="${esc(d.inspection_link)}" target="_blank" rel="noopener">Open in Search Console</a> <span class="hint">(request indexing there: Google has no API for it)</span></p></div>
     <div class="seo-box"><h3>Queries for this post <span class="hint">${esc(d.range.start)} to ${esc(d.range.end)}</span></h3>
-      ${qrows ? `<table><thead><tr><th>Query</th><th>Clicks</th><th>Impr.</th><th>CTR</th><th>Position</th></tr></thead><tbody>${qrows}</tbody></table>` : `<p class="hint">No Search Console queries in this range.</p>`}</div>
+      ${scOff ? `<p class="hint">Unknown: Search Console could not be read.</p>` : qrows ? `<table><thead><tr><th>Query</th><th>Clicks</th><th>Impr.</th><th>CTR</th><th>Position</th></tr></thead><tbody>${qrows}</tbody></table>` : `<p class="hint">No Search Console queries in this range.</p>`}</div>
     <div class="seo-box"><h3>Competing pages (cannibalisation)</h3><p class="hint">Other pages that get impressions for this post's top queries.</p>
-      ${can ? `<table><thead><tr><th>Query</th><th>This post (impr. · pos.)</th><th>Other pages</th></tr></thead><tbody>${can}</tbody></table>` : `<p class="hint">None found.</p>`}</div>`;
+      ${scOff ? `<p class="hint">Unknown: Search Console could not be read.</p>` : can ? `<table><thead><tr><th>Query</th><th>This post (impr. · pos.)</th><th>Other pages</th></tr></thead><tbody>${can}</tbody></table>` : `<p class="hint">None found.</p>`}</div>`;
   const links = `<div class="seo-box"><h3>Linked from (${d.linked_from.length})</h3>${d.linked_from.map(x => esc(x.title)).join("<br>") || `<p class="hint">No other post links here.</p>`}</div>
     <div class="seo-box"><h3>Related posts that do not link here yet</h3>${d.related.map(x => `<div class="seo-ch" style="grid-template-columns:1fr auto"><div>${esc(x.title)} <span class="hint">shared: ${esc(x.shared.join(", "))}</span></div>
       <button data-rel="${x.id}">Suggest a link</button></div>`).join("") || `<p class="hint">No close matches.</p>`}</div>`;
-  const errs = d.errors.length ? `<p class="seo-errs">${d.errors.map(esc).join("<br>")}</p>` : "";
+  const errs = d.errors.length ? `<p class="seo-errs">${d.errors.map(esc).join("<br>")}${scOff ? " (see the Search Console tab)" : ""}</p>` : "";
   const inMap = (d.map_nodes || []).length ? `<p class="hint" style="margin:0 0 8px">In the topical map: ${d.map_nodes.map(n => `<b>${esc(n.title)}</b>${n.queries.length ? ` <span class="hint">(${esc(n.queries.slice(0, 4).join(", "))})</span>` : ""}`).join(" · ")}</p>`
     : `<p class="hint" style="margin:0 0 8px">Not in the topical map yet.</p>`;
   showDialog(p.title, `${errs}${inMap}<div class="fpills seo-dtabs" id="sp_tabs"><button data-p="edit">Edit</button><button data-p="gsc">Search Console</button><button data-p="links">Internal links</button>
       <a class="hint" style="margin:4px 0 0 8px" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a></div>
     <div data-pane="edit" data-team-coll="seo:posts" data-team-id="${esc(p.id)}" data-team-label="${esc(p.title)}">${edit}</div><div data-pane="gsc" style="display:none">${gsc}</div><div data-pane="links" style="display:none">${links}</div>`,
-    [["Close", () => dlg.close()], ["Add changes to draft", () => savePost(p, init), "primary"]]);
+    []);
+  // [C1] Close (or Esc) with edits asks first, in the dialog itself: nothing typed is lost without a choice
+  const foot = ask => {
+    const f = $("#dlgF"); f.innerHTML = "";
+    const btns = ask ? [["Discard changes", () => dlg.close(), "danger"], ["Keep editing", () => foot(false)], ["Add to draft", () => savePost(p, init), "primary"]]
+                     : [["Close", () => postChanges(p, init).length ? foot(true) : dlg.close()], ["Add changes to draft", () => savePost(p, init), "primary"]];
+    if (ask) f.insertAdjacentHTML("beforeend", `<span class="seo-ask">Add your changes to the draft?</span>`);
+    for (const [label, fn, cls] of btns){ const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; f.appendChild(b) }
+    if (ask) f.querySelector("button.primary").focus();
+  };
+  foot(false);
+  const onCancel = e => { if ($("#sp_title") && postChanges(p, init).length){ e.preventDefault(); foot(true) } };
+  dlg.addEventListener("cancel", onCancel);
+  dlg.addEventListener("close", () => dlg.removeEventListener("cancel", onCancel), {once: true});
   const pane = k => { document.querySelectorAll("#sp_tabs [data-p]").forEach(b => b.classList.toggle("on", b.dataset.p === k)); document.querySelectorAll("#dlgB [data-pane]").forEach(x => x.style.display = x.dataset.pane === k ? "" : "none") };
   $("#sp_tabs").onclick = e => { const b = e.target.closest("[data-p]"); if (b) pane(b.dataset.p) }; pane(startPane || "edit");
   const upd = () => {
-    const t = $("#sp_seo_title").value, m = $("#sp_meta_desc").value;
-    $("#sp_tn").textContent = `${t.length} / 30-60`; $("#sp_tn").classList.toggle("over", t.length < 30 || t.length > 60);
-    $("#sp_mn").textContent = `${m.length} / 70-160`; $("#sp_mn").classList.toggle("over", m.length < 70 || m.length > 160);
+    const vars = {...(d.yoast_vars || {}), title: $("#sp_title").value};
+    const t = expandVars($("#sp_seo_title").value, vars), m = expandVars($("#sp_meta_desc").value, vars);
+    lenCount($("#sp_tn"), t, TITLE_LEN); lenCount($("#sp_mn"), m, META_LEN);
     $("#sp_st").textContent = t.length > 60 ? t.slice(0, 58) + " ..." : (t || $("#sp_title").value);
     $("#sp_sd").textContent = m ? (m.length > 160 ? m.slice(0, 157) + " ..." : m) : "No meta description: Google picks text from the page.";
     $("#sp_su").textContent = $("#sp_slug").value;
@@ -319,18 +366,23 @@ async function openPost(id, startPane){
   document.querySelectorAll("#dlgB [data-rel]").forEach(b => b.onclick = async () => {
     try { await P("add", {changes: [{post_id: +b.dataset.rel, field: "content", kind: "todo", note: `Add an internal link to "${p.title}" (${p.url}).`}]}); b.disabled = true; b.textContent = "In draft"; loadDraft() } catch(e) { toast(e.message) } });
 }
+function lenCount(el, text, [lo, hi]){ const n = text.length; el.textContent = `${n} / ${lo}-${hi}`; el.classList.toggle("over", !!n && (n < lo || n > hi)) }
 function insHTML(r){
   if (!r) return `<span class="hint">Not checked yet.</span>`;
   return `<div class="seo-kv"><b>Verdict</b><span><span class="seo-dot ${r.verdict === "PASS" ? "ok" : "bad"}"></span>${esc(r.coverage || r.verdict || "")}</span>
     <b>Last crawl</b><span>${esc((r.last_crawl || "").replace("T", " ").replace("Z", ""))}</span><b>Google canonical</b><span>${esc(r.google_canonical || "")}</span>
     <b>Robots / fetch</b><span>${esc(r.robots || "")} · ${esc(r.fetch || "")}</span><b>Checked</b><span>${esc(when(r.at))}</span></div>`;
 }
-async function savePost(p, init){
+function postChanges(p, init){
+  if (!$("#sp_title")) return [];
   const now = {title: $("#sp_title").value, slug: $("#sp_slug").value.trim(), seo_title: $("#sp_seo_title").value, meta_desc: $("#sp_meta_desc").value,
                focus_kw: $("#sp_focus_kw").value, excerpt: $("#sp_excerpt").value, content: $("#sp_content").value,
                categories: [...document.querySelectorAll("#sp_cats input:checked")].map(i => +i.value).sort((a, b) => a - b)};
   if (!document.querySelector("#sp_cats input")) delete now.categories;
-  const changes = Object.entries(now).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(k === "categories" ? init.categories : (init[k] ?? ""))).map(([k, v]) => ({post_id: p.id, field: k, new: v}));
+  return Object.entries(now).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(k === "categories" ? init.categories : (init[k] ?? ""))).map(([k, v]) => ({post_id: p.id, field: k, new: v}));
+}
+async function savePost(p, init){
+  const changes = postChanges(p, init);
   if (!changes.length){ toast("No changes"); return }
   try {
     const r = await P("add", {changes}); T.draft = r.draft; tabs();
@@ -343,7 +395,7 @@ async function savePost(p, init){
 // ---- new page editor (a page for a topical-map node; Claude writes it with seo_write_page, you edit it here) ----
 async function openNewPage(o){
   // o: {id} for one in the draft, or {node} to start one from a map node
-  if (!T.cats){ try { T.cats = await A("categories") } catch(e) { T.cats = [] } }
+  await loadCats();
   let np = null;
   if (o.id){ try { T.draft = await A("draft") } catch(e) {} np = ((T.draft || {}).new_posts || []).find(x => x.id === o.id); if (!np) return toast("That new page is no longer in the draft") }
   const n = o.node || {};
@@ -351,18 +403,20 @@ async function openNewPage(o){
   wide(true);
   const cats = (T.cats || []).map(c => `<label><input type="checkbox" value="${c.id}" ${(v.categories || []).includes(c.id) ? "checked" : ""}>${esc(c.name)}</label>`).join("");
   const qs_ = (n.queries || []).map(q => q.query || q);
+  const noYoast = (T.settings || {}).snippet_installed === false;  // [C5] Yoast fields would not be saved on the new page
+  const yDis = noYoast ? ` disabled title="Install the Studio snippet (Settings) to fill Yoast's fields"` : "", yHint = noYoast ? ` <span class="hint" style="margin:0">needs the Studio snippet</span>` : "";
   showDialog(np ? "New page" : "Write a new page", `<div id="np_wrap" data-team-coll="seo:new_posts" data-team-id="${np ? esc(np.id) : ""}" data-team-label="${esc(v.title)}"><p class="hint" style="margin:0 0 8px">${v.node_id ? `For the map node <b>${esc(np ? np.node_title : n.title)}</b>. ` : ""}Saved to the SEO draft as you type. Nothing goes to WordPress until you press Publish.${np ? ` Written by ${esc(np.by)}.` : ""}${np && np.note ? `<br>Note: ${esc(np.note)}` : ""}</p>
     ${qs_.length ? `<p class="hint" style="margin:0 0 8px">Target queries: ${esc(qs_.join(", "))}</p>` : ""}
     <div class="seo-grid2"><div>
       <div class="seo-f"><label>Title</label><input id="np_title" value="${esc(v.title)}"></div>
       <div class="seo-f"><label>Slug <span class="hint" style="margin:0">masterliveaboards.com/<b>slug</b>/ (empty = from the title)</span></label><input id="np_slug" value="${esc(v.slug)}"></div>
-      <div class="seo-f"><label>SEO title <span class="cnt" id="np_tn"></span></label><input id="np_seo_title" value="${esc(v.seo_title)}"></div>
-      <div class="seo-f"><label>Meta description <span class="cnt" id="np_mn"></span></label><textarea id="np_meta_desc" rows="3">${esc(v.meta_desc)}</textarea></div>
-      <div class="seo-f"><label>Focus keyphrase</label><input id="np_focus_kw" value="${esc(v.focus_kw)}"></div>
+      <div class="seo-f"><label>SEO title${yHint} <span class="cnt" id="np_tn"></span></label><input id="np_seo_title" value="${esc(v.seo_title)}"${yDis}></div>
+      <div class="seo-f"><label>Meta description${yHint} <span class="cnt" id="np_mn"></span></label><textarea id="np_meta_desc" rows="3"${yDis}>${esc(v.meta_desc)}</textarea></div>
+      <div class="seo-f"><label>Focus keyphrase${yHint}</label><input id="np_focus_kw" value="${esc(v.focus_kw)}"${yDis}></div>
     </div><div>
       <div class="seo-f"><label>Google preview</label><div class="seo-snip"><div class="u">masterliveaboards.com › <span id="np_su"></span></div><div class="t" id="np_st"></div><div class="d" id="np_sd"></div></div></div>
       <div class="seo-f"><label>Excerpt</label><textarea id="np_excerpt" rows="2">${esc(v.excerpt)}</textarea></div>
-      <div class="seo-f"><label>Categories</label><div class="seo-cats" id="np_cats">${cats || `<span class="hint">Categories could not be read.</span>`}</div></div>
+      <div class="seo-f"><label>Categories</label><div class="seo-cats" id="np_cats">${cats || (T.catsErr ? "" : `<span class="hint">Categories could not be read.</span>`)}</div>${catsNote()}</div>
       <div class="seo-f"><label>On Publish</label><select id="np_status"><option value="publish" ${v.status !== "draft" ? "selected" : ""}>Publish it live</option><option value="draft" ${v.status === "draft" ? "selected" : ""}>Save as a WordPress draft</option></select></div>
     </div></div>
     <div class="seo-f"><label>Body (HTML) <span class="hint" style="margin:0" id="np_wc"></span></label>
@@ -386,9 +440,9 @@ async function openNewPage(o){
     catch(e) { $("#np_saved").textContent = e.message }
   }
   const upd = () => {
-    const t = $("#np_seo_title").value, m = $("#np_meta_desc").value;
-    $("#np_tn").textContent = `${t.length} / 30-60`; $("#np_tn").classList.toggle("over", t.length < 30 || t.length > 60);
-    $("#np_mn").textContent = `${m.length} / 70-160`; $("#np_mn").classList.toggle("over", m.length < 70 || m.length > 160);
+    const vars = {...((T.settings || {}).yoast_vars || {}), title: $("#np_title").value};
+    const t = expandVars($("#np_seo_title").value, vars), m = expandVars($("#np_meta_desc").value, vars);
+    lenCount($("#np_tn"), t, TITLE_LEN); lenCount($("#np_mn"), m, META_LEN);
     $("#np_st").textContent = t ? (t.length > 60 ? t.slice(0, 58) + " ..." : t) : $("#np_title").value;
     $("#np_sd").textContent = m || "No meta description: Google picks text from the page.";
     $("#np_su").textContent = $("#np_slug").value || slugOf($("#np_title").value);
@@ -412,17 +466,20 @@ function drawOpps(){
   const o = T.opp, box = $("#seoOpp"); if (!o || !box) return;
   const tbl = (head, rows) => rows ? `<div class="grid-wrap" style="max-height:420px;border:1px solid var(--line);border-radius:6px"><table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="hint">Nothing found.</p>`;
   const nm = r => r.title ? esc(r.title) : `<span class="hint">${esc(r.key)}</span>`;
-  box.innerHTML = `${o.errors.length ? `<p class="seo-errs">${o.errors.map(esc).join("<br>")}</p>` : ""}
+  const src = o.sources || {}, scOff = src.search_console === false, prevOff = scOff || src.previous_period === false;
+  const other = scOff ? errLines(o.errors) : o.errors;
+  box.innerHTML = `${scOff ? scBox(o.errors, "Few clicks and Losing clicks need Search Console, so they are hidden until it can be read. The WordPress checks below still work.") : ""}${other.length ? `<p class="seo-errs">${other.map(esc).join("<br>")}</p>` : ""}
     <p class="hint">${esc(o.range.start)} to ${esc(o.range.end)}, compared with ${esc(o.range.prev_start)} to ${esc(o.range.prev_end)}. Suggestions go into the SEO draft as notes for you to write; nothing goes to WordPress.</p>
-    <div class="seo-sec"><h2>Many impressions, few clicks (position 3-10)</h2><p class="hint">CTR under 60% of what that position usually gets. Missed = impressions x (usual CTR - CTR).</p>
-    ${tbl(["Query", "Page", "Impr.", "Clicks", "CTR", "Position", "Missed", ""], o.low_ctr.map(r => `<tr><td>${esc(r.query)}</td><td>${nm(r)}</td><td class="num">${N(r.impressions)}</td><td class="num">${N(r.clicks)}</td><td class="num">${pct(r.ctr)}</td><td class="num">${r.position.toFixed(1)}</td><td class="num">${N(r.missed)}</td><td>${sugBtn(r.suggest)}</td></tr>`).join(""))}</div>
-    <div class="seo-sec"><h2>Losing clicks</h2><p class="hint">At least 10 clicks before, and down 30% or more.</p>
-    ${tbl(["Page", "Clicks", "Before", "Change", "Position", "Before", ""], o.losing.map(r => `<tr><td>${nm(r)}</td><td class="num">${N(r.clicks)}</td><td class="num">${N(r.prev_clicks)}</td><td class="num seo-down">${N(r.delta)}</td><td class="num">${r.position == null ? "" : r.position.toFixed(1)}</td><td class="num">${r.prev_position == null ? "" : r.prev_position.toFixed(1)}</td><td>${sugBtn(r.suggest)}</td></tr>`).join(""))}</div>
+    ${scOff ? "" : `<div class="seo-sec"><h2>Many impressions, few clicks (position 3-10)</h2><p class="hint">CTR under 60% of what that position usually gets. Missed = impressions x (usual CTR - CTR).</p>
+    ${tbl(["Query", "Page", "Impr.", "Clicks", "CTR", "Position", "Missed", ""], o.low_ctr.map(r => `<tr><td>${esc(r.query)}</td><td>${nm(r)}</td><td class="num">${N(r.impressions)}</td><td class="num">${N(r.clicks)}</td><td class="num">${pct(r.ctr)}</td><td class="num">${r.position.toFixed(1)}</td><td class="num">${N(r.missed)}</td><td>${sugBtn(r.suggest)}</td></tr>`).join(""))}</div>`}
+    ${prevOff ? "" : `<div class="seo-sec"><h2>Losing clicks</h2><p class="hint">At least 10 clicks before, and down 30% or more.</p>
+    ${tbl(["Page", "Clicks", "Before", "Change", "Position", "Before", ""], o.losing.map(r => `<tr><td>${nm(r)}</td><td class="num">${N(r.clicks)}</td><td class="num">${N(r.prev_clicks)}</td><td class="num seo-down">${N(r.delta)}</td><td class="num">${r.position == null ? "" : r.position.toFixed(1)}</td><td class="num">${r.prev_position == null ? "" : r.prev_position.toFixed(1)}</td><td>${sugBtn(r.suggest)}</td></tr>`).join(""))}</div>`}
     <div class="seo-sec"><h2>Not indexed</h2><p class="hint">From URL Inspection results Studio has cached. ${o.not_inspected} published posts not checked yet.
       <button id="seoInspAll">Check index status for unchecked posts</button></p>
     ${tbl(["Post", "Coverage", "Last crawl", ""], o.not_indexed.map(r => `<tr><td>${esc(r.title)}</td><td>${esc(r.coverage || "")}</td><td>${esc(day(r.last_crawl))}</td><td><a href="${esc(r.link)}" target="_blank" rel="noopener">Open in Search Console</a></td></tr>`).join(""))}</div>
     <div class="seo-sec"><h2>No meta description</h2>
-    ${tbl(["Post", "Impr.", ""], o.no_meta.map(r => `<tr><td>${esc(r.title)}</td><td class="num">${N(r.impressions)}</td><td>${sugBtn(r.suggest)}</td></tr>`).join(""))}</div>
+    ${scOff ? tbl(["Post", ""], o.no_meta.map(r => `<tr><td>${esc(r.title)}</td><td>${sugBtn(r.suggest)}</td></tr>`).join(""))
+      : tbl(["Post", "Impr.", ""], o.no_meta.map(r => `<tr><td>${esc(r.title)}</td><td class="num">${N(r.impressions)}</td><td>${sugBtn(r.suggest)}</td></tr>`).join(""))}</div>
     <div class="seo-sec"><h2>No internal links in</h2><p class="hint">Posts no other post links to, with related posts that could link to them.</p>
     ${tbl(["Post", "Could be linked from", ""], o.few_links.map(r => `<tr><td>${esc(r.title)}</td><td class="wrap">${r.from.map(x => `${esc(x.title)} <span class="hint">(${esc(x.shared.join(", "))})</span>`).join("<br>") || `<span class="hint">No close match</span>`}</td><td>${r.suggest.length ? `<button data-sugs='${esc(JSON.stringify(r.suggest))}'>Add link suggestions</button>` : ""}</td></tr>`).join(""))}</div>`;
   box.querySelectorAll("[data-sug],[data-sugs]").forEach(b => b.onclick = async () => {

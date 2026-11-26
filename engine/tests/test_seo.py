@@ -35,7 +35,7 @@ EM = chr(0x2014)
 def _raw(pid, slug, title, body, cats=(1,), desc="A fine description of this post that is long enough to pass the check."):
     return {"id": pid, "slug": slug, "status": "publish", "link": f"https://masterliveaboards.com/{slug}/", "date": "2026-01-01T10:00:00",
             "modified": "2026-02-01T10:00:00", "title": {"rendered": title}, "content": {"rendered": body}, "excerpt": {"rendered": f"<p>{title}</p>"},
-            "categories": list(cats), "meta": {"footnotes": ""}, "yoast_head_json": {"title": f"{title} - Master Liveaboards", "description": desc,
+            "categories": list(cats), "meta": {"footnotes": "", "_yoast_wpseo_focuskw": ""}, "yoast_head_json": {"title": f"{title} - Master Liveaboards", "description": desc,
                                                                                     "robots": {"index": "index"}}, "_embedded": {}}
 
 
@@ -69,7 +69,8 @@ class Checks(unittest.TestCase):
         self.assertEqual(self.iss("seo_title", "Liveaboard diving in Egypt: Red Sea trips 2027"), [])
         self.assertEqual(self.levels(self.iss("meta_desc", "Too short.")), ["warn"])
         self.assertEqual(self.levels(self.iss("meta_desc", "x" * 161)), ["warn"])
-        self.assertEqual(self.iss("meta_desc", "Plan a Red Sea liveaboard: routes, seasons, water temperatures in °C and what each trip covers."), [])
+        self.assertEqual(self.levels(self.iss("meta_desc", "x" * 157)), ["warn"])  # Yoast's band is 120-156
+        self.assertEqual(self.iss("meta_desc", "Plan a Red Sea liveaboard: routes, seasons, water temperatures in °C and what each trip covers, from Hurghada and Port Ghalib."), [])
 
     def test_em_dash_and_copy_rules(self):
         self.assertIn("error", self.levels(self.iss("title", f"Red Sea {EM} North")))
@@ -97,6 +98,115 @@ class Checks(unittest.TestCase):
 
     def test_todo(self):
         self.assertEqual(chk.check_change({"field": "meta_desc", "kind": "todo"})[0]["level"], "info")
+
+
+class SeoRules(unittest.TestCase):  # C5, C6
+    def iss(self, field, new, ctx=None, old=None):
+        return chk.check_change({"field": field, "new": new, "old": old, "kind": "edit"}, link_check=lambda u: 200, ctx=ctx)
+
+    def test_yoast_fields_need_the_snippet(self):
+        no = {"snippet": False}
+        self.assertEqual([i["level"] for i in self.iss("meta_desc", "x" * 130, no)], ["error"])
+        self.assertIn("snippet", self.iss("seo_title", "Liveaboard diving in Egypt: Red Sea trips 2027", no)[0]["msg"])
+        self.assertEqual(self.iss("title", "A title", no), [])  # WordPress fields are fine
+        self.assertEqual(self.iss("meta_desc", "x" * 130, {"snippet": None}), [])  # unknown: not blocked
+        self.assertEqual([i["level"] for i in self.iss("meta_desc", "x" * 130, {"snippet": False, "new": True})], ["warn"])
+        POSTS_NO = [dict(p, focus_kw=None) for p in POSTS]
+        old = wp.posts
+        wp.posts = lambda force=False: {"at": 0, "authed": False, "posts": POSTS_NO}
+        try:
+            reset()
+            r = seo.add_draft({"post_id": 1, "field": "seo_title", "new": "Sea turtle facts for divers: six things to know"}, by="you")
+            self.assertIn("error", [i["level"] for i in r["issues"]])
+            self.assertTrue(seo.publish_preview(link_check=lambda u: 200)["blocked"])
+            self.assertIs(seo.get_settings()["snippet_installed"], False)
+        finally:
+            wp.posts = old
+            reset()
+
+    def test_yoast_variables_are_filled_before_measuring(self):
+        post = {"title": "Six facts about sea turtles"}
+        self.assertEqual(chk.expand_vars("%%title%% %%sep%% %%sitename%%", post)[0], "Six facts about sea turtles - Master Liveaboards")
+        self.assertEqual(self.iss("seo_title", "%%title%% %%sep%% %%sitename%%", {"post": post}), [])  # 48 characters once filled
+        out = self.iss("seo_title", "%%title%% %%sep%% %%sitename%%", {"post": {"title": "Turtles"}})
+        self.assertIn("with its Yoast variables filled in", out[0]["msg"])
+        self.assertIn("%%nonsense%%", " ".join(i["msg"] for i in self.iss("seo_title", "Liveaboard diving in Egypt: Red Sea trips %%nonsense%%")))
+
+    def test_focus_keyphrase(self):
+        post = {"title": "Six facts about sea turtles", "seo_title": "Six facts about sea turtles", "slug": "sea-turtles-facts",
+                "meta_desc": "Everything a diver should know about turtles before a Maldives trip.", "content": "<p>Sea turtles are old.</p>"}
+        others = [{"id": 1, "title": "Six facts", "focus_kw": "sea turtles"}, {"id": 4, "title": "Sea turtles nesting season", "focus_kw": "turtle nesting"}]
+        out = self.iss("focus_kw", "sea turtles", {"post": post, "others": others, "self_id": 1})
+        self.assertEqual(len(out), 1)
+        self.assertIn("not in the meta description", out[0]["msg"])
+        out = self.iss("focus_kw", "turtle nesting", {"post": post, "others": others, "self_id": 1})
+        self.assertTrue(any("already the focus keyphrase" in i["msg"] for i in out))
+        self.assertTrue(any("4 or fewer" in i["msg"] for i in self.iss("focus_kw", "best red sea liveaboard diving trips", {"post": post})))
+        self.assertIn("focus keyphrase", self.iss("seo_title", "Liveaboard diving in Egypt: Red Sea trips 2027", {"post": {"focus_kw": "mantas"}})[0]["msg"])
+
+    def test_noindex_and_foreign_canonical(self):
+        post = {"url": "https://masterliveaboards.com/sea-turtles-facts/", "noindex": True, "canonical": "https://masterliveaboards.com/turtles/"}
+        msgs = " ".join(i["msg"] for i in self.iss("title", "Six facts about sea turtles", {"post": post}))
+        self.assertIn("noindex", msgs)
+        self.assertIn("canonical URL points to another page", msgs)
+        same = {**post, "noindex": False, "canonical": "https://www.masterliveaboards.com/sea-turtles-facts"}
+        self.assertEqual(self.iss("title", "Six facts about sea turtles", {"post": same}), [])
+
+    def test_bad_slug_gets_no_redirect_hint(self):
+        out = self.iss("slug", "Bad Slug", old="old-slug")
+        self.assertEqual([i["level"] for i in out], ["error"])
+
+
+class Sources(unittest.TestCase):  # C3, C4, C7: a source that can't be read is "unknown", not 0
+    def setUp(self):
+        from areas import _seo_google as g  # noqa: PLC0415
+        self.g, self.old = g, (g.gsc_pages, g.gsc_query_page, g.ga4_landing)
+
+        def down(*a, **k):
+            raise RuntimeError("Google answered 401: token expired")
+        g.gsc_pages = g.gsc_query_page = down
+        g.ga4_landing = lambda *a, **k: {"/sea-turtles-facts": {"sessions": 7, "select_cabin": 1}}
+
+    def tearDown(self):
+        self.g.gsc_pages, self.g.gsc_query_page, self.g.ga4_landing = self.old
+
+    def test_posts_without_search_console(self):
+        r = seo.get_posts({"range": "28"})
+        row = next(x for x in r["rows"] if x["id"] == 1)
+        self.assertIsNone(row["clicks"])
+        self.assertIsNone(row["impressions"])
+        self.assertIsNone(row["delta_clicks"])
+        self.assertIsNone(row["losing"])
+        self.assertEqual(row["sessions"], 7)
+        self.assertEqual(r["sources"], {"search_console": False, "previous_period": False, "ga4": True})
+        self.assertEqual(len(r["errors"]), 1)  # one Search Console failure, said once
+
+    def test_opportunities_say_the_error_once(self):
+        o = seo.get_opportunities({"range": "28"})
+        self.assertEqual(o["errors"], ["Search Console queries: Google answered 401: token expired"])
+        self.assertFalse(o["sources"]["search_console"])
+        self.assertEqual((o["low_ctr"], o["losing"]), ([], []))
+        self.assertEqual([r["post_id"] for r in o["no_meta"]], [3])  # the WordPress checks still run
+
+    def test_categories_stale_on_error(self):
+        old_http, old_cat = c.http, wp.categories
+
+        def down():
+            raise RuntimeError("Categories: WordPress answered 503")
+        try:
+            c.clear_cache("categories")
+            c.http = lambda url, **kw: (200, {}, [{"id": 1, "name": "Red Sea"}])
+            self.assertEqual(seo.get_categories(), {"categories": [{"id": 1, "name": "Red Sea"}], "error": None, "stale": False})
+            wp.categories = down  # WordPress stops answering: the list read earlier, with the error, and no 400
+            r = seo.get_categories()
+            self.assertEqual(r["categories"], [{"id": 1, "name": "Red Sea"}])
+            self.assertTrue(r["stale"])
+            self.assertIn("503", r["error"])
+            c.clear_cache("categories")
+            self.assertEqual(seo.get_categories(), {"categories": [], "error": "Categories: WordPress answered 503", "stale": False})
+        finally:
+            c.http, wp.categories = old_http, old_cat
+            c.clear_cache("categories")
 
 
 class LinkGraph(unittest.TestCase):

@@ -5,6 +5,7 @@ Writing: WpRestWriter (Application Password of the "Marketing Studio" Editor use
 """
 import base64
 import html
+import json
 import re
 import time
 import uuid
@@ -175,6 +176,38 @@ def categories():
             raise RuntimeError(f"Categories: WordPress answered {st}")
         return body
     return c.cached("categories", 6 * 3600, load)
+
+
+def page_keys(force=False):
+    """URL keys of the site's published WordPress pages (not posts): a topical-map node pointing at one is live.
+    Public REST, cached with the posts (Refresh WordPress clears both)."""
+    def load():
+        out, page, pages = [], 1, 1
+        while page <= pages and page <= 20:
+            st, hdrs, body = c.http(f"{c.SITES['prod']}/wp-json/wp/v2/pages?per_page=100&page={page}&_fields=link", timeout=60)
+            if st != 200 or not isinstance(body, list):
+                raise RuntimeError(f"WordPress REST answered {st} for pages")
+            out += [c.url_key(p.get("link", "")) for p in body if isinstance(p, dict)]
+            pages = int({k.lower(): v for k, v in hdrs.items()}.get("x-wp-totalpages", 1) or 1)
+            page += 1
+        return sorted(k for k in set(out) if k)
+    return c.cached("posts_pages", POSTS_TTL, load, force=force)
+
+
+def categories_safe():
+    """{categories, error, stale}: never raises. When WordPress does not answer, the last list read (any age) with the
+    error, so the editor keeps its category boxes; with nothing cached, an empty list and the error."""
+    try:
+        return {"categories": categories(), "error": None, "stale": False}
+    except Exception as ex:  # noqa: BLE001 - WordPress down, a 5xx, a timeout
+        err = c.scrub(ex)
+    try:
+        old = json.loads((c.cache_dir() / f"{c._safe('categories')}.json").read_text())
+        if isinstance(old, list):
+            return {"categories": old, "error": f"{err} (showing the categories read earlier)", "stale": True}
+    except (OSError, ValueError):
+        pass
+    return {"categories": [], "error": err, "stale": False}
 
 
 def related(target, all_posts, n=3):

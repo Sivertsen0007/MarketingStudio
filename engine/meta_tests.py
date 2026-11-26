@@ -305,8 +305,12 @@ def results(study_id, refresh=False):
     return {**data, **verdict(data)}
 
 
-def _money(v):
-    return "none" if v is None else f"{v:,.2f}"
+def _money(v, d=None):
+    """Account-currency amount as text: 2 decimals, none for offset-1 currencies (JPY, KRW, ...)."""
+    if v is None:
+        return "none"
+    d = d if d is not None else {"account": meta.cached_account()}
+    return f"{v:,.0f}" if meta._cur_factor(d) == 1 else f"{v:,.2f}"
 
 
 def verdict(data):
@@ -500,8 +504,8 @@ def check(c, d, items):
         has_b, has_p = c.get("daily_budget") is not None, c.get("budget_percent") is not None
         if has_b == has_p:
             problems.append("give either daily_budget (test budget per day) or budget_percent (share of the ad set budget)")
-        elif has_b and float(c["daily_budget"]) < 1:
-            problems.append("the test budget must be at least 1.00 a day")
+        elif has_b and float(c["daily_budget"]) < meta._min_budget(d):
+            problems.append(f"the test budget must be at least {meta._amount(meta._min_budget(d), d)} a day (the ad account's minimum)")
         elif has_p and not 1 <= float(c["budget_percent"]) <= 100:
             problems.append("budget_percent must be 1-100")
     return problems, warnings
@@ -553,7 +557,7 @@ def summarise(c, d, items):
     when = f'{c.get("start_date") or "today"} to {c.get("end_date")}'
     if t == "meta_test_creative":
         names = [_label("ad", a, d, items) for a in c.get("ads") or []]
-        b = f'test budget {float(c["daily_budget"]):.2f}/day' if c.get("daily_budget") is not None else f'{c.get("budget_percent")}% of the budget'
+        b = f'test budget {meta._amount(c["daily_budget"], d)}/day' if c.get("daily_budget") is not None else f'{c.get("budget_percent")}% of the budget'
         return f'Meta new creative test "{c.get("name")}": {len(names)} ads ({", ".join(names)}), {b}, {when}'
     lvl = c.get("level", "adset")
     cells = [f'{x.get("name") or "cell " + str(i + 1)} {x.get("percent")}% ({", ".join(_label(lvl, o, d, items) for o in x.get("ids") or [])})'
@@ -664,10 +668,11 @@ def ops_for(c, items):
     else:
         n = len(c["ads"])
         cells = [{"name": f"Ad {i + 1}", "treatment_percentage": p, "ads": [a]} for i, (a, p) in enumerate(zip(c["ads"], split_percent(n)))]
-        cfg = ({"daily_budget": int(round(float(c["daily_budget"]) * 100))} if c.get("daily_budget") is not None
+        d = meta.load()
+        cfg = ({"daily_budget": meta._minor(c["daily_budget"], d)} if c.get("daily_budget") is not None
                else {"lifetime_budget_percentage": float(c["budget_percent"])})
         params = {"name": c["name"], "type": "SPLIT_TEST_V2", "cells": cells, "creative_test_config": cfg}
-        b = f'test budget {float(c["daily_budget"]):.2f}/day' if c.get("daily_budget") is not None else f'{c["budget_percent"]}% of the budget'
+        b = f'test budget {meta._amount(c["daily_budget"], d)}/day' if c.get("daily_budget") is not None else f'{c["budget_percent"]}% of the budget'
         line = f'new creative test "{c["name"]}" ({n} ads, one per cell; {b}; {c.get("start_date") or "today"} to {c["end_date"]})'
     if c.get("description"):
         params["description"] = str(c["description"])[:500]
@@ -676,7 +681,7 @@ def ops_for(c, items):
              "only ended")
     return [{"kind": "study", "phase": "study", "params": params, "test": {k: c.get(k) for k in ("start_date", "end_date")},
              "study_kind": "creative" if t == "meta_test_creative" else "split", "permanent": True, "line": line,
-             "spend": f'test budget {float(c["daily_budget"]):.2f}/day' if c.get("daily_budget") is not None else ""}]
+             "spend": f'test budget {meta._amount(c["daily_budget"], meta.load())}/day' if c.get("daily_budget") is not None else ""}]
 
 
 def _cell_ids(params):

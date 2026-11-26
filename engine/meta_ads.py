@@ -29,7 +29,22 @@ API = meta_api.API
 KEY = "meta"
 CACHE_MAX_AGE = 15 * 60
 STATUS = {"active": "ACTIVE", "paused": "PAUSED"}
-CTAS = ["LEARN_MORE", "BOOK_TRAVEL", "SHOP_NOW", "SIGN_UP", "CONTACT_US", "GET_OFFER", "SEE_MORE", "DOWNLOAD", "APPLY_NOW", "SUBSCRIBE"]
+# Call to action buttons for website link ads (Meta's call_to_action type enum, the ones that take a website link).
+# Served to the UI with state()["meta_config"]["ctas"] (value + label), so the dialog and the engine use one list.
+CTA_LABELS = {"LEARN_MORE": "Learn more", "BOOK_NOW": "Book now", "BOOK_TRAVEL": "Book travel", "SHOP_NOW": "Shop now",
+              "ORDER_NOW": "Order now", "BUY_NOW": "Buy now", "BUY_TICKETS": "Buy tickets", "GET_OFFER": "Get offer",
+              "GET_QUOTE": "Get quote", "GET_PROMOTIONS": "Get promotions", "SEE_DETAILS": "See details", "SEE_MORE": "See more",
+              "SEE_MENU": "See menu", "SIGN_UP": "Sign up", "SUBSCRIBE": "Subscribe", "APPLY_NOW": "Apply now",
+              "CONTACT_US": "Contact us", "INQUIRE_NOW": "Enquire now", "REQUEST_TIME": "Request time", "DOWNLOAD": "Download",
+              "WATCH_MORE": "Watch more", "LISTEN_NOW": "Listen now", "DONATE_NOW": "Donate now", "GET_DIRECTIONS": "Get directions",
+              "NO_BUTTON": "No button"}
+CTAS = list(CTA_LABELS)
+AGE_LO, AGE_HI = 18, 65
+ADV_AGE_MIN_MAX = 25  # Advantage+ audience: the age_min control can be at most 25 and the age_max control must be 65
+NAME_WARN = 255  # names longer than this: a warning (Meta's exact limit is not confirmed by a validate_only check yet)
+# Copy lengths Meta shows before it cuts the text ("... See more"). Warnings, never blocks.
+COPY_LIMITS = {"primary_text": 125, "headline": 40, "description": 30, "card name": 40, "card description": 20,
+               "bodies": 125, "titles": 40, "descriptions": 30}
 _cache_lock = threading.Lock()
 
 
@@ -171,7 +186,7 @@ def _cache_file():
 
 def refresh():
     """Pull the whole account (5-8 paged calls) and cache it."""
-    data = {"account": get(act(), fields="name,currency,timezone_name,account_status"),
+    data = {"account": get(act(), fields="name,currency,timezone_name,account_status,min_daily_budget"),
             "campaigns": get_all(f"{act()}/campaigns", fields=F_CAMP, effective_status=LIVE_CAMP),
             "adsets": get_all(f"{act()}/adsets", fields=F_ADSET, effective_status=LIVE_ADSET),
             "ads": get_all(f"{act()}/ads", fields=F_AD, effective_status=LIVE_AD, limit=100),  # 500 with full creatives (carousels) is refused as too much data
@@ -246,6 +261,15 @@ def _cached_copy(max_age):
     return d, max_age is None or datapolicy.fresh(_src(), age, max_age, _filled(d))
 
 
+def cached_account():
+    """The ad account (currency, min_daily_budget, ...) from the cache file, without any network call; {} when unknown."""
+    try:
+        d, _ok = _cached_copy(None)
+    except Exception:  # noqa: BLE001 - only used for formatting
+        d = None
+    return (d or {}).get("account") or {}
+
+
 def load(max_age=CACHE_MAX_AGE, wait=False):
     """Cached account data. datapolicy decides when it is stale: in manual mode (the default) never, until the user
     refreshes. In auto mode a stale cache is served at once and refreshed in the background (a full pull takes ~20s).
@@ -270,13 +294,47 @@ def refreshing():
     return act() in _bg
 
 
+# Meta keeps money in the currency's smallest unit. These currencies have no minor unit on Meta (offset 1): an amount
+# of 500 JPY is sent as 500, not 50000. Every other currency has offset 100.
+OFFSET_1 = ("CLP", "COP", "CRC", "HUF", "ISK", "IDR", "JPY", "KRW", "PYG", "TWD", "VND")
+MIN_BUDGET_FALLBACK = 1.0  # when the account's min_daily_budget is not known (older cache)
+
+
+def _currency(d):
+    return str(((d or {}).get("account") or {}).get("currency") or "").upper()
+
+
 def _cur_factor(d):
-    # budgets are in the currency's minor unit; every currency we use has 2 decimals
-    return 100
+    """Minor units per unit of the ad account's currency (100, or 1 for offset-1 currencies such as JPY and KRW)."""
+    return 1 if _currency(d) in OFFSET_1 else 100
+
+
+def _minor(v, d):
+    """An amount in the account currency (40.5) -> what Meta takes (4050, or 41 in JPY)."""
+    return int(round(float(v) * _cur_factor(d)))
+
+
+def _min_budget(d):
+    """The smallest daily budget the ad account takes, in its currency (Meta's min_daily_budget), else 1.00."""
+    m = ((d or {}).get("account") or {}).get("min_daily_budget")
+    try:
+        return round(int(m) / _cur_factor(d), 2) if m not in (None, "", "0", 0) else MIN_BUDGET_FALLBACK
+    except (TypeError, ValueError):
+        return MIN_BUDGET_FALLBACK
+
+
+def _amount(v, d):
+    """Account-currency amount as text: 2 decimals, none for offset-1 currencies."""
+    return f"{float(v):.0f}" if _cur_factor(d) == 1 else f"{float(v):.2f}"
+
+
+def _has_budget(v):
+    """Meta answers an unset budget with "0" (a string): that is no budget."""
+    return v not in (None, "", "0", 0)
 
 
 def _money(v, d):
-    return round(int(v) / _cur_factor(d), 2) if v not in (None, "", "0") else None
+    return round(int(v) / _cur_factor(d), 2) if _has_budget(v) else None
 
 
 EXTRA = ("select_cabin", "cost_per_select_cabin", "purchases", "cost_per_purchase", "leads", "cost_per_lead")
@@ -507,6 +565,8 @@ def _targeting(t):
             "audiences": ", ".join(a.get("name", a.get("id", "")) for a in t.get("custom_audiences", [])),
             "excluded": ", ".join(a.get("name", a.get("id", "")) for a in t.get("excluded_custom_audiences", [])),
             "advantage_audience": bool((t.get("targeting_automation") or {}).get("advantage_audience")),
+            # Advantage+ audience: "age" is the suggestion, "age_control" the hard limits (age_min / age_max)
+            "age_control": f"{t.get('age_min', AGE_LO)}-{t.get('age_max', AGE_HI)}" if adv else "",
             "placements": _placements(t), "advantage_placements": not t.get("publisher_platforms")}
 
 
@@ -522,18 +582,22 @@ def rows(d, kind):
         return [{"id": c["id"], "campaign_id": c["id"], "ad_group_id": None, "campaign": c["name"], "status": _st(c["status"]),
                  "delivery": _st(c["effective_status"]), "objective": _st(c.get("objective", "").replace("OUTCOME_", "")),
                  "budget": _money(c.get("daily_budget"), d), "lifetime_budget": _money(c.get("lifetime_budget"), d),
-                 "budget_level": "Campaign (CBO)" if c.get("daily_budget") or c.get("lifetime_budget") else "Ad sets",
+                 "budget_level": ("Campaign (CBO, lifetime)" if _has_budget(c.get("lifetime_budget")) else "Campaign (CBO)")
+                 if _has_budget(c.get("daily_budget")) or _has_budget(c.get("lifetime_budget")) else "Ad sets",
+                 "budget_type": "lifetime" if _has_budget(c.get("lifetime_budget")) else "daily" if _has_budget(c.get("daily_budget")) else None,
                  "bidding": _st(c.get("bid_strategy", "")), "ad_sets": n_sets.get(c["id"], 0), "ads": n_ads.get(c["id"], 0),
                  "updated": (c.get("updated_time") or "")[:10], **_ins(d, "campaign", c["id"])} for c in d["campaigns"]]
     if kind == "adsets":
         out = []
         for s in d["adsets"]:
             c = camps.get(s["campaign_id"], {})
-            cbo = bool(c.get("daily_budget") or c.get("lifetime_budget"))
+            cbo = _has_budget(c.get("daily_budget")) or _has_budget(c.get("lifetime_budget"))
             out.append({"id": s["id"], "campaign_id": s["campaign_id"], "ad_group_id": s["id"], "campaign": c.get("name", "?"),
                         "ad_set": s["name"], "status": _st(s["status"]), "delivery": _st(s["effective_status"]),
                         "budget": None if cbo else _money(s.get("daily_budget"), d), "lifetime_budget": _money(s.get("lifetime_budget"), d),
+                        "budget_type": None if cbo else "lifetime" if _has_budget(s.get("lifetime_budget")) else "daily",
                         "cbo": cbo, "optimisation": _st(s.get("optimization_goal", "")), "end": (s.get("end_time") or "")[:10],
+                        "start": (s.get("start_time") or "")[:10],
                         **_targeting(s.get("targeting")), "updated": (s.get("updated_time") or "")[:10], **_ins(d, "adset", s["id"])})
         return out
     if kind == "ads":
@@ -665,17 +729,33 @@ def tree(status="active"):
     return out
 
 
+def config(d=None):
+    """Rules the Meta dialogs need from the engine (no network): call to action buttons, the account's currency and
+    minimum budget, copy lengths and age limits. Served with GET /api/state as "meta_config"."""
+    d = d or {}
+    return {"ctas": [{"value": k, "label": v} for k, v in CTA_LABELS.items()],
+            "currency": _currency(d) or None, "currency_factor": _cur_factor(d), "decimals": 0 if _cur_factor(d) == 1 else 2,
+            "min_daily_budget": _min_budget(d), "copy_limits": dict(COPY_LIMITS), "name_warn": NAME_WARN,
+            "age": {"min": AGE_LO, "max": AGE_HI, "advantage_control_min_max": ADV_AGE_MIN_MAX},
+            "special_categories_restricted": list(geo_countries.RESTRICTED_CATS)}
+
+
 def state():
     d = core.draft(acct())
     f = _cache_file()
-    fetched = json.loads(f.read_text()).get("fetched_at") if f.exists() else None
-    return {"draft": d, "editor_pending": {}, "last_download": fetched, "editor_running": False, "channel": "meta",
-            "pushing": False, "refreshing": refreshing(), "last_live_push": last_push()}
+    try:
+        cached = json.loads(f.read_text()) if f.exists() else {}
+    except ValueError:
+        cached = {}
+    return {"draft": d, "editor_pending": {}, "last_download": cached.get("fetched_at"), "editor_running": False, "channel": "meta",
+            "pushing": False, "refreshing": refreshing(), "last_live_push": last_push(),
+            "meta_config": config({"account": cached.get("account") or {}})}
 
 
 # ---------- draft: Meta change types ----------
 
 LEVELS = ("campaign", "adset", "ad")
+LEVEL_WORD = {"campaign": "campaign", "adset": "ad set", "ad": "ad"}
 
 
 def _find(d, level, oid):
@@ -738,7 +818,8 @@ def _camp_facts(cid, d, items):
         return {"name": c.get("name", ""), "objective": c.get("objective"), "cbo": bool(c.get("daily_budget")), "new": True,
                 "special_ad_categories": c.get("special_ad_categories") or []}
     o = _find(d, "campaign", cid)
-    return {"name": o["name"], "objective": o.get("objective"), "cbo": bool(o.get("daily_budget") or o.get("lifetime_budget")), "new": False,
+    return {"name": o["name"], "objective": o.get("objective"), "cbo": _has_budget(o.get("daily_budget")) or _has_budget(o.get("lifetime_budget")),
+            "new": False,
             "special_ad_categories": o.get("special_ad_categories") or []}
 
 
@@ -749,9 +830,9 @@ def _adset_facts(sid, d, items):
         if not it or it["change"].get("type") != "meta_new_adset":
             raise ValueError(f"ad set {sid} is not a new ad set in this draft")
         c = it["change"]
-        return {"name": c.get("name", ""), "campaign_id": str(c.get("campaign_id")), "new": True}
+        return {"name": c.get("name", ""), "campaign_id": str(c.get("campaign_id")), "new": True, "goal": c.get("optimization_goal")}
     o = _find(d, "adset", sid)
-    return {"name": o["name"], "campaign_id": o["campaign_id"], "new": False}
+    return {"name": o["name"], "campaign_id": o["campaign_id"], "new": False, "goal": o.get("optimization_goal")}
 
 
 def _pl_text(pl):
@@ -771,7 +852,7 @@ def summarise(c, d=None, items=None):
     if t == meta_audiences.TYPE:
         return meta_audiences.summarise(c, d)
     if t == "meta_new_campaign":
-        b = f"campaign budget {float(c['daily_budget']):.2f}/day" if c.get("daily_budget") else "ad set budgets"
+        b = f"campaign budget {_amount(c['daily_budget'], d)}/day" if c.get("daily_budget") else "ad set budgets"
         return f'Meta new campaign "{c["name"]}" ({_st(str(c.get("objective", "")).replace("OUTCOME_", ""))}, {b}, Paused)'
     if t == "meta_new_adset":
         items = items if items is not None else _items()
@@ -779,8 +860,12 @@ def summarise(c, d=None, items=None):
             camp = _camp_facts(c["campaign_id"], d, items)["name"]
         except (KeyError, ValueError):
             camp = str(c.get("campaign_id"))
-        b = f"daily {float(c['daily_budget']):.2f}" if c.get("daily_budget") else "campaign budget"
-        age = f"age {c.get('age_min', 18)}-{c.get('age_max', 65)}"
+        b = f"daily {_amount(c['daily_budget'], d)}" if c.get("daily_budget") else "campaign budget"
+        lo, hi = _ages(c)
+        age = f"age {lo or AGE_LO}-{hi or AGE_HI}"
+        rng = _age_range(c) if c.get("advantage_audience") else None
+        if rng:
+            age += f" (suggestion {rng[0]}-{rng[1]})"
         return (f'Meta new ad set "{c["name"]}" in campaign "{camp}" ({b}; {", ".join(c.get("countries") or [])}; {age}; '
                 f'{_pl_text(c.get("placements"))}; Paused)')
     if t == "meta_new_ad":
@@ -811,15 +896,18 @@ def summarise(c, d=None, items=None):
         return f"Meta {who}: {c['status']}"
     if t == "meta_budget":
         kind = "lifetime" if c.get("lifetime") else "daily"
-        return f"Meta {who}: {kind} budget {c['budget']:.2f}"
+        return f"Meta {who}: {kind} budget {_amount(c['budget'], d)}"
     if t == "meta_end":
         return f"Meta {who}: end date {c['end_date'] or 'none'}"
     if t == "meta_rename":
         return f"Meta {who}: rename to \"{c['new_name']}\""
     if t == "meta_targeting":
         c = _norm_ctry(c)
+        lo, hi = _ages(c)
+        rng = _age_range(c)
+        age = (f"age {lo}-{hi}" if lo and hi else f"age from {lo}" if lo else f"age up to {hi}" if hi else "")
         bits = [f"countries {', '.join(c['countries']) or 'none (regions / cities only)'}" if _sets_ctry(c) else "",
-                f"age {c.get('age_min', '')}-{c.get('age_max', '')}" if c.get("age_min") or c.get("age_max") else "",
+                age, f"age suggestion {rng[0]}-{rng[1]}" if rng else "",
                 meta_audiences.targeting_words(c, d)]
         return f"Meta {who}: " + "; ".join(b for b in bits if b)
     if t == "meta_placements":
@@ -891,17 +979,130 @@ def page_check(text, url):
             if re.sub(r"[\s,]", "", f) not in flat]
 
 
-def _future_date(v, what, problems, after=None):
+def _future_date(v, what, problems, after=None, end=False):
+    """A start date may be today; an end date must be after today (one rule for new and existing ad sets)."""
     try:
         x = dt.date.fromisoformat(str(v))
     except ValueError:
         problems.append(f"{what} must be YYYY-MM-DD")
         return None
-    if x < dt.date.today():
+    if end and x <= dt.date.today():
+        problems.append(f"{what} must be after today")
+    elif x < dt.date.today():
         problems.append(f"{what} can't be in the past")
     if after and x <= after:
         problems.append(f"{what} must be after the start date")
     return x
+
+
+def _url_problem(url, what="link"):
+    """A link Meta can open: http(s), a host, no spaces. '' when fine. ({{tags}} are allowed in the path / query.)"""
+    u = str(url if url is not None else "").strip()
+    if not u:
+        return f"{what} can't be empty"
+    if re.search(r"\s", u):
+        return f"{what} has a space in it: {u}"
+    p = urllib.parse.urlsplit(u)
+    if p.scheme.lower() not in ("http", "https"):
+        return f"{what} must start with https:// (or http://): {u}"
+    host = p.hostname or ""
+    if not host or "." not in host or "{" in host:
+        return f"{what} needs a website address after https://: {u}"
+    return ""
+
+
+def _name_problems(v, what, problems, warnings):
+    """Names: not empty (spaces only counts as empty); very long names get a warning."""
+    v = v.strip() if isinstance(v, str) else v
+    if not v:
+        problems.append(f"{what} can't be empty")
+    elif len(str(v)) > NAME_WARN:
+        warnings.append(f"{what} is {len(str(v))} characters: Meta may refuse names over {NAME_WARN} characters")
+
+
+def _age_val(v, what):
+    """One age as a change gives it -> int, or None for 'not given' (None, "", 0: an emptied field in the panel)."""
+    if v is None or v == "" or v == 0 or v == "0":
+        return None
+    if isinstance(v, bool):
+        raise ValueError(f"{what} must be a whole number")
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{what} must be a whole number") from None
+    if f != int(f):
+        raise ValueError(f"{what} must be a whole number")
+    return int(f) or None
+
+
+def _ages(c):
+    """(age_min, age_max) of a change, each an int or None (not given). check(), ops_for() and the views all read ages here."""
+    return _age_val(c.get("age_min"), "age_min"), _age_val(c.get("age_max"), "age_max")
+
+
+def _age_range(c):
+    """The Advantage+ audience age suggestion of a change: [min, max], or None (not given)."""
+    r = c.get("age_range")
+    if r is None or r == "" or r == []:
+        return None
+    if not isinstance(r, (list, tuple)) or len(r) != 2:
+        raise ValueError("age_range must be [min, max]")
+    a, b = _age_val(r[0], "age_range"), _age_val(r[1], "age_range")
+    if a is None or b is None:
+        raise ValueError("age_range needs both ages, e.g. [25, 55]")
+    return [a, b]
+
+
+def _adv(tg):
+    return bool(((tg or {}).get("targeting_automation") or {}).get("advantage_audience"))
+
+
+def _age_text(tg):
+    """Ages of a targeting object for a plan line: 'control 18-65, suggestion 25-55' on Advantage+ audience, else '25-55'."""
+    tg = tg or {}
+    ctl = f"{tg.get('age_min', AGE_LO)}-{tg.get('age_max', AGE_HI)}"
+    if not _adv(tg):
+        return ctl
+    r = tg.get("age_range")
+    sug = f"{r[0]}-{r[1]}" if isinstance(r, list) and len(r) == 2 else "none"
+    return f"control {ctl}, suggestion {sug}"
+
+
+def _restricted(cats):
+    return any(str(x).upper() in geo_countries.RESTRICTED_CATS for x in cats or [])
+
+
+def _age_problems(lo, hi, rng, tg0, adv, cats):
+    """Age rules for an ad set, after merging the change (lo / hi / rng, None = not given) with its targeting tg0.
+    18 <= min <= max <= 65; Advantage+ audience: the controls are hard limits Meta takes only up to 25 / at 65, the
+    suggestion (age_range) sits inside them; special ad categories (housing, employment, credit): 18-65 only."""
+    out = []
+    tg0 = tg0 or {}
+    mlo = lo if lo is not None else int(tg0.get("age_min") or AGE_LO)
+    mhi = hi if hi is not None else int(tg0.get("age_max") or AGE_HI)
+    if not AGE_LO <= mlo <= mhi <= AGE_HI:
+        return [f"age must be {AGE_LO}-{AGE_HI} with min <= max (this makes {mlo}-{mhi})"]
+    # only the side(s) the change sets: an untouched live value the user did not change never blocks the edit
+    if adv and ((lo is not None and lo > ADV_AGE_MIN_MAX) or (hi is not None and hi < AGE_HI)):
+        out.append(f"Advantage+ audience is on: age_min / age_max are hard limits Meta takes only up to {ADV_AGE_MIN_MAX} "
+                   f"(min) and at {AGE_HI} (max); change the age suggestion (age_range) instead")
+    if rng is not None:
+        if not adv:
+            out.append("age_range is the Advantage+ audience age suggestion and Advantage+ audience is off here: "
+                       "use age_min / age_max")
+        elif not AGE_LO <= rng[0] <= rng[1] <= AGE_HI:
+            out.append(f"age suggestion must be {AGE_LO}-{AGE_HI} with min <= max")
+        elif rng[0] < mlo or rng[1] > mhi:
+            out.append(f"the age suggestion {rng[0]}-{rng[1]} must sit inside the hard limits {mlo}-{mhi}")
+    if _restricted(cats) and ((lo is not None and lo != AGE_LO) or (hi is not None and hi != AGE_HI)
+                              or (rng is not None and rng != [AGE_LO, AGE_HI])):
+        out.append(f"special ad category (housing, employment or credit): Meta only allows age {AGE_LO}-{AGE_HI} in these ad sets")
+    return out
+
+
+def _lookalikes(ids, d):
+    subs = {str(a.get("id")): a.get("subtype") for a in (d or {}).get("audiences") or []}
+    return [str(x) for x in ids or [] if subs.get(str(x)) == "LOOKALIKE"]
 
 
 def _placement_problems(pl):
@@ -915,6 +1116,10 @@ def _placement_problems(pl):
     bad = [p for p in pubs if p not in PLATFORMS]
     if bad:
         out.append(f"placements: unknown platform {', '.join(bad)} (one of {', '.join(PLATFORMS)})")
+    side = [p for p in pubs if p in ("audience_network", "messenger")]
+    if side and not {"facebook", "instagram"} & set(pubs):
+        out.append(f"placements: Meta does not run ads on {' and '.join(p.replace('_', ' ').title() for p in side)} alone; "
+                   "add Facebook or Instagram")
     for key, allowed, plat in (("facebook_positions", FB_POS, "facebook"), ("instagram_positions", IG_POS, "instagram")):
         bad = [p for p in pl.get(key) or [] if p not in allowed]
         if bad:
@@ -922,6 +1127,18 @@ def _placement_problems(pl):
         if pl.get(key) and plat not in pubs:
             out.append(f"{key} given but {plat} is not in publisher_platforms")
     return out
+
+
+def _placement_warnings(pl):
+    """Placement mixes Meta may refuse, not confirmed by a validate_only check yet: warnings only."""
+    pl = pl or {}
+    if pl.get("advantage", not pl.get("publisher_platforms")):
+        return []
+    pubs = set(pl.get("publisher_platforms") or [])
+    if "audience_network" in pubs and "instagram" in pubs and "facebook" not in pubs:
+        return ["placements: Audience Network with Instagram but without Facebook may be refused by Meta; "
+                "add Facebook if the preview says so"]
+    return []
 
 
 def _texts(c):
@@ -935,6 +1152,121 @@ def _texts(c):
 
 
 COPY_LABEL = re.compile(r"^(primary_text|headline|description|card \d+ (name|description)|(bodies|titles|descriptions) \d+)$")
+
+
+JOB_WORDS = re.compile(r"\b(hiring|hire|jobs?|careers?|recruit\w*|vacanc\w*|apply now|we'?re hiring|join (our|the) team)\b", re.I)
+HOUSING_WORDS = re.compile(r"\b(rent(al)?s?|apartments?|flats? (to|for) (let|rent)|real estate|mortgages?|property for sale)\b", re.I)
+CREDIT_WORDS = re.compile(r"\b(loans?|credit cards?|financing|finance offer|mortgages?)\b", re.I)
+
+
+def _category_warnings(cats, texts):
+    """Words that suggest a special ad category the campaign does not declare (Meta refuses or removes those ads)."""
+    cats = [str(x).upper() for x in cats or []]
+    txt = " ".join(v for v in texts if isinstance(v, str))
+    out = []
+    if "EMPLOYMENT" not in cats and JOB_WORDS.search(txt):
+        out.append('this looks like a job ad: job ads must use special_ad_categories ["EMPLOYMENT"]')
+    if "HOUSING" not in cats and HOUSING_WORDS.search(txt):
+        out.append('this looks like a housing ad: housing ads must use special_ad_categories ["HOUSING"]')
+    if not {"FINANCIAL_PRODUCTS_SERVICES", "CREDIT"} & set(cats) and CREDIT_WORDS.search(txt):
+        out.append('this looks like a credit or finance ad: these must use special_ad_categories ["FINANCIAL_PRODUCTS_SERVICES"]')
+    return out
+
+
+def _copy_warnings(c):
+    """Every text field against COPY_LIMITS (what Meta shows before it cuts the text). Always run, whatever else is wrong."""
+    out = []
+    for k in ("primary_text", "headline", "description"):
+        v = c.get(k)
+        if isinstance(v, str) and len(v) > COPY_LIMITS[k]:
+            out.append(f"{k}: {len(v)} chars - Meta cuts it after about {COPY_LIMITS[k]}")
+    for pos, x in enumerate(c.get("cards") or []):
+        if not isinstance(x, dict):
+            continue
+        n = int(x["index"]) + 1 if isinstance(x.get("index"), int) else pos + 1  # copy edits name their card; new carousels go by position
+        for k in ("name", "description"):
+            v, lim = x.get(k), COPY_LIMITS[f"card {k}"]
+            if isinstance(v, str) and len(v) > lim:
+                out.append(f"card {n} {k}: {len(v)} chars - Meta cuts it after about {lim}")
+    for k in ("bodies", "titles", "descriptions"):
+        for i, v in enumerate(c.get(k) or []):
+            if isinstance(v, str) and len(v) > COPY_LIMITS[k]:
+                out.append(f"{k} {i + 1}: {len(v)} chars - Meta cuts it after about {COPY_LIMITS[k]}")
+    return out
+
+
+def _cta_problems(c):
+    out = []
+    if c.get("cta") and c["cta"] not in CTAS:
+        out.append(f"cta must be one of {', '.join(CTAS)}")
+    for x in c.get("cards") or []:
+        if isinstance(x, dict) and x.get("cta") and x["cta"] not in CTAS:
+            out.append(f"card cta must be one of {', '.join(CTAS)}")
+    return out
+
+
+def _new_ad_goal_problems(c, aset):
+    """Lead form ad sets (optimisation LEAD_GENERATION) need ads with a lead form. Studio can't attach one to an uploaded
+    file or a new carousel, so those are refused before the push (Meta would refuse them at push)."""
+    if aset.get("goal") != "LEAD_GENERATION":
+        return []
+    if c.get("cards") or (c.get("media_id") and not c.get("from_ad")):
+        return ["this ad set collects leads with a lead form (Lead generation): Studio can't add a lead form to an uploaded "
+                "file or a new carousel yet; copy an ad that already has the form (from_ad), or make the ad in Ads Manager"]
+    return []
+
+
+def _budget_problems(c, o, d):
+    """meta_budget on a campaign or ad set: the right owner (CBO or not), the right budget type, at least the minimum."""
+    lvl = c["level"]
+    if lvl == "ad":
+        return ["ads have no budget"]
+    cur, mn = _currency(d), _min_budget(d)
+    try:
+        b = float(c.get("budget"))
+    except (TypeError, ValueError):
+        return ["budget must be a number"]
+    out = []
+    if b < mn or b <= 0:
+        out.append(f"budget must be at least {_amount(mn, d)}{' ' + cur if cur else ''} (the ad account's minimum)")
+    if lvl == "adset":
+        camp = _find(d, "campaign", o["campaign_id"])
+        if _has_budget(camp.get("daily_budget")) or _has_budget(camp.get("lifetime_budget")):
+            return out + ["this campaign uses a campaign budget (CBO): change the campaign's budget instead"]
+    elif not (_has_budget(o.get("daily_budget")) or _has_budget(o.get("lifetime_budget"))):
+        return out + ["this campaign has ad set budgets: change the ad sets instead"]
+    key, other = ("lifetime_budget", "daily_budget") if c.get("lifetime") else ("daily_budget", "lifetime_budget")
+    word = key.split("_")[0]
+    if not _has_budget(o.get(key)):
+        if _has_budget(o.get(other)):
+            out.append(f"this {LEVEL_WORD[lvl]} has a {other.split('_')[0]} budget, not a {word} budget: "
+                       f"set lifetime {'false' if c.get('lifetime') else 'true'} to change it")
+        else:
+            out.append(f"this {LEVEL_WORD[lvl]} has no {word} budget to change")
+    return out
+
+
+def _end_problems(c, o, d):
+    """meta_end on an ad set: after today; a lifetime budget needs an end date; the end comes after the start."""
+    out, warns = [], []
+    camp = next((x for x in d.get("campaigns") or [] if x.get("id") == o.get("campaign_id")), {})
+    lifetime = _has_budget(o.get("lifetime_budget")) or _has_budget(camp.get("lifetime_budget"))
+    if not c.get("end_date"):
+        if lifetime:
+            out.append("this ad set spends a lifetime budget, which needs an end date: it can't be removed")
+        return out, warns
+    x = _future_date(c["end_date"], "end date", out, end=True)
+    start = str(o.get("start_time") or "")[:10]
+    if x and start:
+        try:
+            s = dt.date.fromisoformat(start)
+        except ValueError:
+            s = None
+        if s and x < s:
+            out.append(f"end date must be after the ad set's start date ({start})")
+        elif s and lifetime and x == s:
+            warns.append("a lifetime budget ad set usually needs to run at least 24 hours: Meta may refuse an end on the start day")
+    return out, warns
 
 
 def check(c, d=None, items=None):
@@ -959,26 +1291,24 @@ def check(c, d=None, items=None):
             problems += p_
             warnings += w_
         elif t == "meta_new_campaign":
-            if not c.get("name"):
-                problems.append("the new campaign needs a name")
+            _name_problems(c.get("name"), "the new campaign's name", problems, warnings)
             if c.get("objective") not in OBJECTIVES.values():
                 problems.append(f"objective must be one of {', '.join(OBJECTIVES)}")
-            if c.get("daily_budget") is not None and float(c["daily_budget"]) < 1:
-                problems.append("budget must be at least 1.00")
+            if c.get("daily_budget") is not None and float(c["daily_budget"]) < _min_budget(d):
+                problems.append(f"budget must be at least {_amount(_min_budget(d), d)} (the ad account's minimum)")
             bad = [x for x in c.get("special_ad_categories") or [] if x not in SPECIAL_CATS]
             if bad:
                 problems.append(f"special_ad_categories: unknown {', '.join(bad)} (one of {', '.join(SPECIAL_CATS)})")
-            if c.get("objective") == "OUTCOME_LEADS" and not c.get("special_ad_categories") and re.search(r"\b(hiring|job|career|recruit)", c.get("name", ""), re.I):
-                warnings.append('job ads must use special_ad_categories ["EMPLOYMENT"]')
+            warnings += _category_warnings(c.get("special_ad_categories"), [c.get("name")])
         elif t == "meta_new_adset":
-            if not c.get("name"):
-                problems.append("the new ad set needs a name")
+            _name_problems(c.get("name"), "the new ad set's name", problems, warnings)
             camp = _camp_facts(c.get("campaign_id"), d, items)
             if camp["cbo"]:
                 if c.get("daily_budget") is not None:
                     problems.append("the campaign has a campaign budget (CBO): leave the ad set budget out")
-            elif c.get("daily_budget") is None or float(c["daily_budget"]) < 1:
-                problems.append("the ad set needs a daily budget of at least 1.00 (the campaign has no campaign budget)")
+            elif c.get("daily_budget") is None or float(c["daily_budget"]) < _min_budget(d):
+                problems.append(f"the ad set needs a daily budget of at least {_amount(_min_budget(d), d)} "
+                                "(the campaign has no campaign budget)")
             obj = camp["objective"]
             if obj in GOALS and c.get("optimization_goal") and c["optimization_goal"] != GOALS[obj][0] and c["optimization_goal"] not in GOALS[obj][1]:
                 problems.append(f"optimization_goal for {obj}: one of {', '.join((GOALS[obj][0],) + GOALS[obj][1])}")
@@ -987,21 +1317,21 @@ def check(c, d=None, items=None):
             else:
                 problems += geo_countries.code_problems(c["countries"])
                 warnings += geo_countries.special_warnings(camp.get("special_ad_categories"), None, c["countries"])
-            lo, hi = int(c.get("age_min") or 18), int(c.get("age_max") or 65)
-            if lo < 18 or hi > 65 or lo > hi:
-                problems.append("age must be 18-65 with min <= max")
+            lo, hi = _ages(c)
+            problems += _age_problems(lo, hi, _age_range(c), {}, bool(c.get("advantage_audience")), camp.get("special_ad_categories"))
             start = _future_date(c["start_date"], "start date", problems) if c.get("start_date") else None
             if c.get("end_date"):
-                _future_date(c["end_date"], "end date", problems, after=start)
+                _future_date(c["end_date"], "end date", problems, after=start, end=True)
             problems += _placement_problems(c.get("placements"))
+            warnings += _placement_warnings(c.get("placements"))
         elif t == "meta_new_ad":
-            _adset_facts(c.get("adset_id"), d, items)
-            if not c.get("name"):
-                problems.append("the new ad needs a name")
+            aset = _adset_facts(c.get("adset_id"), d, items)
+            _name_problems(c.get("name"), "the new ad's name", problems, warnings)
             if c.get("cards"):  # a new carousel: every card is an uploaded image (Studio can't copy carousels)
                 problems += _carousel_problems(c)
             elif not c.get("from_ad") and not c.get("media_id"):
                 problems.append("a new ad needs from_ad (copy an ad's image/video), media_id (an uploaded file) or cards (a carousel)")
+            problems += _new_ad_goal_problems(c, aset)
             src = None
             if c.get("from_ad"):
                 src = _find(d, "ad", c["from_ad"])
@@ -1015,21 +1345,27 @@ def check(c, d=None, items=None):
                     for k in ("link", "primary_text", "headline"):
                         if not c.get(k):
                             problems.append(f"a new ad from an uploaded file needs {k}")
+            if c.get("link"):
+                problems += [p for p in [_url_problem(c["link"])] if p]
+            elif c.get("link") is not None and src:
+                problems.append("link can't be empty (leave it out to keep the copied ad's link)")
             link = c.get("link") or (creative_text(src.get("creative"))["link"] if src else "")
             links.append((link, c.get("primary_text")))
-            for x in c.get("cards") or []:
+            for i, x in enumerate(c.get("cards") or []):
                 if isinstance(x, dict) and x.get("link"):
+                    problems += [p for p in [_url_problem(x["link"], f"card {i + 1} link")] if p]
                     links.append((x["link"], " ".join(x.get(k) or "" for k in ("name", "description"))))
         elif t == "meta_boost_post":
-            _adset_facts(c.get("adset_id"), d, items)
-            if not c.get("name"):
-                problems.append("the boost ad needs a name")
+            aset = _adset_facts(c.get("adset_id"), d, items)
+            _name_problems(c.get("name"), "the boost ad's name", problems, warnings)
             if c.get("channel") not in ("facebook", "instagram"):
                 problems.append("channel must be facebook or instagram")
             elif c["channel"] == "facebook" and not re.fullmatch(r"\d+_\d+", str(c.get("post_id") or "")):
                 problems.append("post_id must be a Facebook Page post id (<page id>_<post id>)")
             elif c["channel"] == "instagram" and not re.fullmatch(r"\d+", str(c.get("post_id") or "")):
                 problems.append("post_id must be an Instagram media id")
+            if aset.get("goal") == "LEAD_GENERATION":
+                warnings.append("this ad set collects leads with a lead form: a boosted post has no form, so Meta may refuse it")
         else:
             if c.get("level") not in LEVELS:
                 return ["level must be campaign, adset or ad"], []
@@ -1039,47 +1375,56 @@ def check(c, d=None, items=None):
             if t == "meta_status" and c.get("status") not in STATUS:
                 problems.append("status must be active or paused (Studio never deletes on Meta)")
             if t == "meta_budget":
-                if c["level"] == "ad":
-                    problems.append("ads have no budget")
-                elif float(c.get("budget") or 0) < 1:
-                    problems.append("budget must be at least 1.00")
-                elif c["level"] == "adset":
-                    camp = _find(d, "campaign", o["campaign_id"])
-                    if camp.get("daily_budget") or camp.get("lifetime_budget"):
-                        problems.append("this campaign uses a campaign budget (CBO): change the campaign's budget instead")
-                elif c["level"] == "campaign" and not (o.get("daily_budget") or o.get("lifetime_budget")):
-                    problems.append("this campaign has ad set budgets: change the ad sets instead")
+                problems += _budget_problems(c, o, d)
             if t in ("meta_end", "meta_targeting", "meta_placements") and c["level"] != "adset":
                 problems.append("only ad sets have an end date, targeting and placements")
-            if t == "meta_targeting":  # [audiences] attach / detach audiences on the ad set
+            elif t == "meta_targeting":  # [audiences] attach / detach audiences on the ad set
                 problems += meta_audiences.targeting_problems(c, d)
-                if not _sets_ctry(c) and not any(c.get(k) for k in ("age_min", "age_max") + meta_audiences.AUD_KEYS):
-                    problems.append("nothing to change: give countries, age_min / age_max or audiences_add / _remove, excluded_add / _remove")
+                lo, hi = _ages(c)
+                rng = _age_range(c)
+                tg0 = o.get("targeting") or {}
+                camp = next((x for x in d["campaigns"] if x["id"] == o.get("campaign_id")), {})
+                cats = camp.get("special_ad_categories")
+                same_ctry = _sets_ctry(c) and bool(c["countries"]) and sorted(c["countries"]) == sorted(geo_countries.clean((tg0.get("geo_locations") or {}).get("countries")))
+                if not _sets_ctry(c) and lo is None and hi is None and rng is None and not any(c.get(k) for k in meta_audiences.AUD_KEYS):
+                    problems.append("nothing to change: give countries, age_min / age_max, age_range (Advantage+ audience) "
+                                    "or audiences_add / _remove, excluded_add / _remove")
+                elif same_ctry and lo is None and hi is None and rng is None and not any(c.get(k) for k in meta_audiences.AUD_KEYS):
+                    problems.append("nothing to change: these are already the ad set's countries (only the order differs); "
+                                    "remove this item")
                 if c.get("countries_clear") is True and c.get("countries"):
                     problems.append('countries_clear goes with an empty countries list ("countries": [])')
-                elif _sets_ctry(c):  # countries replace the list; regions / cities stay as they are
-                    tg0 = o.get("targeting") or {}
+                elif _sets_ctry(c) and not same_ctry:  # countries replace the list; regions / cities stay as they are
                     problems += geo_countries.geo_problems(c["countries"], tg0)
                     warnings += geo_countries.geo_warnings(c["countries"], tg0)
                     old = set(geo_countries.clean((tg0.get("geo_locations") or {}).get("countries")))
-                    camp = next((x for x in d["campaigns"] if x["id"] == o.get("campaign_id")), {})
-                    warnings += geo_countries.special_warnings(camp.get("special_ad_categories"), tg0,
-                                                               [x for x in c["countries"] if x not in old])
-            if t == "meta_end" and c.get("end_date"):
-                try:
-                    if dt.date.fromisoformat(c["end_date"]) <= dt.date.today():
-                        problems.append("end date must be in the future")
-                except ValueError:
-                    problems.append("end date must be YYYY-MM-DD")
-            if t == "meta_rename" and not c.get("new_name"):
-                problems.append("new_name is empty")
-            if t == "meta_placements":
+                    warnings += geo_countries.special_warnings(cats, tg0, [x for x in c["countries"] if x not in old])
+                if lo is not None or hi is not None or rng is not None:
+                    problems += _age_problems(lo, hi, rng, tg0, _adv(tg0), cats)
+                if _restricted(cats):
+                    lal = _lookalikes(c.get("audiences_add"), d) + _lookalikes(c.get("excluded_add"), d)
+                    if lal:
+                        problems.append("special ad category (housing, employment or credit): Meta does not allow lookalike "
+                                        "audiences in these ad sets")
+                    if tg0.get("genders") and (lo is not None or hi is not None or rng is not None or _sets_ctry(c)):
+                        warnings.append("special ad category (housing, employment or credit): this ad set targets a gender, "
+                                        "which Meta does not allow; fix it in Ads Manager or the change may be refused")
+            if t == "meta_end" and c["level"] == "adset":
+                p_, w_ = _end_problems(c, o, d)
+                problems += p_
+                warnings += w_
+            if t == "meta_rename":
+                _name_problems(c.get("new_name"), "new_name", problems, warnings)
+            if t == "meta_placements" and c["level"] == "adset":
                 problems += _placement_problems(c)
+                warnings += _placement_warnings(c)
             if t in ("meta_copy", "meta_carousel_copy", "meta_feed_copy"):
                 if c["level"] != "ad":
                     problems.append("copy changes are per ad")
                 else:
                     ct = creative_text(o.get("creative"))
+                    if c.get("link") is not None:
+                        problems += [p for p in [_url_problem(c["link"])] if p]
                     if ct["edit_type"] != t:
                         problems.append(ct["why_not"] or f"this ad's copy is edited with {ct['edit_type']}, not {t}")
                     elif t == "meta_copy":
@@ -1094,8 +1439,10 @@ def check(c, d=None, items=None):
                                 problems.append(f"card index must be 0-{n - 1}")
                                 continue
                             for k in ("name", "link"):
-                                if k in x and not x[k]:
+                                if k in x and not (x[k].strip() if isinstance(x[k], str) else x[k]):
                                     problems.append(f"card {x['index'] + 1}: {k} can't be empty")
+                            if x.get("link"):
+                                problems += [p for p in [_url_problem(x["link"], f"card {x['index'] + 1} link")] if p]
                             links.append((x.get("link") or ct["cards"][x["index"]]["link"],
                                           " ".join(x.get(k) or "" for k in ("name", "description"))))
                     else:
@@ -1107,19 +1454,22 @@ def check(c, d=None, items=None):
                                 problems.append(f"{k}: a list of non-empty texts")
                             elif len(c[k]) > 5:
                                 warnings.append(f"{k}: {len(c[k])} options - Meta allows up to 5 for most formats")
+                        if isinstance(c.get("link_urls"), list):
+                            problems += [p for i, u in enumerate(c["link_urls"]) if isinstance(u, str) and u.strip()
+                                         for p in [_url_problem(u, f"link_urls {i + 1}")] if p]
                         urls = c.get("link_urls") or ct["link_urls"] or [ct["link"]]
                         for i, u in enumerate(urls):
                             links.append((u, " ".join((c.get("bodies") or [])[:1] if i == 0 else [])))
-        if c.get("cta") and c["cta"] not in CTAS:
-            problems.append(f"cta must be one of {', '.join(CTAS)}")
-        for x in c.get("cards") or []:
-            if x.get("cta") and x["cta"] not in CTAS:
-                problems.append(f"card cta must be one of {', '.join(CTAS)}")
+        problems += _cta_problems(c)
     except (KeyError, TypeError, ValueError) as ex:
         problems.append(f"invalid change: {ex}")
     problems += [f"{k}: {NOT_YET[k]}" for k in _not_yet(c)]
     if c.get("with_end") and (t != "meta_status" or c.get("status") != "paused"):
         problems.append("with_end is only for pausing (meta_status paused) together with End test")
+    try:
+        warnings += _copy_warnings(c)  # every text field, whatever else is wrong (M18)
+    except (TypeError, ValueError):
+        pass
     texts = _texts(c)
     try:
         import team_settings  # noqa: PLC0415 - copy rules (key copy_rules, area "meta_ads")
@@ -1140,10 +1490,6 @@ def check(c, d=None, items=None):
                 warnings.append(f"{k}: end with a blank line and the link (drives more link clicks)")
             if pt and re.search(r"[$£€]\d{1,3},\d{3}", pt):
                 warnings.append(f"{k}: remove the comma in prices ($1155 not $1,155) - Meta misreads it")
-        for k in ["headline"] + [f"titles {i + 1}" for i in range(len(c.get("titles") or []))]:
-            v = c.get("headline") if k == "headline" else c["titles"][int(k.split()[1]) - 1]
-            if len(v or "") > 40:
-                warnings.append(f"{k}: {len(v)} chars - Meta cuts it after about 40")
         copy = " ".join(v for k, v in texts if COPY_LABEL.match(k))
         for link in sorted({u for u, _ in links if u}):
             dead = link_problem(link)
@@ -1166,6 +1512,31 @@ def _normalise(c):
             c[k] = [str(x) for x in c[k]]
     if c.get("status"):
         c["status"] = c["status"].lower().replace("enabled", "active")
+    for k in ("age_min", "age_max"):  # null / "" / 0 (an emptied field) = not given; numbers become int
+        if k in c:
+            try:
+                v = _age_val(c[k], k)
+            except ValueError:
+                continue  # left as given: check() says what is wrong
+            if v is None:
+                c.pop(k)
+            else:
+                c[k] = v
+    if "age_range" in c:
+        try:
+            r = _age_range(c)
+        except ValueError:
+            r = c["age_range"]
+        if r is None:
+            c.pop("age_range")
+        else:
+            c["age_range"] = r
+    for k in ("name", "new_name"):  # names: no stray spaces at either end
+        if isinstance(c.get(k), str):
+            c[k] = c[k].strip()
+    for k in ("link",):
+        if isinstance(c.get(k), str):
+            c[k] = c[k].strip()
     if c.get("type") == "meta_new_campaign":
         o = str(c.get("objective") or "").strip()
         c["objective"] = OBJECTIVES.get(o.lower().replace("outcome_", ""), o.upper())
@@ -1262,8 +1633,13 @@ def _overlay(kind, out, campaign_id, adset_id):
             if t == "meta_new_adset":
                 if kind == "adsets" and (not campaign_id or str(campaign_id) == c.get("campaign_id")) and not adset_id:
                     camp = _camp_facts(c["campaign_id"], d, pool)
-                    tg = _apply_placements({"geo_locations": {"countries": c.get("countries") or []}, "age_min": c.get("age_min", 18),
-                                            "age_max": c.get("age_max", 65)}, c.get("placements") or {})
+                    lo, hi = _ages(c)
+                    tg = _apply_placements({"geo_locations": {"countries": c.get("countries") or []}, "age_min": lo or AGE_LO,
+                                            "age_max": hi or AGE_HI}, c.get("placements") or {})
+                    if c.get("advantage_audience"):
+                        tg["targeting_automation"] = {"advantage_audience": 1}
+                        if _age_range(c):
+                            tg["age_range"] = _age_range(c)
                     out.insert(0, {"id": f"d-{it['id']}", "campaign_id": c["campaign_id"], "ad_group_id": f"d-{it['id']}",
                                    "campaign": camp["name"], "ad_set": c.get("name"), "status": "Paused", "delivery": "draft",
                                    "budget": None if camp["cbo"] else c.get("daily_budget"), "lifetime_budget": None, "cbo": camp["cbo"],
@@ -1293,7 +1669,7 @@ def _overlay(kind, out, campaign_id, adset_id):
                                               for i, x in enumerate(c["cards"])]})
                     out.insert(0, row)
                 continue
-        except (KeyError, ValueError):
+        except (KeyError, TypeError, ValueError):
             continue
         if c.get("level") != col_level or str(c.get("id")) not in by_id:
             continue
@@ -1311,13 +1687,23 @@ def _overlay(kind, out, campaign_id, adset_id):
             if any(c.get(k) for k in meta_audiences.AUD_KEYS):
                 r["_draft"]["audiences"] = {**mark, "value": meta_audiences.targeting_words(c, d)}
             c = _norm_ctry(c)
-            if _sets_ctry(c):
+            if _sets_ctry(c) and sorted(c["countries"]) != sorted((r.get("geo") or {}).get("countries") or []):
                 r["_draft"]["countries"] = {**mark, "value": ", ".join(c["countries"]) or "None (regions / cities only)"}
                 geo = dict((r.get("geo") or {}).get("raw") or {})
                 geo["countries"] = c["countries"]
                 r["_draft"]["locations"] = {**mark, "value": geo_countries.summary(geo)}
-            if c.get("age_min") or c.get("age_max"):
-                r["_draft"]["age"] = {**mark, "value": f"{c.get('age_min', '')}-{c.get('age_max', '')}"}
+            try:
+                lo, hi = _ages(c)
+                rng = _age_range(c)
+            except ValueError:
+                lo = hi = rng = None
+            if lo or hi:  # the side left out keeps its live value (never "-55" or "0-55")
+                key = "age_control" if r.get("advantage_audience") else "age"
+                m = re.match(r"\s*(\d*)\s*-\s*(\d*)", str(r.get(key) or ""))
+                cur = (m.group(1), m.group(2)) if m else ("", "")
+                r["_draft"][key] = {**mark, "value": f"{lo or cur[0] or AGE_LO}-{hi or cur[1] or AGE_HI}"}
+            if rng:
+                r["_draft"]["age"] = {**mark, "value": f"{rng[0]}-{rng[1]} (suggestion)"}
         elif t == "meta_placements":
             r["_draft"]["placements"] = {**mark, "value": _pl_text(c)}
         elif t == "meta_copy":
@@ -1356,7 +1742,7 @@ def _overlay(kind, out, campaign_id, adset_id):
 #   back everything made, as before.
 WORKERS = 8
 BATCH_IDS = 50
-LIVE_FIELDS = {"campaign": "name,status,objective,daily_budget,lifetime_budget",
+LIVE_FIELDS = {"campaign": "name,status,objective,daily_budget,lifetime_budget,special_ad_categories",
                "adset": "name,status,daily_budget,lifetime_budget,end_time,targeting,campaign_id",
                "ad": "name,status,adset_id,creative{id,object_story_spec,asset_feed_spec,object_story_id,url_tags,degrees_of_freedom_spec}"}
 EDIT_TYPES = ("meta_status", "meta_budget", "meta_end", "meta_rename", "meta_targeting", "meta_placements", "meta_copy",
@@ -1485,8 +1871,9 @@ def _pmap(fn, seq, workers=None, on_done=None):
     return out
 
 
-def _money_txt(v):
-    return f"{int(v) / 100:.2f}" if v not in (None, "") else "none"
+def _money_txt(v, d=None):
+    """A budget as Meta keeps it (minor units) -> account-currency text."""
+    return _amount(int(v) / _cur_factor(d), d) if v not in (None, "") else "none"
 
 
 def _clean_oss(oss):
@@ -1786,16 +2173,17 @@ def ops_for(c, items=None):
     if t == meta_audiences.TYPE:  # [audiences] reads only here; nothing reaches Meta before Push live
         return meta_audiences.ops_for(c, sys.modules[__name__])
     if t == "meta_new_campaign":
+        d = load()
         p = {"name": c["name"], "objective": c["objective"], "status": "PAUSED", "special_ad_categories": c.get("special_ad_categories") or []}
         if c.get("daily_budget"):
-            p.update(daily_budget=int(round(float(c["daily_budget"]) * 100)), bid_strategy="LOWEST_COST_WITHOUT_CAP")
-            b = f"campaign budget {float(c['daily_budget']):.2f}/day"
+            p.update(daily_budget=_minor(c["daily_budget"], d), bid_strategy="LOWEST_COST_WITHOUT_CAP")
+            b = f"campaign budget {_amount(c['daily_budget'], d)}/day"
         else:
             p["is_adset_budget_sharing_enabled"] = False
             b = "budgets on the ad sets"
         return [{"kind": "create", "phase": "new_campaign", "edge": "campaigns", "params": p, "refs": {},
                  "line": f'new campaign "{c["name"]}" ({_st(c["objective"].replace("OUTCOME_", ""))}, {b}), created Paused',
-                 "spend": f"new campaign budget {float(c['daily_budget']):.2f}/day (Paused until you switch it on)" if c.get("daily_budget") else ""}]
+                 "spend": f"new campaign budget {_amount(c['daily_budget'], d)}/day (Paused until you switch it on)" if c.get("daily_budget") else ""}]
     if t == "meta_new_adset":
         items = items if items is not None else _items()
         d = load()
@@ -1804,14 +2192,23 @@ def ops_for(c, items=None):
             camp = _camp_facts(c["campaign_id"], d, items)
         else:
             lc = _live("campaign", c["campaign_id"])
-            camp = {"name": lc["name"], "objective": lc.get("objective"), "cbo": bool(lc.get("daily_budget") or lc.get("lifetime_budget"))}
+            camp = {"name": lc["name"], "objective": lc.get("objective"),
+                    "cbo": _has_budget(lc.get("daily_budget")) or _has_budget(lc.get("lifetime_budget")),
+                    "special_ad_categories": lc.get("special_ad_categories") or []}
         obj = camp["objective"]
         bad = (["the new ad set needs at least one country"] if not c["countries"] else []) + geo_countries.code_problems(c["countries"])
         if bad:  # checked again here: a synced or merged draft never went through add()
             raise ValueError("; ".join(bad))
         goal = c.get("optimization_goal") or GOALS.get(obj, ("LINK_CLICKS",))[0]
-        tg = {"geo_locations": {"countries": c["countries"]}, "age_min": int(c.get("age_min", 18)), "age_max": int(c.get("age_max", 65)),
+        lo, hi = _ages(c)  # read exactly as check() reads them (None, "" and 0 = the default)
+        rng = _age_range(c)
+        bad = _age_problems(lo, hi, rng, {}, bool(c.get("advantage_audience")), camp.get("special_ad_categories"))
+        if bad:
+            raise ValueError("; ".join(bad))
+        tg = {"geo_locations": {"countries": c["countries"]}, "age_min": lo or AGE_LO, "age_max": hi or AGE_HI,
               "targeting_automation": {"advantage_audience": 1 if c.get("advantage_audience") else 0}}
+        if rng and c.get("advantage_audience"):
+            tg["age_range"] = rng
         tg = _pin_device(_apply_placements(tg, c.get("placements") or {}))
         p = {"name": c["name"], "status": "PAUSED", "billing_event": "IMPRESSIONS", "optimization_goal": goal, "targeting": tg}
         if not cref:
@@ -1829,18 +2226,18 @@ def ops_for(c, items=None):
             p["end_time"] = f"{c['end_date']}T23:59:00+0000"
         spend = ""
         if not camp["cbo"]:
-            p.update(daily_budget=int(round(float(c["daily_budget"]) * 100)), bid_strategy="LOWEST_COST_WITHOUT_CAP")
-            spend = f"new ad set budget {float(c['daily_budget']):.2f}/day (Paused until you switch it on)"
+            p.update(daily_budget=_minor(c["daily_budget"], d), bid_strategy="LOWEST_COST_WITHOUT_CAP")
+            spend = f"new ad set budget {_amount(c['daily_budget'], d)}/day (Paused until you switch it on)"
         line = (f'new ad set "{c["name"]}" in campaign "{camp["name"]}" ({_st(goal)}, '
-                f'{"campaign budget" if camp["cbo"] else "daily " + format(float(c["daily_budget"]), ".2f")}, '
-                f'{", ".join(c["countries"])}, age {tg["age_min"]}-{tg["age_max"]}, {_pl_text(c.get("placements"))}), created Paused')
+                f'{"campaign budget" if camp["cbo"] else "daily " + _amount(c["daily_budget"], d)}, '
+                f'{", ".join(c["countries"])}, age {_age_text(tg)}, {_pl_text(c.get("placements"))}), created Paused')
         step = {"kind": "create", "phase": "new_adset", "edge": "adsets", "params": p, "refs": {"campaign_id": cref} if cref else {},
                 "line": line, "spend": spend}
         if cref:  # Meta can only check an ad set against a campaign that exists: borrow a similar one for the check
             cats = sorted(items[cref]["change"].get("special_ad_categories") or [])
             live_camps = _live_campaigns()
             twin = next((x for x in live_camps if x.get("objective") == obj and sorted(x.get("special_ad_categories") or []) == cats
-                         and bool(x.get("daily_budget") or x.get("lifetime_budget")) == camp["cbo"]), None)
+                         and (_has_budget(x.get("daily_budget")) or _has_budget(x.get("lifetime_budget"))) == camp["cbo"]), None)
             if twin:
                 step["check_params"] = {**p, "campaign_id": twin["id"]}
                 step["line"] += f' (Meta checked it against campaign "{twin["name"]}" as a stand-in, as the new campaign does not exist yet)'
@@ -1849,6 +2246,13 @@ def ops_for(c, items=None):
                 step["line"] += " (Meta can only check it once the new campaign exists, so at push)"
         return [step]
     if t == "meta_new_ad":
+        try:
+            aset = _adset_facts(c["adset_id"], load(), items if items is not None else _items())
+        except ValueError:
+            aset = {}
+        bad = _new_ad_goal_problems(c, aset)
+        if bad:
+            raise ValueError("; ".join(bad))
         src_cr = _live("ad", c["from_ad"])["creative"] if c.get("from_ad") else None
         aref = _ref(c["adset_id"])
         if aref:
@@ -1935,16 +2339,32 @@ def ops_for(c, items=None):
                  "line": f'{lvl} "{nm}": status {cur["status"].title()} -> {new.title()}',
                  "spend": f"activates {lvl}" if new == "ACTIVE" and cur["status"] != "ACTIVE" else ""}]
     if t == "meta_budget":
-        key = "lifetime_budget" if c.get("lifetime") else "daily_budget"
-        new = int(round(float(c["budget"]) * 100))
-        old = cur.get(key)
-        if not old:
-            raise ValueError(f"{lvl} has no {key.replace('_', ' ')} to change")
-        pct = (new - int(old)) / int(old) * 100
-        return [{"kind": "update", "id": oid, "params": {key: new}, "undo": {key: int(old)}, "budget": True,
-                 "line": f'{lvl} "{nm}": {key.replace("_", " ")} {_money_txt(old)} -> {_money_txt(new)} ({pct:+.0f}%)',
-                 "spend": f"budget up {pct:.0f}%" if new > int(old) else ""}]
+        d = load()
+        key, other = ("lifetime_budget", "daily_budget") if c.get("lifetime") else ("daily_budget", "lifetime_budget")
+        new = _minor(c["budget"], d)
+        try:
+            old = int(cur.get(key) or 0)  # Meta answers an unset budget with "0"
+        except (TypeError, ValueError):
+            old = 0
+        if old <= 0:
+            if _has_budget(cur.get(other)):
+                raise ValueError(f"{LEVEL_WORD[lvl]} has a {other.split('_')[0]} budget, not a {key.split('_')[0]} budget: "
+                                 f"set lifetime {'false' if c.get('lifetime') else 'true'} to change it")
+            raise ValueError(f"{LEVEL_WORD[lvl]} has no {key.replace('_', ' ')} to change")
+        if new <= 0:
+            raise ValueError("budget must be more than 0")
+        pct = (new - old) / old * 100
+        return [{"kind": "update", "id": oid, "params": {key: new}, "undo": {key: old}, "budget": True,
+                 "line": f'{lvl} "{nm}": {key.replace("_", " ")} {_money_txt(old, d)} -> {_money_txt(new, d)} ({pct:+.0f}%)',
+                 "spend": f"budget up {pct:.0f}%" if new > old else ""}]
     if t == "meta_end":
+        if not c.get("end_date") and _has_budget(cur.get("lifetime_budget")):
+            raise ValueError("this ad set spends a lifetime budget, which needs an end date: it can't be removed")
+        if c.get("end_date"):
+            bad = []
+            _future_date(c["end_date"], "end date", bad, end=True)
+            if bad:
+                raise ValueError("; ".join(bad))
         new = f"{c['end_date']}T23:59:00+0000" if c.get("end_date") else 0
         return [{"kind": "update", "id": oid, "params": {"end_time": new}, "undo": {"end_time": cur.get("end_time") or 0},
                  "line": f'ad set "{nm}": end {(cur.get("end_time") or "none")[:10]} -> {c.get("end_date") or "none"}',
@@ -1963,22 +2383,36 @@ def ops_for(c, items=None):
             geo = tg.setdefault("geo_locations", {})  # only the country list changes: regions, cities, ... stay
             old = set(geo.get("countries") or [])
             new = geo_countries.clean(c["countries"])
-            if new:
+            if set(new) == old and old:
+                pass  # the same countries in another order: the live list (and its order) stays as it is
+            elif new:
                 geo["countries"] = new
             else:
                 geo.pop("countries", None)
             if set(new) - old:
                 spend.append("more countries")
-        for k in ("age_min", "age_max"):
-            if c.get(k):
-                if (k == "age_min" and int(c[k]) < int(tg.get(k, 18))) or (k == "age_max" and int(c[k]) > int(tg.get(k, 65))):
-                    spend.append("wider age")
-                tg[k] = int(c[k])
+        lo, hi = _ages(c)  # read exactly as check() reads them; the side left out keeps its live value
+        rng = _age_range(c)
+        tg_old = cur.get("targeting") or {}
+        if lo is not None or hi is not None or rng is not None:
+            camp = next((x for x in load().get("campaigns") or [] if x.get("id") == str(cur.get("campaign_id"))), {})
+            bad = _age_problems(lo, hi, rng, tg_old, _adv(tg_old), camp.get("special_ad_categories"))
+            if bad:  # against the live targeting, right before it is sent
+                raise ValueError("; ".join(bad))
+        if lo is not None:
+            if lo < int(tg.get("age_min", AGE_LO)):
+                spend.append("wider age")
+            tg["age_min"] = lo
+        if hi is not None:
+            if hi > int(tg.get("age_max", AGE_HI)):
+                spend.append("wider age")
+            tg["age_max"] = hi
+        if rng is not None:  # Advantage+ audience: only the suggestion changes, the hard limits stay
+            tg["age_range"] = rng
         undo_wider = []
-        if _sets_ctry(c) and set((cur.get("targeting") or {}).get("geo_locations", {}).get("countries") or []) - {x.upper() for x in c["countries"]}:
+        if _sets_ctry(c) and set(tg_old.get("geo_locations", {}).get("countries") or []) - {x.upper() for x in c["countries"]}:
             undo_wider.append("brings back countries")
-        if (c.get("age_min") and int(c["age_min"]) > int((cur.get("targeting") or {}).get("age_min", 18))) or \
-                (c.get("age_max") and int(c["age_max"]) < int((cur.get("targeting") or {}).get("age_max", 65))):
+        if (lo is not None and lo > int(tg_old.get("age_min", AGE_LO))) or (hi is not None and hi < int(tg_old.get("age_max", AGE_HI))):
             undo_wider.append("widens the age range again")
         if any(c.get(k) for k in meta_audiences.AUD_KEYS):  # [audiences] include / exclude custom audiences
             tg, wider, narrower = meta_audiences.apply_targeting(tg, c, load())
@@ -1990,7 +2424,8 @@ def ops_for(c, items=None):
         aud = (f'; audiences {before["audiences"] or "none"} -> {after["audiences"] or "none"}; excluded {before["excluded"] or "none"} -> '
                f'{after["excluded"] or "none"}') if any(c.get(k) for k in meta_audiences.AUD_KEYS) else ""
         return [{"kind": "update", "id": oid, "params": {"targeting": _pin_device(tg)}, "undo": {"targeting": _pin_device(cur.get("targeting"))},
-                 "line": f'ad set "{nm}": locations {before["locations"] or "none"} -> {after["locations"] or "none"}; age {before["age"]} -> {after["age"]}' + aud,
+                 "line": f'ad set "{nm}": locations {before["locations"] or "none"} -> {after["locations"] or "none"}; '
+                         f'age {_age_text(cur.get("targeting"))} -> {_age_text(tg)}' + aud,
                  # conservative: undoing any targeting change puts the old targeting back, which can reach more people
                  "spend": ", ".join(spend), "undo_spend": ", ".join(undo_wider) or "puts the ad set's old targeting back (can reach more people)"}]
     if t == "meta_placements":
@@ -2080,11 +2515,13 @@ def _activate(s):
 
 
 def _refusal(entry, ex, rechecked):
-    """A change that could not be planned: a problem on its item (as before), or a crash for an unexpected error."""
+    """A change that could not be planned: always a problem on its own item, never a crash of the whole preview / push
+    (one broken draft item must not stop the others from being shown). Only an interrupt (not an Exception) goes on."""
     if isinstance(ex, (MetaError, ValueError, KeyError)):
         entry["problems"].append(str(ex))
-    elif rechecked:
-        entry["problems"].append(f"invalid change: {ex}")
+    elif isinstance(ex, Exception):
+        why = str(ex).strip().splitlines()[0][:120] if str(ex).strip() else "something in it is not in the expected shape"
+        entry["problems"].append(f"Studio couldn't read this change ({why}); edit or remove it and check again")
     else:
         raise ex
 
@@ -2189,10 +2626,18 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, c
     staged = []  # (item, entry, rechecked, steps that passed the local rules, error that stopped the item)
     _plan_tls.live = {}
     try:
-        _prefetch([it["change"] for it in items if not it["problems"]], workers, touched=reuse)
+        try:
+            _prefetch([it["change"] for it in items if not it.get("problems") and isinstance(it.get("change"), dict)], workers,
+                      touched=reuse)
+        except Exception:  # noqa: BLE001 - only a speed-up: each item then reads (and fails) on its own
+            pass
         for it in items:
-            entry = {"id": it["id"], "summary": it["summary"], "by": it["by"], "lines": [], "spend": [], "permanent": [],
-                     "problems": list(it["problems"])}
+            entry = {"id": it.get("id"), "summary": it.get("summary") or "", "by": it.get("by", ""), "lines": [], "spend": [],
+                     "permanent": [], "problems": list(it.get("problems") or [])}
+            if not isinstance(it.get("change"), dict):
+                entry["problems"].append("invalid change: the draft item has no change")
+                staged.append((it, entry, False, [], None, None))
+                continue
             rechecked = it["change"].get("type") in RECHECK
             if rechecked:  # [audiences] never trust stored problems: a synced or merged draft never went through add()
                 try:
@@ -2222,11 +2667,7 @@ def plan(tick=False, only=None, enable_new=False, workers=None, on_check=None, c
                             if ref not in pool:
                                 raise ValueError("it belongs to a new campaign / ad set that is no longer in the draft (or not in this push)")
                         ok_steps.append(s)
-                except (MetaError, ValueError, KeyError) as ex:
-                    stop = ex
-                except Exception as ex:  # noqa: BLE001
-                    if not rechecked:
-                        raise
+                except Exception as ex:  # noqa: BLE001 - any error in one item is that item's refusal, never a crash (M1)
                     stop = ex
                 finally:
                     _plan_tls.reads = None
@@ -2939,10 +3380,15 @@ def last_push():
 CHANGE_REFERENCE = """Meta (account "meta") draft changes. ids are Meta ids from list_entities (kinds campaigns, adsets, ads, audiences, leadforms).
   {"type":"meta_status","level":"campaign|adset|ad","id":"120..","status":"active|paused"}
   {"type":"meta_budget","level":"campaign|adset","id":"..","budget":40.0}          (account currency, daily; "lifetime":true for lifetime)
-     CBO campaigns: change the campaign; otherwise the ad set.
-  {"type":"meta_end","level":"adset","id":"..","end_date":"2026-12-31"}             (null = no end)
+     CBO campaigns: change the campaign; otherwise the ad set. The budget type must match the object's (budget_type in
+     list_entities); at least the ad account's minimum daily budget. JPY, KRW and other zero-decimal currencies: whole numbers.
+  {"type":"meta_end","level":"adset","id":"..","end_date":"2026-12-31"}             (after today; null = no end, refused for a
+     lifetime budget)
   {"type":"meta_rename","level":"campaign|adset|ad","id":"..","new_name":".."}
-  {"type":"meta_targeting","level":"adset","id":"..","countries":["GB","DE"],"age_min":25,"age_max":65}  (replaces the country list;
+  {"type":"meta_targeting","level":"adset","id":"..","countries":["GB","DE"],"age_min":25,"age_max":65}  (ages 18-65, min <= max;
+     one side alone keeps the other's live value. Advantage+ audience ad sets: age_min / age_max are hard limits (min at most
+     25, max 65); change the age suggestion with "age_range":[25,55] instead. Special ad categories (housing, employment,
+     credit): age 18-65 only and no lookalike audiences. Replaces the country list;
      the ad set's regions / cities stay. ISO 2-letter codes; [] alone changes nothing; "countries":[],"countries_clear":true
      removes every country, only when a region or city remains. Refused:
      countries Meta doesn't serve (CU, IR, KP, SY, RU), a country that overlaps a region / city of the ad set in that country,
@@ -2962,7 +3408,9 @@ CHANGE_REFERENCE = """Meta (account "meta") draft changes. ids are Meta ids from
      job ads need ["EMPLOYMENT"]. Always created Paused, lowest-cost bidding)
   {"type":"meta_new_adset","ref":"s1","campaign_id":"<id> or d-c1","name":"..","daily_budget":20.0,"countries":["GB"],
    "age_min":25,"age_max":65,"start_date":"2026-12-01","end_date":"2027-01-31","optimization_goal":"(optional)",
-   "conversion_event":"PURCHASE|LEAD|<custom event>","advantage_audience":false,"placements":{"advantage":true}}
+   "conversion_event":"PURCHASE|LEAD|<custom event>","advantage_audience":false,"age_range":[25,55] (Advantage+ audience
+   only: the age suggestion),"placements":{"advantage":true}}   (placements: Audience Network or Messenger need Facebook or
+     Instagram too)
      (daily_budget only when the campaign has no campaign budget. Defaults per objective: traffic LANDING_PAGE_VIEWS,
       awareness REACH, engagement POST_ENGAGEMENT, leads OFFSITE_CONVERSIONS (pixel, LEAD), sales OFFSITE_CONVERSIONS
       (pixel, PURCHASE); billing IMPRESSIONS. Always created Paused)
@@ -2973,7 +3421,10 @@ CHANGE_REFERENCE = """Meta (account "meta") draft changes. ids are Meta ids from
   {"type":"meta_new_ad","adset_id":"<id> or d-s1","name":"..","primary_text":"..","link":"<see more link>","cta":"..",
    "cards":[{"media_id":"<uploaded image>","name":"<card headline>","description":"..","link":"..","cta":"(optional)"}, ..]}
      (a new carousel: 2-10 cards, each an uploaded image; no from_ad / media_id. Cards keep their order and Meta adds
-      no end card. Images are uploaded at Push live. Always created Paused)
+      no end card. Images are uploaded at Push live. Always created Paused. Uploaded-file and carousel ads are refused in
+      Lead generation ad sets: Studio can't attach a lead form; copy an ad that has one with from_ad)
+  Links: https:// (or http://) with a website address, no spaces. cta: one of the call to action types in meta_config
+  (LEARN_MORE, BOOK_NOW, SHOP_NOW, GET_QUOTE, SEE_DETAILS, ...). Names can't be empty.
   "ref" names a new campaign / ad set inside one add_to_draft call; "d-<ref or draft item id>" points at it.
   Push order: new campaigns, then new ad sets, then new ads, then edits. Rollback and undo set to DELETED only what that
   push created; anything that existed before only gets its old values back.

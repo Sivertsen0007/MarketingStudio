@@ -490,8 +490,12 @@ def _started_meta(o):
 NEW_FOR = 86400  # no_delivery: a campaign / ad set that started less than this long ago is left alone
 
 
-def _cents(v):
-    return round(int(v) / 100, 2) if v not in (None, "", "0", 0) else None
+def _cents(v, currency=""):
+    """A Meta budget (the currency's smallest unit) -> account currency. Offset-1 currencies (JPY, KRW, ...) have no
+    minor unit on Meta, so 5000 JPY is 5000, not 50.00."""
+    from meta_ads import OFFSET_1  # noqa: PLC0415
+    factor = 1 if str(currency or "").upper() in OFFSET_1 else 100
+    return round(int(v) / factor, 2) if v not in (None, "", "0", 0) else None
 
 
 def meta_fields(need, tz, now=None):
@@ -553,13 +557,13 @@ def fetch_meta(acct, need, get=None, now=None, tz_hint=None, busy=_meta_busy):
     for c in _edge(node, "campaigns", get, counter, busy):
         snap["campaigns"][str(c["id"])] = {"id": str(c["id"]), "name": c.get("name", ""),
                                            "status": (c.get("effective_status") or "").replace("_", " ").title(),
-                                           "active": c.get("effective_status") == "ACTIVE", "budget": _cents(c.get("daily_budget")),
+                                           "active": c.get("effective_status") == "ACTIVE", "budget": _cents(c.get("daily_budget"), node.get("currency")),
                                            "budget_id": str(c["id"]) if c.get("daily_budget") else "",
                                            "started": _started_meta(c)}
     for s in _edge(node, "adsets", get, counter, busy):
         snap["adsets"][str(s["id"])] = {"id": str(s["id"]), "name": s.get("name", ""), "campaign_id": str(s.get("campaign_id")),
                                         "status": (s.get("effective_status") or "").replace("_", " ").title(),
-                                        "active": s.get("effective_status") == "ACTIVE", "budget": _cents(s.get("daily_budget")),
+                                        "active": s.get("effective_status") == "ACTIVE", "budget": _cents(s.get("daily_budget"), node.get("currency")),
                                         "learning": (s.get("learning_stage_info") or {}).get("status"), "started": _started_meta(s)}
     if need.get("adsets"):
         snap["parts"].append("adsets")

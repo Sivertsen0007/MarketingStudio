@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private var logHandle: FileHandle?
     private var port = 4830
     private var terminating = false
+    private var hideAfterFullScreen = false  // Cmd-W in full screen: hide once full screen has ended
     private var sigtermSource: DispatchSourceSignal?
 
     /// MSTUDIO_HEADLESS_TEST=1: never show a modal dialog (automated launch tests);
@@ -70,7 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         stopServer()
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    // S8: closing the window (Cmd-W or the red button) only hides it. The app and the engine keep running, so a push or
+    // upload in progress is never killed; the Dock icon brings the window back. Only Cmd-Q (Quit) stops Studio.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { showWindow() }
@@ -209,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             alert.informativeText = "Exit \(status).\n\n\(tail)\n\nFull log: \(logURL.path)\nQuit and open Marketing Studio again to restart it."
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)  // the window may be hidden: bring Studio forward so the alert is seen
             alert.runModal()
         }
     }
@@ -337,10 +341,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         if studioLoaded { loadStudio() }
     }
 
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === window, !terminating else { return true }
+        if sender.styleMask.contains(.fullScreen) {
+            // leave full screen first, then hide (windowDidExitFullScreen), so no empty black Space is left behind
+            hideAfterFullScreen = true
+            sender.toggleFullScreen(nil)
+            return false
+        }
+        sender.saveFrame(usingName: AppDelegate.frameKey)
+        sender.orderOut(nil)  // hidden, not closed: the page (and any push it is following) stays as it is
+        return false
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        guard hideAfterFullScreen, let w = notification.object as? NSWindow, w === window else { return }
+        hideAfterFullScreen = false
+        w.saveFrame(usingName: AppDelegate.frameKey)
+        w.orderOut(nil)
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === window else { return }
         closing.saveFrame(usingName: AppDelegate.frameKey)
-        if !terminating { NSApp.terminate(nil) }
     }
 
     // MARK: - Links, new windows, downloads
@@ -517,7 +540,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Marketing Studio", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
-        // U26: File > Close Window (Cmd-W). Studio has one window, so closing it quits, like the red button.
+        // U26/S8: File > Close Window (Cmd-W) hides the window, like the red button; Studio keeps running (Dock icon reopens it)
         let fileItem = NSMenuItem(); main.addItem(fileItem)
         let file = NSMenu(title: "File"); fileItem.submenu = file
         file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")

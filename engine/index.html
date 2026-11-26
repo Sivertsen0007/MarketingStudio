@@ -1257,16 +1257,18 @@ document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
 // ---- draft panel ----
 // M7 (one way to edit): the fields a Meta change sets on its object, e.g. "adset:123:status". A new change for a field
 // that is already in the draft replaces that draft item (its other fields are kept in the new change) instead of a duplicate.
-// Carousel copy: one item per ad, its cards merged per card. Never replaced: list additions (audiences in / out add up, they are unioned when items merge), a status change that ends
-// a test (with_end, from Tests: it stays next to a plain status change), and new objects.
+// Carousel copy: one item per ad, its cards merged per card field. Never replaced: list additions (audiences in / out add up,
+// they are unioned when items merge), a status change that ends a test (with_end, from Tests: it stays next to a plain
+// status change), and new objects. age_min and age_max are separate fields (a one-sided change keeps the other side).
 const MBASE = ["type", "level", "id"], MLIST = ["audiences_add", "audiences_remove", "excluded_add", "excluded_remove"];
+const MWHOLE = ["meta_status", "meta_budget", "meta_rename", "meta_end", "meta_placements"];  // one value: replaced whole, never folded
 function mFieldKeys(c, fieldsOnly){
   const t = c.type || "";
   if (!t.startsWith("meta_") || /^meta_new_/.test(t) || !c.level || c.id == null || (t === "meta_status" && c.with_end)) return [];
   const simple = {meta_status:"status", meta_rename:"name", meta_end:"end", meta_placements:"placements"};
   const g = simple[t] ? [simple[t]] : t === "meta_budget" ? [c.lifetime ? "lifetime_budget" : "budget"]
     : Object.keys(c).filter(k => !MBASE.includes(k) && !MLIST.includes(k)).flatMap(k =>
-        t === "meta_targeting" ? [k === "countries_clear" ? "countries" : /^age_(min|max)$/.test(k) ? "age" : k]
+        t === "meta_targeting" ? [k === "countries_clear" ? "countries" : k]
         : k === "cards" ? (Array.isArray(c.cards) ? c.cards : []).map(x => `${t}.card${x.index}`)  // carousel: one field per card
         : [t + "." + k]);
   // carousel copy: one item per ad (two would each make a new creative); cards merge per card, so none is lost
@@ -1274,46 +1276,71 @@ function mFieldKeys(c, fieldsOnly){
   return [...new Set(g)].map(f => `${c.level}:${c.id}:${f}`);
 }
 const keyOf = (oc, k, v) => mFieldKeys({type:oc.type, level:oc.level, id:oc.id, [k]:v}, true);
+// carousel cards: per card field, the newer one wins; sorted by index
+function mergeCards(older, newer){
+  const by = new Map();
+  for (const x of older || []) by.set(x.index, {...x});
+  for (const x of newer || []) by.set(x.index, {...(by.get(x.index) || {}), ...x});
+  return [...by.values()].sort((a, b) => a.index - b.index);
+}
+// an earlier change of the same kind folded into a later one: the later one wins per field, lists add up, cards merge
+function foldChange(older, newer){
+  const out = {...newer}, mine = new Set(mFieldKeys(newer, true));
+  for (const [k, v] of Object.entries(older)){
+    if (MBASE.includes(k)) continue;
+    if (MLIST.includes(k)){ out[k] = [...new Set([...(v || []), ...(out[k] || [])])]; continue }
+    if (k === "cards"){ out.cards = mergeCards(v, out.cards); continue }
+    if (!(k in out) && !keyOf(older, k, v).some(x => mine.has(x))) out[k] = v;
+  }
+  return out;
+}
+const canFold = (a, b) => a.type === b.type && !MWHOLE.includes(b.type);
+// -> {changes, per: [the draft items each change replaces], dropped: every replaced draft item}
 function metaReplace(changes){
   const items = S.draftItems || [], drop = new Map(), out = [];
   for (const c of changes){
-    const mine = new Set(mFieldKeys(c)); if (!mine.size){ out.push(c); continue }
-    const merged = {...c};
-    for (const it of items){
-      const oc = it.change || {}, theirs = mFieldKeys(oc); if (!theirs.some(k => mine.has(k))) continue;
-      drop.set(it.id, it);
-      // the earlier item's other fields (same kind of change, other fields) stay, in the new change
-      if (oc.type !== c.type || ["meta_status", "meta_budget", "meta_rename", "meta_end", "meta_placements"].includes(c.type)) continue;
-      for (const [k, v] of Object.entries(oc)){
-        if (MBASE.includes(k)) continue;
-        if (MLIST.includes(k)){ merged[k] = [...new Set([...(merged[k] || []), ...(v || [])])]; continue }  // audiences add up
-        if (k === "cards"){ const have = new Set((merged.cards || []).map(x => x.index)); merged.cards = [...(merged.cards || []), ...(v || []).filter(x => !have.has(x.index))]; continue }
-        if (!(k in merged) && !keyOf(oc, k, v).some(x => mine.has(x))) merged[k] = v;
-      }
+    const mine = new Set(mFieldKeys(c)); if (!mine.size){ out.push({change:c, replaced:[]}); continue }
+    let merged = {...c}; const rep = [];
+    // the same field twice in this batch: the later one wins, one item
+    for (let j = out.length - 1; j >= 0; j--){
+      const o = out[j]; if (!mFieldKeys(o.change).some(k => mine.has(k))) continue;
+      if (canFold(o.change, merged)) merged = foldChange(o.change, merged);
+      rep.push(...o.replaced); out.splice(j, 1);
     }
-    out.push(merged);
+    for (const it of items){
+      if (drop.has(it.id)) continue;
+      const oc = it.change || {}; if (!mFieldKeys(oc).some(k => mine.has(k))) continue;
+      drop.set(it.id, it); rep.push(it);
+      if (canFold(oc, merged)) merged = foldChange(oc, merged);  // the earlier item's other fields stay, in the new change
+    }
+    out.push({change:merged, replaced:rep});
   }
-  return {changes:out, dropped:[...drop.values()]};
+  return {changes:out.map(o => o.change), per:out.map(o => o.replaced), dropped:[...drop.values()]};
 }
 const whoseChange = by => !by || by === "you" ? "the" : by === "claude" ? "Claude's" : `${by}'s`;
 const itemWords = i => String(i.summary || "").replace(/^Meta /, "").replace(/\badset\b/g, "ad set").replace(/\badsets\b/g, "ad sets");
+// put draft items back as they were: their own author and note
+async function restoreItems(list, send = (p, b) => api(p, b)){
+  const groups = {};
+  for (const i of list){ const k = JSON.stringify([i.by || "you", i.note || ""]); (groups[k] = groups[k] || []).push(i.change) }
+  for (const [k, ch] of Object.entries(groups)){ const [by, n] = JSON.parse(k); try { await send("/api/draft/add", {changes:ch, note:n, by}) } catch(e2) {} }
+}
 async function addChanges(changes, note, extra){
-  let replaced = [];
+  let replaced = [], per = [];
   if (isMeta()){
-    const r = metaReplace(changes); changes = r.changes; replaced = r.dropped;
-    // the note of a replaced change carries over when this one has none
-    if (!note && replaced.length) note = [...new Set(replaced.map(i => i.note).filter(Boolean))].join("; ");
+    const r = metaReplace(changes); changes = r.changes; replaced = r.dropped; per = r.per;
     if (replaced.length) await api("/api/draft/remove", {ids:replaced.map(i => i.id)});
   }
-  let items;
-  try { items = await api("/api/draft/add", {changes, note, by:"you"}) }
-  catch(e){  // put the replaced items back as they were: their own author and note
-    if (replaced.length){
-      const groups = {};
-      for (const i of replaced){ const k = JSON.stringify([i.by || "you", i.note || ""]); (groups[k] = groups[k] || []).push(i.change) }
-      for (const [k, ch] of Object.entries(groups)){ const [by, n] = JSON.parse(k); try { await api("/api/draft/add", {changes:ch, note:n, by}) } catch(e2) {} }
-      poll(true);
-    }
+  // one add per note: a change with no note of its own keeps the note of the item(s) it replaced (per change)
+  const groups = [];
+  changes.forEach((c, i) => { const n = note || [...new Set((per[i] || []).map(x => x.note).filter(Boolean))].join("; ");
+    let g = groups.find(g => g.note === n); if (!g) groups.push(g = {note:n, changes:[]}); g.changes.push(c) });
+  const items = [];
+  try { for (const g of groups) items.push(...await api("/api/draft/add", {changes:g.changes, note:g.note, by:"you"})) }
+  catch(e){  // take back what got in, put the replaced items back as they were
+    if (items.length) try { await api("/api/draft/remove", {ids:items.map(i => i.id)}) } catch(e2) {}
+    if (replaced.length) await restoreItems(replaced);
+    if (items.length || replaced.length) poll(true);
     throw e;
   }
   const bad = items.filter(i => i.problems.length);
@@ -2379,33 +2406,138 @@ function wireCounts(){ document.querySelectorAll("#editBody .cnt[data-max]").for
 const AUTO = {t:null, job:null, chain:Promise.resolve(), ids:{}};
 function asStatus(txt, cls){ const s = $("#asState"); if (s){ s.textContent = txt; s.className = "asstate " + (cls || "") } }
 // collect() reads the panel right now -> list of changes (throws Error("why") when it can't be saved yet)
-function autoSave(r, keys, collect){ AUTO.job = {r, keys, collect, acct:S.acct}; clearTimeout(AUTO.t); AUTO.t = setTimeout(asFlush, 1000); asStatus("Saving ...") }
+function autoSave(r, keys, collect, level = MLEVEL[S.kind]){ AUTO.job = {r, keys, collect, level, acct:S.acct}; clearTimeout(AUTO.t); AUTO.t = setTimeout(asFlush, 1000); asStatus("Saving ...") }
+// ---- the Edit panel rewrites the draft items of its row; it must never drop what it can't show ----
+// Fields of a draft change the panel shows (and so rebuilds from its inputs); everything else in an item is kept.
+const PANEL_FIELDS = {meta_status:["status"], meta_rename:["new_name"], meta_budget:["budget", "lifetime"], meta_end:["end_date"],
+  meta_targeting:["countries", "countries_clear", "age_min", "age_max", "age_range"], meta_copy:["primary_text", "headline", "description", "link", "cta"],
+  meta_carousel_copy:["primary_text", "link", "cards"], meta_feed_copy:["bodies", "titles", "descriptions", "link_urls"]};
+const PANEL_CARD = ["name", "description", "link"];
+function panelKeys(c, r){
+  const t = c.type || "";
+  if (t === "meta_status" && c.with_end) return [];  // ends a test: the panel never rewrites it
+  if (/^meta_(copy|carousel_copy|feed_copy)$/.test(t) && t !== r.edit_type) return [];
+  if (t === "meta_placements") return Object.keys(c).filter(k => !MBASE.includes(k));
+  return (PANEL_FIELDS[t] || []).filter(k => k in c);
+}
+const pvEq = (k, a, b) => {
+  if (k === "countries") return JSON.stringify([...(a || [])].map(String).sort()) === JSON.stringify([...(b || [])].map(String).sort());
+  if (Array.isArray(a) || Array.isArray(b) || (a && typeof a === "object")) return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return k === "status" ? String(a ?? "").toLowerCase() === String(b ?? "").toLowerCase() : String(a ?? "") === String(b ?? "");
+};
+// did the panel change what this item holds? (pc = the panel's change of the same kind for the object, or none)
+function panelTouched(oc, pc, keys){
+  if (!keys.length) return false;
+  if (!pc) return true;
+  if (oc.type === "meta_placements"){ const pk = Object.keys(pc).filter(k => !MBASE.includes(k)); return pk.length !== keys.length || keys.some(k => !pvEq(k, oc[k], pc[k])) }
+  return keys.some(k => k === "cards" ? (oc.cards || []).some(x => { const y = (pc.cards || []).find(z => z.index === x.index);
+    return PANEL_CARD.some(f => f in x && !(y && pvEq(f, x[f], y[f]))) }) : !pvEq(k, oc[k], pc[k]));
+}
+// what the panel can't show of an item: {type, level, id, ...the rest} (cards keep their other fields), or null
+function panelLeft(oc, keys){
+  const out = {}; let n = 0;
+  for (const [k, v] of Object.entries(oc)){
+    if (MBASE.includes(k)) continue;
+    if (k === "cards" && keys.includes("cards")){
+      const cards = (v || []).map(x => Object.fromEntries(Object.entries(x).filter(([f]) => f === "index" || !PANEL_CARD.includes(f)))).filter(x => Object.keys(x).length > 1);
+      if (cards.length){ out.cards = cards; n++ } continue;
+    }
+    if (!keys.includes(k)){ out[k] = v; n++ }
+  }
+  return n ? {type:oc.type, level:oc.level, id:oc.id, ...out} : null;
+}
+// panel changes + the row's draft items -> what to remove, keep and add (S5c: nothing the panel can't show is lost)
+// take an unchanged item's fields out of the panel's change (it already holds them)
+function panelStrip(pc, oc, keys){
+  for (const k of keys){
+    if (k !== "cards"){ delete pc[k]; continue }
+    for (const c of oc.cards || []){ const y = (pc.cards || []).find(z => z.index === c.index); if (y) PANEL_CARD.forEach(f => { if (f in c) delete y[f] }) }
+    pc.cards = (pc.cards || []).filter(y => Object.keys(y).length > 1); if (!pc.cards.length) delete pc.cards;
+  }
+  return pc;
+}
+const hasFields = c => Object.keys(c).some(k => !MBASE.includes(k));
+const cloneCh = c => ({...c, ...(c.cards ? {cards:c.cards.map(x => ({...x}))} : {})});
+function panelPlan(r, ch, olds){
+  const pcs = ch.map(cloneCh), meta = {};
+  const pcFor = oc => pcs.find(c => c.type === oc.type && c.level === oc.level && String(c.id) === String(oc.id));
+  const v = olds.map(it => { const oc = it.change || {}, keys = panelKeys(oc, r); return {it, oc, keys, pc:pcFor(oc), touched:panelTouched(oc, pcFor(oc), keys)} });
+  // one item per object per kind (targeting, copy, carousel, feed copy): two would clash at push (the engine refuses the same
+  // field twice, or both creatives are built from the live one and one is lost). If the panel still changes anything else of
+  // that kind on the object, every item of that kind is folded into the panel's change (note kept, author announced).
+  for (const pc of pcs){
+    if (MWHOLE.includes(pc.type)) continue;
+    const group = v.filter(x => x.pc === pc); if (!group.length || group.every(x => x.touched)) continue;
+    const rest = cloneCh(pc); group.filter(x => !x.touched).forEach(x => panelStrip(rest, x.oc, x.keys));
+    if (group.some(x => x.touched) || hasFields(rest)) group.forEach(x => { x.touched = true });
+  }
+  const keep = [], remove = [], extra = [], announce = [];
+  for (const x of v.filter(x => !x.touched)){  // the item already holds what the panel shows: it stays as it is (author, note)
+    keep.push(x.it.id);
+    const pc = x.pc; if (!pc || !pcs.includes(pc) || !x.keys.length) continue;
+    if (MWHOLE.includes(x.oc.type)){ pcs.splice(pcs.indexOf(pc), 1); continue }
+    if (!hasFields(panelStrip(pc, x.oc, x.keys))) pcs.splice(pcs.indexOf(pc), 1);
+  }
+  // an End test status (with_end) in the draft already sets this status: the panel adds no plain status next to it
+  for (const it of S.draftItems || []){ const oc = it.change || {}; if (oc.type !== "meta_status" || !oc.with_end) continue;
+    const pc = pcFor(oc); if (pc && pvEq("status", pc.status, oc.status)) pcs.splice(pcs.indexOf(pc), 1) }
+  for (const x of v.filter(x => x.touched)){  // rebuilt from the panel; what it can't show is folded in, or stays with its author
+    remove.push(x.it.id);
+    const left = panelLeft(x.oc, x.keys), pc = x.pc && pcs.includes(x.pc) ? x.pc : null;
+    if (pc){
+      if (left) for (const [k, val] of Object.entries(left)){ if (MBASE.includes(k)) continue;
+        if (MLIST.includes(k)) pc[k] = [...new Set([...(val || []), ...(pc[k] || [])])];
+        else if (k === "cards") pc.cards = mergeCards(val, pc.cards);
+        else if (!(k in pc)) pc[k] = val }
+      const m = meta[pcs.indexOf(pc)] = meta[pcs.indexOf(pc)] || {notes:[]}; if (x.it.note) m.notes.push(x.it.note);
+      if (x.it.by && x.it.by !== "you") announce.push(x.it);
+    } else if (left){ extra.push({...x.it, change:left}); if (x.it.by && x.it.by !== "you") announce.push(x.it) }  // shown fields back to live; the rest stays as it was
+  }
+  return {keep, remove, add:pcs.map((c, i) => ({change:c, note:[...new Set((meta[i] || {notes:[]}).notes)].join("; ")})), extra, announce};
+}
 function asFlush(){
   clearTimeout(AUTO.t); AUTO.t = null; const j = AUTO.job; AUTO.job = null; if (!j) return AUTO.chain;
   let ch; try { ch = j.collect() } catch(e) { asStatus("Not saved: " + e.message, "bad"); return AUTO.chain }
   const key = j.acct + ":" + j.r.id;
   AUTO.chain = AUTO.chain.then(async () => {
-    const have = new Set((S.draftItems || []).map(i => i.id));
-    const old = [...new Set([...(AUTO.ids[key] || []), ...draftIdsFor(j.r, j.keys)])].filter(id => have.has(id));
-    if (!old.length && !ch.length){ asStatus("No changes", ""); return }
+    const byId = new Map((S.draftItems || []).map(i => [i.id, i]));
+    // every draft item on this object (not only what the row knew when the panel opened: Claude may have added one since)
+    const onObj = (S.draftItems || []).filter(i => { const c = i.change || {}; return j.level && c.level === j.level && String(c.id) === String(j.r.id) && !/^meta_new_/.test(c.type || "") }).map(i => i.id);
+    const olds = [...new Set([...(AUTO.ids[key] || []), ...draftIdsFor(j.r, j.keys), ...(j.acct === S.acct ? onObj : [])])].filter(id => byId.has(id)).map(id => byId.get(id));
+    if (!olds.length && !ch.length){ asStatus("No changes", ""); return }
     const send = (path, body) => fetch(path, {method:"POST", headers:{"Content-Type":"application/json", "X-Studio-Press":PRESS}, body:JSON.stringify({acct:j.acct, ...body})})
       .then(async r => { const x = await r.json(); if (!r.ok) throw new Error(x.error || r.statusText); return x });
-    if (old.length) await send("/api/draft/remove", {ids:old});
-    const items = ch.length ? await send("/api/draft/add", {changes:ch, note:"", by:"you"}) : [];
-    AUTO.ids[key] = items.map(i => i.id);
+    const plan = panelPlan(j.r, ch, olds), gone = olds.filter(i => plan.remove.includes(i.id));
+    if (!gone.length && !plan.add.length){ AUTO.ids[key] = plan.keep; asStatus(olds.length ? "In the draft" : "No changes", ""); return }
+    if (gone.length) await send("/api/draft/remove", {ids:gone.map(i => i.id)});
+    const items = [];
+    try {
+      const groups = {};  // the panel's changes are yours, one add per note; what it can't show keeps its author and note
+      for (const a of plan.add) (groups[a.note] = groups[a.note] || []).push(a.change);
+      for (const [n, list] of Object.entries(groups)) items.push(...await send("/api/draft/add", {changes:list, note:n, by:"you"}));
+      for (const x of plan.extra) items.push(...await send("/api/draft/add", {changes:[x.change], note:x.note || "", by:x.by || "you"}));
+    } catch(e){
+      if (items.length) try { await send("/api/draft/remove", {ids:items.map(i => i.id)}) } catch(e2) {}
+      await restoreItems(gone, send);
+      throw e;
+    }
+    AUTO.ids[key] = [...plan.keep, ...items.map(i => i.id)];
     const bad = items.filter(i => i.problems.length);
-    asStatus(bad.length ? `Saved, but ${bad.length} need fixing (see Draft)` : ch.length ? "Saved to draft" : "Back to the live version", bad.length ? "bad" : "ok");
+    const upd = plan.announce.length ? "Updated " + plan.announce.map(i => `${whoseChange(i.by)} change to ${itemWords(i)}`).join("; ") : "";
+    asStatus(bad.length ? `Saved, but ${bad.length} need fixing (see Draft)` : upd || (plan.add.length || plan.keep.length ? "Saved to draft" : plan.extra.length ? "Back to live; kept what this panel doesn't show (see Draft)" : "Back to the live version"), bad.length ? "bad" : "ok");
+    if (upd) toast(upd);
     if (j.acct === S.acct) await poll(true);
-  }).catch(e => { asStatus("Not saved: " + e.message, "bad"); toast(e.message) });
+  }).catch(e => { asStatus("Not saved: " + e.message, "bad"); toast(e.message); if (j.acct === S.acct) poll(true) });
   return AUTO.chain;
 }
 // wire the panel: every edit (except the preview picker) schedules a save; Revert drops this row's draft changes
 function wireAutoSave(r, keys, collect, onInput){
   const b = $("#editBody");
-  const go = e => { if (onInput) onInput(e); if (e.target.closest("#pvPlace, .prevbox")) return; autoSave(r, keys, collect) };
+  const level = MLEVEL[S.kind];  // the panel's own level, even if a save fires after another tab is picked
+  const go = e => { if (onInput) onInput(e); if (e.target.closest("#pvPlace, .prevbox")) return; autoSave(r, keys, collect, level) };
   b.oninput = go; b.onchange = go;
-  const trigger = () => autoSave(r, keys, collect);
-  editFoot([["Revert to live", async () => { AUTO.job = {r, keys, collect:() => [], acct:S.acct}; await asFlush(); renderEdit({...r, _draft:undefined}) }]]);
+  const trigger = () => autoSave(r, keys, collect, level);
+  editFoot([["Revert to live", async () => { AUTO.job = {r, keys, collect:() => [], level, acct:S.acct}; await asFlush(); renderEdit({...r, _draft:undefined}) }]]);
   $("#editFoot").insertAdjacentHTML("beforeend", `<span id="asState" class="asstate">${r._draft && Object.keys(r._draft).length ? "In the draft. Edits save on their own." : "Edits save to the draft on their own."}</span>`);
   return trigger;
 }
@@ -2489,7 +2621,7 @@ function editAd(r){
   pvLabel(r);
   const save = wireAutoSave(r, ["status", "ad", ...COPY_KEYS, "cards", "bodies", "titles", "descriptions", "link_urls"], () => {
     const ch = [];
-    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
+    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status"), "ads"));
     if (val("e_name") !== r.ad) ch.push({type:"meta_rename", level:"ad", id:r.id, new_name:val("e_name")});
     const c = adCopyChange(r);
     if (c){
@@ -2686,7 +2818,7 @@ function editAdset(r){
   wirePl(); wireFx(); wireAge(); GeoPicker.wire("e_ctry");
   wireAutoSave(r, ["status", "ad_set", "budget", "lifetime_budget", "countries", "age", "age_control", "end", "placements"], () => {
     const ch = [];
-    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
+    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status"), "adsets"));
     if (val("e_name") !== r.ad_set) ch.push({type:"meta_rename", level:"adset", id:r.id, new_name:val("e_name")});
     if (!r.cbo){ const b = budgetChange(r, "adset"); if (b) ch.push(b) }
     const ctry = GeoPicker.read("e_ctry"), t = {type:"meta_targeting", level:"adset", id:r.id};
@@ -2721,7 +2853,7 @@ function editCampaign(r){
   wireFx();
   wireAutoSave(r, ["status", "campaign", "budget", "lifetime_budget"], () => {
     const ch = [];
-    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status")));
+    if (val("e_status") !== r.status) ch.push(changeFor(r, "status", val("e_status"), "campaigns"));
     if (val("e_name") !== r.campaign) ch.push({type:"meta_rename", level:"campaign", id:r.id, new_name:val("e_name")});
     if (btype(r)){ const b = budgetChange(r, "campaign"); if (b) ch.push(b) }
     return ch;

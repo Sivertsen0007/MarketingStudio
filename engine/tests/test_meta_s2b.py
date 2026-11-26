@@ -183,7 +183,9 @@ class RawUpload(unittest.TestCase):
         self.assertEqual(st, 200, out)
         self.assertEqual((out["kind"], out["width"], out["height"]), ("image", 1080, 1350))
         self.assertEqual(call({"Content-Type": "application/octet-stream"})[0], 403)  # no press secret
-        full = OSError(28, "No space left on device")
+        def full(name, f, n):  # (store_media_stream(filename, stream, length)) the disk fills after the body is read: a clean close, so the 507 answer always arrives
+            f.read(n)
+            raise OSError(28, "No space left on device")
         with mock.patch.object(server.meta, "store_media_stream", mock.Mock(side_effect=full)):
             st, out = call({"Content-Type": "application/octet-stream", "X-Studio-Press": server.PRESS})
         self.assertEqual(st, 507)

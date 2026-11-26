@@ -261,6 +261,15 @@ def _cached_copy(max_age):
     return d, max_age is None or datapolicy.fresh(_src(), age, max_age, _filled(d))
 
 
+def cached_account():
+    """The ad account (currency, min_daily_budget, ...) from the cache file, without any network call; {} when unknown."""
+    try:
+        d, _ok = _cached_copy(None)
+    except Exception:  # noqa: BLE001 - only used for formatting
+        d = None
+    return (d or {}).get("account") or {}
+
+
 def load(max_age=CACHE_MAX_AGE, wait=False):
     """Cached account data. datapolicy decides when it is stale: in manual mode (the default) never, until the user
     refreshes. In auto mode a stale cache is served at once and refreshed in the background (a full pull takes ~20s).
@@ -746,6 +755,7 @@ def state():
 # ---------- draft: Meta change types ----------
 
 LEVELS = ("campaign", "adset", "ad")
+LEVEL_WORD = {"campaign": "campaign", "adset": "ad set", "ad": "ad"}
 
 
 def _find(d, level, oid):
@@ -1072,7 +1082,8 @@ def _age_problems(lo, hi, rng, tg0, adv, cats):
     mhi = hi if hi is not None else int(tg0.get("age_max") or AGE_HI)
     if not AGE_LO <= mlo <= mhi <= AGE_HI:
         return [f"age must be {AGE_LO}-{AGE_HI} with min <= max (this makes {mlo}-{mhi})"]
-    if adv and (lo is not None or hi is not None) and (mlo > ADV_AGE_MIN_MAX or mhi < AGE_HI):
+    # only the side(s) the change sets: an untouched live value the user did not change never blocks the edit
+    if adv and ((lo is not None and lo > ADV_AGE_MIN_MAX) or (hi is not None and hi < AGE_HI)):
         out.append(f"Advantage+ audience is on: age_min / age_max are hard limits Meta takes only up to {ADV_AGE_MIN_MAX} "
                    f"(min) and at {AGE_HI} (max); change the age suggestion (age_range) instead")
     if rng is not None:
@@ -1083,7 +1094,8 @@ def _age_problems(lo, hi, rng, tg0, adv, cats):
             out.append(f"age suggestion must be {AGE_LO}-{AGE_HI} with min <= max")
         elif rng[0] < mlo or rng[1] > mhi:
             out.append(f"the age suggestion {rng[0]}-{rng[1]} must sit inside the hard limits {mlo}-{mhi}")
-    if _restricted(cats) and (mlo != AGE_LO or mhi != AGE_HI or (rng is not None and rng != [AGE_LO, AGE_HI])):
+    if _restricted(cats) and ((lo is not None and lo != AGE_LO) or (hi is not None and hi != AGE_HI)
+                              or (rng is not None and rng != [AGE_LO, AGE_HI])):
         out.append(f"special ad category (housing, employment or credit): Meta only allows age {AGE_LO}-{AGE_HI} in these ad sets")
     return out
 
@@ -1115,6 +1127,18 @@ def _placement_problems(pl):
         if pl.get(key) and plat not in pubs:
             out.append(f"{key} given but {plat} is not in publisher_platforms")
     return out
+
+
+def _placement_warnings(pl):
+    """Placement mixes Meta may refuse, not confirmed by a validate_only check yet: warnings only."""
+    pl = pl or {}
+    if pl.get("advantage", not pl.get("publisher_platforms")):
+        return []
+    pubs = set(pl.get("publisher_platforms") or [])
+    if "audience_network" in pubs and "instagram" in pubs and "facebook" not in pubs:
+        return ["placements: Audience Network with Instagram but without Facebook may be refused by Meta; "
+                "add Facebook if the preview says so"]
+    return []
 
 
 def _texts(c):
@@ -1156,13 +1180,14 @@ def _copy_warnings(c):
         v = c.get(k)
         if isinstance(v, str) and len(v) > COPY_LIMITS[k]:
             out.append(f"{k}: {len(v)} chars - Meta cuts it after about {COPY_LIMITS[k]}")
-    for x in c.get("cards") or []:
+    for pos, x in enumerate(c.get("cards") or []):
         if not isinstance(x, dict):
             continue
+        n = int(x["index"]) + 1 if isinstance(x.get("index"), int) else pos + 1  # copy edits name their card; new carousels go by position
         for k in ("name", "description"):
             v, lim = x.get(k), COPY_LIMITS[f"card {k}"]
             if isinstance(v, str) and len(v) > lim:
-                out.append(f"card {int(x.get('index', 0)) + 1} {k}: {len(v)} chars - Meta cuts it after about {lim}")
+                out.append(f"card {n} {k}: {len(v)} chars - Meta cuts it after about {lim}")
     for k in ("bodies", "titles", "descriptions"):
         for i, v in enumerate(c.get(k) or []):
             if isinstance(v, str) and len(v) > COPY_LIMITS[k]:
@@ -1214,10 +1239,10 @@ def _budget_problems(c, o, d):
     word = key.split("_")[0]
     if not _has_budget(o.get(key)):
         if _has_budget(o.get(other)):
-            out.append(f"this {lvl} has a {other.split('_')[0]} budget, not a {word} budget: "
+            out.append(f"this {LEVEL_WORD[lvl]} has a {other.split('_')[0]} budget, not a {word} budget: "
                        f"set lifetime {'false' if c.get('lifetime') else 'true'} to change it")
         else:
-            out.append(f"this {lvl} has no {word} budget to change")
+            out.append(f"this {LEVEL_WORD[lvl]} has no {word} budget to change")
     return out
 
 
@@ -1298,6 +1323,7 @@ def check(c, d=None, items=None):
             if c.get("end_date"):
                 _future_date(c["end_date"], "end date", problems, after=start, end=True)
             problems += _placement_problems(c.get("placements"))
+            warnings += _placement_warnings(c.get("placements"))
         elif t == "meta_new_ad":
             aset = _adset_facts(c.get("adset_id"), d, items)
             _name_problems(c.get("name"), "the new ad's name", problems, warnings)
@@ -1391,6 +1417,7 @@ def check(c, d=None, items=None):
                 _name_problems(c.get("new_name"), "new_name", problems, warnings)
             if t == "meta_placements" and c["level"] == "adset":
                 problems += _placement_problems(c)
+                warnings += _placement_warnings(c)
             if t in ("meta_copy", "meta_carousel_copy", "meta_feed_copy"):
                 if c["level"] != "ad":
                     problems.append("copy changes are per ad")
@@ -2321,9 +2348,9 @@ def ops_for(c, items=None):
             old = 0
         if old <= 0:
             if _has_budget(cur.get(other)):
-                raise ValueError(f"{lvl} has a {other.split('_')[0]} budget, not a {key.split('_')[0]} budget: "
+                raise ValueError(f"{LEVEL_WORD[lvl]} has a {other.split('_')[0]} budget, not a {key.split('_')[0]} budget: "
                                  f"set lifetime {'false' if c.get('lifetime') else 'true'} to change it")
-            raise ValueError(f"{lvl} has no {key.replace('_', ' ')} to change")
+            raise ValueError(f"{LEVEL_WORD[lvl]} has no {key.replace('_', ' ')} to change")
         if new <= 0:
             raise ValueError("budget must be more than 0")
         pct = (new - old) / old * 100
@@ -2493,7 +2520,8 @@ def _refusal(entry, ex, rechecked):
     if isinstance(ex, (MetaError, ValueError, KeyError)):
         entry["problems"].append(str(ex))
     elif isinstance(ex, Exception):
-        entry["problems"].append(f"invalid change: {type(ex).__name__}: {ex}" if not rechecked else f"invalid change: {ex}")
+        why = str(ex).strip().splitlines()[0][:120] if str(ex).strip() else "something in it is not in the expected shape"
+        entry["problems"].append(f"Studio couldn't read this change ({why}); edit or remove it and check again")
     else:
         raise ex
 

@@ -254,6 +254,20 @@ class Live(Base):
         self.assertEqual([x["ads"] for x in c["params"]["cells"]], [["a1"], ["a2"], ["a3"]])
         self.assertTrue(c["spend"])
 
+    def test_creative_budget_in_zero_decimal_currency(self):
+        """JPY / KRW have no minor unit on Meta: 3000 JPY is sent as 3000, never 300000; the minimum is the account's."""
+        jpy = {**DATA, "account": {"currency": "JPY", "min_daily_budget": 150}}
+        ch = {"type": "meta_test_creative", "name": "C", "ads": ["a1", "a2"], "daily_budget": 3000, "end_date": D(10)}
+        with mock.patch.object(meta, "load", lambda *a, **k: jpy):
+            c = meta.ops_for(meta._normalise(ch), {})[0]
+            self.assertEqual(c["params"]["creative_test_config"], {"daily_budget": 3000})
+            self.assertIn("test budget 3000/day", c["line"])
+            self.assertEqual(c["spend"], "test budget 3000/day")
+            p, _w = meta.check(meta._normalise({**ch, "daily_budget": 100}), jpy, {})
+            self.assertTrue(any("at least 150 a day" in x for x in p), p)
+            self.assertEqual(meta_tests._money(1234.5, jpy), "1,234")
+            self.assertEqual(meta_tests._money(1234.5, DATA), "1,234.50")
+
     def test_times(self):
         t0 = 1_800_000_000
         st, en = meta_tests._times({"end_date": D(3)}, now=t0)

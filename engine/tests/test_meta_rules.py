@@ -117,7 +117,7 @@ class Rules(unittest.TestCase):
             p = meta.plan()
         by = {e["id"]: e for e in p["items"]}
         self.assertEqual(by["g"]["problems"], [])
-        self.assertIn("boom", " ".join(by["b"]["problems"]))
+        self.assertEqual(by["b"]["problems"], ["Studio couldn't read this change (boom); edit or remove it and check again"])
         self.assertFalse(p["ok"])
         self.assertEqual(len(p["steps"]), 1)
 
@@ -146,8 +146,9 @@ class Rules(unittest.TestCase):
     # ---- M2 / M21: budget type and "0" budgets ----
     def test_m2_budget_type_and_zero(self):
         self.assertEqual(self.problems({"type": "meta_budget", "level": "adset", "id": "s1", "budget": 30}), "")
-        self.assertIn("daily budget, not a lifetime budget",
-                      self.problems({"type": "meta_budget", "level": "adset", "id": "s1", "budget": 30, "lifetime": True}))
+        p = self.problems({"type": "meta_budget", "level": "adset", "id": "s1", "budget": 30, "lifetime": True})
+        self.assertIn("this ad set has a daily budget, not a lifetime budget", p)
+        self.assertNotIn("adset", p)
         self.assertIn("lifetime budget, not a daily budget", self.problems({"type": "meta_budget", "level": "adset", "id": "s2", "budget": 30}))
         with self.assertRaises(ValueError) as e:  # never ZeroDivisionError on "0"
             self.step({"type": "meta_budget", "level": "adset", "id": "s1", "budget": 30, "lifetime": True})
@@ -195,6 +196,11 @@ class Rules(unittest.TestCase):
         self.assertIn("Advantage+ audience is off", self.problems({"type": "meta_targeting", "level": "adset", "id": "s1", "age_range": [25, 55]}))
         self.assertIn("inside the hard limits", self.problems({"type": "meta_targeting", "level": "adset", "id": "s3", "age_min": 25,
                                                                "age_range": [20, 55]}))
+        # an older Advantage+ ad set whose live minimum is above 25: changing only the maximum is not blocked by it
+        self.d["adsets"][2]["targeting"] = {**TG_ADV, "age_min": 30, "age_range": [30, 65]}
+        self.assertEqual(self.problems({"type": "meta_targeting", "level": "adset", "id": "s3", "age_max": 65}), "")
+        self.assertIn("Advantage+ audience is on", self.problems({"type": "meta_targeting", "level": "adset", "id": "s3", "age_max": 60}))
+        self.d["adsets"][2]["targeting"] = TG_ADV
         row = {r["id"]: r for r in meta.rows(self.d, "adsets")}["s3"]
         self.assertEqual((row["age"], row["age_control"]), ("20-65 (suggestion)", "18-65"))
         new = {"type": "meta_new_adset", "campaign_id": "c1", "name": "N", "daily_budget": 10, "countries": ["GB"], "advantage_audience": True}
@@ -270,8 +276,11 @@ class Rules(unittest.TestCase):
         for pubs in (["audience_network"], ["messenger"], ["audience_network", "messenger"]):
             self.assertIn("alone", self.problems({"type": "meta_placements", "level": "adset", "id": "s1", "advantage": False,
                                                   "publisher_platforms": pubs}), pubs)
-        self.assertEqual(self.problems({"type": "meta_placements", "level": "adset", "id": "s1", "advantage": False,
-                                        "publisher_platforms": ["instagram", "audience_network"]}), "")
+        ig_an = {"type": "meta_placements", "level": "adset", "id": "s1", "advantage": False,
+                 "publisher_platforms": ["instagram", "audience_network"]}
+        self.assertEqual(self.problems(ig_an), "")
+        self.assertIn("without Facebook may be refused", self.warnings(ig_an))
+        self.assertNotIn("without Facebook", self.warnings({**ig_an, "publisher_platforms": ["facebook", "instagram", "audience_network"]}))
 
     # ---- M12 / M20: end dates ----
     def test_m12_lifetime_needs_end(self):
@@ -339,6 +348,10 @@ class Rules(unittest.TestCase):
                                      {"media_id": "m1", "name": "B", "link": "https://example.com/b"}]})
         self.assertIn("card 1 name: 45 chars", w)
         self.assertIn("card 1 description: 25 chars", w)
+        raw = meta.check({"type": "meta_new_ad", "adset_id": "s1", "name": "C", "primary_text": "T", "link": "https://example.com/",
+                          "cards": [{"media_id": "m1", "name": "A", "link": "https://example.com/a"},
+                                    {"media_id": "m1", "name": "n" * 45, "link": "https://example.com/b"}]}, self.d, {})[1]
+        self.assertIn("card 2 name: 45 chars - Meta cuts it after about 40", raw)  # no index: numbered by position
 
     # ---- M19: the call to action list ----
     def test_m19_ctas(self):

@@ -519,6 +519,19 @@ class ReviewFixes(unittest.TestCase):
         s = alerts.fetch_meta(M, {"metrics": True, "adsets": True}, get=fake_get(node), now=NOW, tz_hint="Europe/Copenhagen")
         self.assertEqual(len(alerts.evaluate(rule(metric="no_delivery", level="campaign"), s)), 1)
 
+    def test_meta_budgets_in_zero_decimal_currency(self):
+        """Pacing uses the account currency: 5000 in a JPY account is 5000 yen a day, not 50."""
+        node = meta_node()
+        s = alerts.fetch_meta(M, {"metrics": True, "adsets": True}, get=fake_get(node), now=NOW, tz_hint="Europe/Copenhagen")
+        self.assertEqual(s["adsets"]["s1"]["budget"], 50.0)
+        node["currency"] = "JPY"
+        s = alerts.fetch_meta(M, {"metrics": True, "adsets": True}, get=fake_get(node), now=NOW, tz_hint="Europe/Copenhagen")
+        self.assertEqual(s["adsets"]["s1"]["budget"], 5000.0)
+        self.assertEqual(s["campaigns"]["c2"]["budget"], 1000.0)
+        self.assertEqual(alerts._cents("1500", "KRW"), 1500.0)
+        self.assertEqual(alerts._cents("1500", "EUR"), 15.0)
+        self.assertIsNone(alerts._cents("0", "JPY"))
+
     def test_meta_rate_limit_codes(self):
         import meta_api  # noqa: PLC0415
         for code in (80000, 80004, 17):

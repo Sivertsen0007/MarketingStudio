@@ -423,6 +423,8 @@ class JobLayer(Base):
         cb = []
         p = meta.preview(progress=lambda *a: cb.append(a))
         self.assertTrue(p["ok"])
+        self.assertEqual(cb[0], (None, None, "Reading the live values from Meta", None, "reading"))  # [S2b M16] reads first
+        cb = cb[1:]
         self.assertEqual([a[0] for a in cb], list(range(1, 21)))
         self.assertTrue(all(a[1] == 20 and a[4] == "checked" for a in cb))
         self.assertEqual({a[3] for a in cb}, {f"i{n}" for n in range(20)})

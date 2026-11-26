@@ -538,10 +538,12 @@ class H(BaseHTTPRequestHandler):
             return self._run(routes[u.path])
         self._send(404, {"error": "not found"})
 
-    def _stage_video(self):
+    def _stage_video(self, store=None):
         """POST /api/videos/stage?name=<file name>: the raw bytes of a video picked in the page, streamed to Studio's
         staging folder (never read into memory) for a video_upload draft item. Same guards as every POST, but the body is
-        application/octet-stream instead of JSON. Nothing leaves this Mac here."""
+        application/octet-stream instead of JSON. Nothing leaves this Mac here.
+        store: another receiver (rfile, length, name) -> answer; POST /api/meta/media/raw?name= uses meta.store_media_stream
+        (an image or video for a new Meta ad, kept in Studio's media library: no base64)."""
         if not self._host_ok():
             return self._send(403, {"error": "Studio only answers on localhost (wrong Host header)"})
         origin = self.headers.get("Origin")
@@ -553,14 +555,22 @@ class H(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
         try:
             n = int(self.headers.get("Content-Length") or -1)
+            if store:
+                return self._send(200, store(self.rfile, n, q.get("name", "")))
             return self._send(200, youtube_upload.stage(self.rfile, n, q.get("name", "")))
         except ValueError as ex:
             self.close_connection = True
             return self._send(400, {"error": str(ex)})
+        except OSError as ex:  # e.g. the disk is full: a JSON answer the page can show, never a dropped connection
+            self.close_connection = True
+            return self._send(507 if getattr(ex, "errno", None) == 28 else 500,
+                              {"error": f"Studio couldn't save the file on this Mac ({ex.strerror or ex})"})
 
     def do_POST(self):
         if urlparse(self.path).path == "/api/videos/stage":
             return self._stage_video()
+        if urlparse(self.path).path == "/api/meta/media/raw":  # [S2b M23] a new ad's file as raw bytes, streamed to disk
+            return self._stage_video(lambda f, n, name: meta.store_media_stream(name, f, n))
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if not self._host_ok():
             return self._send(403, {"error": "Studio only answers on localhost (wrong Host header)"})

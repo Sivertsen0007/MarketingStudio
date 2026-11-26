@@ -423,8 +423,11 @@ class Video(ls.VideoBase):
         meta._remember_upload(self.mid, {"video_id": "v1", "image_url": "https://old"})
         u = self.graph()
         ref = meta.upload_media(self.mid)
-        self.assertEqual(ref["image_url"], "https://old")
-        self.assertEqual(u.calls, [("GET", "v1", "status")])
+        # [S2b M15] reused, never uploaded again, but the (expiring) thumbnail URL is read fresh
+        self.assertEqual(ref["image_url"], "https://thumb/v1.jpg")
+        self.assertEqual([c[:2] for c in u.calls], [("GET", "v1"), ("GET", "v1/thumbnails")])
+        self.assertFalse([c for c in u.calls if c[0] == "POST"])
+        self.assertEqual(meta.media_info(self.mid)["uploads"][ACT]["image_url"], "https://thumb/v1.jpg")
 
 
 class PrepareErrors(unittest.TestCase):

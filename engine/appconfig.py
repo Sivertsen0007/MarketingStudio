@@ -14,7 +14,9 @@ token goes into the Keychain and access tokens are minted with the standard libr
 libraries needed. A service-account key (the old AI-Hub way) still works when google-auth is installed.
 
 MSTUDIO_HOME moves the whole folder (tests). MSTUDIO_KEYCHAIN=0 keeps secrets in a chmod-600
-secrets.json in that folder instead of the Keychain (tests, or a Mac without `security`).
+secrets.json in that folder instead of the Keychain (tests only). Otherwise secrets only ever go to the Keychain:
+when it can't be reached, saving fails with a plain message and status() reports keychain_error - never a quiet
+fallback to a plain-text file.
 """
 import json
 import os
@@ -78,8 +80,35 @@ GOOGLE_SCOPES = ["https://www.googleapis.com/auth/adwords", "https://www.googlea
 
 # ---------- storage ----------
 
+class KeychainError(RuntimeError):
+    """The macOS Keychain could not be read or written. Nothing falls back to a plain file."""
+
+
+_KC = {"error": None}  # the last Keychain problem (plain words), for status() / Setup; cleared by the next success
+_KC_NOT_FOUND = 44  # `security` exit code: no such item (a key that simply isn't set)
+
+
 def _use_keychain():
-    return os.environ.get("MSTUDIO_KEYCHAIN", "1") != "0" and shutil.which("security") is not None
+    """Secrets in the Keychain unless MSTUDIO_KEYCHAIN=0 (tests). Never decided by whether the Keychain works."""
+    return os.environ.get("MSTUDIO_KEYCHAIN", "1") != "0"
+
+
+def _kc_fail(detail, saving):
+    msg = (f"The macOS Keychain is not answering ({detail}), so {'the key was not saved' if saving else 'saved keys cannot be read'}. "
+           "Try again, and unlock the Keychain if macOS asks.")
+    _KC["error"] = msg
+    return KeychainError(msg)
+
+
+def _kc_run(args, saving, **kw):
+    if shutil.which("security") is None:
+        raise _kc_fail("the security tool is missing", saving)
+    try:
+        return subprocess.run(["security", *args], capture_output=True, text=True, timeout=10, **kw)
+    except subprocess.TimeoutExpired:
+        raise _kc_fail("no answer within 10 seconds", saving) from None
+    except OSError as ex:
+        raise _kc_fail(ex.strerror or ex.__class__.__name__, saving) from None
 
 
 def _read_json(p):
@@ -103,25 +132,32 @@ def _kc_quote(s):
 
 
 def _kc_get(name):
-    try:
-        r = subprocess.run(["security", "find-generic-password", "-s", SERVICE, "-a", name, "-w"],
-                           capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
+    """The secret, or None when it isn't set. KeychainError when the Keychain can't be asked."""
+    r = _kc_run(["find-generic-password", "-s", SERVICE, "-a", name, "-w"], saving=False)
+    if r.returncode == 0:
+        _KC["error"] = None
+        return r.stdout.rstrip("\n")
+    if r.returncode == _KC_NOT_FOUND:
+        _KC["error"] = None
         return None
-    return r.stdout.rstrip("\n") if r.returncode == 0 else None
+    raise _kc_fail(f"code {r.returncode}", saving=False)
 
 
 def _kc_set(name, value):
     # through `security -i` on stdin, so the secret never shows up in the process list
     if value is None:
-        subprocess.run(["security", "delete-generic-password", "-s", SERVICE, "-a", name], capture_output=True, timeout=10)
+        r = _kc_run(["delete-generic-password", "-s", SERVICE, "-a", name], saving=True)
+        if r.returncode not in (0, _KC_NOT_FOUND):
+            raise _kc_fail(f"code {r.returncode}", saving=True)
+        _KC["error"] = None
         return
     if "\n" in value:
         raise ValueError("a key can't contain a line break")
     cmd = f"add-generic-password -U -s {_kc_quote(SERVICE)} -a {_kc_quote(name)} -w {_kc_quote(value)}\n"
-    r = subprocess.run(["security", "-i"], input=cmd, capture_output=True, text=True, timeout=10)
+    r = _kc_run(["-i"], saving=True, input=cmd)
     if r.returncode != 0 or "error" in (r.stderr or "").lower():
-        raise RuntimeError("macOS Keychain refused to save the key")
+        raise _kc_fail("it refused the key", saving=True)
+    _KC["error"] = None
 
 
 def _secret_get(name):
@@ -151,7 +187,10 @@ def get(name, default=""):
         return v
     with _lock:
         if name not in _cache:
-            _cache[name] = _secret_get(name) if name in SECRET_NAMES else _read_json(CONFIG).get(name)
+            try:
+                _cache[name] = _secret_get(name) if name in SECRET_NAMES else _read_json(CONFIG).get(name)
+            except KeychainError:  # not cached: the next call asks the Keychain again; status() shows the problem
+                return default
         v = _cache[name]
     return v if v else default
 
@@ -209,6 +248,7 @@ def status():
                     "set": bool(v), "value": "" if secret else v, "from_env": bool(os.environ.get(name))})
     return {"keys": out, "google_signed_in": bool(get("GOOGLE_REFRESH_TOKEN")), "google_account": get("GOOGLE_ACCOUNT_EMAIL"),
             "google_service_account": bool(get("GOOGLE_SA_JSON")), "home": str(HOME), "keychain": _use_keychain(),
+            "keychain_error": _KC["error"] if _use_keychain() else None,
             "ready": bool(get("META_ACCESS_TOKEN") or google_ready())}
 
 

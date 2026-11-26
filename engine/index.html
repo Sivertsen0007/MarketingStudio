@@ -2014,7 +2014,7 @@ async function overviewPage(days){
     ${o.errors.map(e => `<div class="prob">${esc(e)}</div>`).join("")}
     ${tiles}
     ${bars || share ? `<div class="ov-grid two">${bars}${share}</div>` : ""}
-    ${(o.areas || []).length ? `<div class="ov-grid two">${(o.areas || []).map(b => card(esc(b.title), "", `<div class="tiles">${(b.tiles || []).map(t => tile(esc(t.k), esc(t.v ?? ""), t.hi)).join("")}</div>${b.note ? `<p class="hint" style="margin:14px 0 0">${esc(b.note)}</p>` : ""}`)).join("")}</div>` : ""}
+    ${(o.areas || []).length ? `<div class="ov-grid two">${(o.areas || []).map(b => card(esc(b.title), b.stale ? "previous figures" : "", `<div class="tiles">${(b.tiles || []).map(t => tile(esc(t.k), esc(t.v ?? ""), t.hi === true, t.title)).join("")}</div>${b.note ? `<p class="hint" style="margin:14px 0 0">${esc(b.note)}</p>` : ""}`)).join("")}</div>` : ""}
     ${o.note ? `<p class="hint">${esc(o.note)}</p>` : ""}
     ${card("By destination", `${o.destinations.length} destinations`, dc ? tbl(["Destination", "Spend (" + esc(dc) + ")", "Clicks", "Results", "Select Cabin"], o.destinations.map(d => `<tr><td>${esc(d.destination)}</td><td class="num" title="${esc(Object.entries(d.spend).map(([k, v]) => `${k}: ${money(v)}`).join(" + "))}">${esc(curFmt(d.spend_display, dc))}</td><td class="num">${fmtN(d.clicks)}</td><td class="num">${fmtN(d.results)}</td><td class="num"><b>${fmtN(d.select_cabin || "")}</b></td></tr>`), [1, 2, 3, 4])
     : tbl(["Destination", ...keys.map(k => "Spend " + k), "Clicks", "Results", "Select Cabin"], o.destinations.map(d => `<tr><td>${esc(d.destination)}</td>${keys.map(k => `<td class="num">${d.spend[k] != null ? esc(curFmt(d.spend[k], k.split(" ").pop())) : ""}</td>`).join("")}<td class="num">${fmtN(d.clicks)}</td><td class="num">${fmtN(d.results)}</td><td class="num"><b>${fmtN(d.select_cabin || "")}</b></td></tr>`),
@@ -2538,8 +2538,8 @@ async function settingsDialog(){
         <button data-mrn="${esc(a.act)}">Save name</button><button class="danger" data-mrm="${esc(a.act)}">Remove</button></div>`).join("") || `<p class="hint">No Meta ad accounts in Studio yet.</p>`}
       ${st.meta_token ? `<div id="metaVis" class="hint"><button class="link" id="metaVisBtn" title="Asks Meta (read-only) which ad accounts Studio's access can see">Show ad accounts Studio can reach</button></div>
       <div class="set-row"><div class="grow"><input id="m_act" placeholder="Ad account ID, e.g. act_1234567890" style="width:100%"></div><input id="m_name" placeholder="Name in Studio (optional)"><button class="primary" id="m_add">Add</button></div>
-      <p class="hint">Studio uses the system user token in shared/.env. To add an account the token can't see yet, give the system user access to it in Meta Business Settings (Users > System users > Assign assets), then add it here. Removing an account here only hides it in Studio.</p>`
-      : `<p class="prob">No META_ACCESS_TOKEN in shared/.env.</p>`}</div>
+      <p class="hint">Studio uses the Meta access token saved in Setup > Meta. To add an account the token can't see yet, give the system user access to it in Meta Business Settings (Users > System users > Assign assets), then add it here. Removing an account here only hides it in Studio.</p>`
+      : `<p class="prob">No Meta access token yet. Add it in <button class="link" onclick="dlg.close(); openSetup()">Setup > Meta</button>.</p>`}</div>
     <div class="set-sec" id="curSec"><h3>Currency</h3>
       <div class="set-row"><div class="grow"><div>Display currency</div><div class="sub">The same in every view. Display only: budgets and bids are always typed, saved in the draft and pushed in each account's own currency.</div></div>
         <select id="dispCur"><option value="own" ${st.display_currency === "own" ? "selected" : ""}>Each account's own</option>${st.currencies.map(c => `<option value="${esc(c)}" ${c === st.display_currency ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>

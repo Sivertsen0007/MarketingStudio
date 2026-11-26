@@ -696,7 +696,7 @@ async function settingsDialog(){
       <div class="so-row" style="margin-top:6px"><label>utm_campaign when a post has no name</label><input type="text" id="soCamp" value="${esc(st.utm_campaign || "")}"></div>
       <p class="hint">utm_source = the channel, utm_medium = social, utm_campaign = the post's name. Links that already have UTMs are left alone. Instagram has no clickable links.</p></div>
     <div class="set-sec"><h3>LinkedIn</h3><p>${s.linkedin_connected ? "Connected." : "Not connected."}</p>
-      <p class="hint"><b>Connect LinkedIn:</b> 1. Confirm the Master Liveaboards company page and who its admins are. 2. Create a LinkedIn developer app and apply for the Community Management API (LinkedIn approves it, this can take weeks). 3. A page admin signs in once to give the app w_organization_social. 4. The token and the page URN go in shared/.env as LINKEDIN_ACCESS_TOKEN and LINKEDIN_ORG_URN. Studio never shows the token.</p>
+      <p class="hint"><b>Connect LinkedIn:</b> 1. Confirm the Master Liveaboards company page and who its admins are. 2. Create a LinkedIn developer app and apply for the Community Management API (LinkedIn approves it, this can take weeks). 3. A page admin signs in once to give the app w_organization_social. 4. Add the token and the page URN in Setup > LinkedIn (Access token, Organisation URN). Studio never shows the token.</p>
       <button id="soLiTest">Test connection</button> <span id="soLiOut" class="hint"></span></div>`, [["Close", () => dlg.close()], ["Save", saveSet, "primary"]]);
   document.getElementById("soLocal").onchange = e => { document.getElementById("soLocalNote").style.display = e.target.checked ? "" : "none" };
   // fields the team has set (Calendar > Team settings): read-only here

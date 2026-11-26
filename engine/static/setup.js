@@ -65,6 +65,7 @@ window.studioFmt = window.studioFmt || (() => {
     page.innerHTML = `<div class="su-wrap">
       <div class="su-top"><div><h2>Setup</h2><p class="su-sub">Your keys stay on this Mac: secrets in the macOS Keychain, the rest in ${esc(S.home)}. Nothing is sent anywhere else.</p></div>
         <span class="sp"></span><button id="suClose">${S.ready ? "Done" : "Later"}</button></div>
+      ${S.keychain_error ? `<div class="su-card"><p class="prob" style="margin:0">${esc(S.keychain_error)} Studio never stores secrets anywhere else.</p></div>` : ""}
       <div class="su-card"><h3>Import from a .env file</h3><p class="su-help" style="margin:0 0 8px">Have your keys in a .env file (KEY=value lines)? Pick it and Studio saves every key it knows: secrets into the Keychain. The file itself is not kept.</p>
         <div class="su-acts"><label class="su-file">Choose .env file<input type="file" id="suEnvFile" accept=".env,text/plain,*"></label><span id="suEnvMsg" class="su-help"></span></div></div>
       <div class="su-card"><h3>Use with Claude Code</h3><p class="su-help" style="margin:0 0 8px">Run this once in Terminal. Claude then sees the same accounts and drafts as this app and can add changes to the draft. You still press Push yourself.</p>

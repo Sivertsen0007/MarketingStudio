@@ -231,7 +231,7 @@ class Overview(Base):
     def test_cached_until_overview_refresh(self):
         n = []
         real = overview._build
-        overview._build = lambda days: n.append(days) or {"days": int(days), "totals": [], "areas": [], "destinations": [], "campaigns": [],
+        overview._build = lambda days, old=None: n.append(days) or {"days": int(days), "totals": [], "areas": [], "destinations": [], "campaigns": [],
                                                           "errors": [], "note": ""}
         try:
             overview.build("7")

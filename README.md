@@ -650,15 +650,29 @@ claude mcp add marketing-studio -s user -- python3 "/Applications/Marketing Stud
 >
 > *"Set Marketing Studio up from ~/keys/marketing-studio.env."*
 
-Claude **cannot push live, send, publish, schedule or undo**. Those stay your buttons in the app.
+Claude works on **drafts and team comments only**. It **cannot push live, send, publish, schedule or undo**: those stay your
+buttons in the app. What it can do besides reading: add to drafts, and when you ask, comment for your team, ask for a review,
+sync drafts with the team, add an alert rule to Studio's local config, or load keys from a .env file into the Keychain.
+
+How it reads:
+
+- **Google Ads comes from the Google Ads API.** Google Ads Editor is optional. Without Editor the MCP server keeps running;
+  only `check_draft` (Google) and `send_draft_to_editor` need Editor, and they say so (use `preview_live_push` to have
+  Google check the draft instead).
+- **Read tools use Studio's cache.** They never fetch on their own: when nothing is cached for an account the tool says so,
+  and `refresh_data` (or `refresh=true` on `meta_tests_list`, `meta_test_results` and `video_assets_list`) fetches it,
+  read-only. The one exception: `list_entities` fetches stats once for a period nobody has viewed yet.
+- **Account keys come from `list_accounts`** (Google and Meta). Pass them as `account` everywhere.
+- **`add_to_draft` refuses changes it can't read** (unknown type, a required field missing) and adds nothing from that call.
+  A change that reads fine but breaks a rule is added with its problems listed, so you see what to fix.
 
 ### MCP tools
 
 | Area | Tools |
 |---|---|
-| Setup | `setup_status` (which keys are set, never values), `setup_import_env_file` |
-| Accounts and data | `list_accounts`, `list_entities` (any grid, with stats for a period), `find_location`, `data_status`, `refresh_data` |
-| Ads draft | `get_draft`, `add_to_draft`, `remove_from_draft`, `check_draft`, `preview_live_push`, `live_push_history`, `send_draft_to_editor` (only after you say so) |
+| Setup | `setup_status` (which keys are set, never values; Keychain problems), `setup_import_env_file` (writes keys to the Keychain) |
+| Accounts and data | `list_accounts`, `list_entities` (any grid, with stats for a period), `find_location`, `data_status`, `refresh_data` (read-only fetch) |
+| Ads draft | `get_draft`, `add_to_draft`, `remove_from_draft`, `check_draft`, `preview_live_push` (Google / Meta validate only), `live_push_history`, `send_draft_to_editor` (optional Editor route, only after you say so) |
 | Meta tests | `meta_tests_list`, `meta_test_results` (read), `meta_test_add_to_draft` (A/B test, creative test, end a test; draft only) |
 | Email | `email_list_campaigns`, `email_get_campaign`, `email_list_drafts`, `email_add_draft` |
 | SEO | `seo_list_posts`, `seo_get_post`, `seo_opportunities`, `seo_list_drafts`, `seo_add_draft` |
@@ -669,6 +683,9 @@ Claude **cannot push live, send, publish, schedule or undo**. Those stay your bu
 | Audiences | `audiences_list` (Google audience lists or Meta custom audiences, with size and where used; read), `audience_add_to_draft` (make, edit or remove audiences and attach them; draft only; no customer lists) |
 | Video ads | `video_assets_list` (videos, uploads, Demand Gen campaigns, ad groups and ads, logos; read), `demandgen_add_to_draft` (Demand Gen campaigns, ad groups, video ads, pauses and video assets; draft only; no upload tool) |
 | Calendar | `calendar_list`, `library_list`, `team_settings_get` (read only) |
+| Team | `team_status`, `team_sync` (sends and receives draft changes, draft level only), `reviews_list`, `review_request` (asks named reviewers; you can't approve from Claude) |
+| Team comments | `team_activity`, `comments_list`, `comment_add` (posts to the team, marked as written by Claude), `mentions_list` |
+| Notifications | `notifications_list` (your bell, read only) |
 
 ---
 
@@ -756,7 +773,9 @@ python3 server.py                  # http://localhost:4830, opens your browser (
 ```
 
 From source the engine uses the same Keychain and data folder as the app. Point it somewhere else with `MSTUDIO_HOME=/tmp/studio`,
-and keep secrets in a file instead of the Keychain with `MSTUDIO_KEYCHAIN=0`.
+and keep secrets in a file instead of the Keychain with `MSTUDIO_KEYCHAIN=0` (tests only). Without it secrets only ever go to
+the Keychain: if the Keychain does not answer, saving a key fails with a message and Setup shows the problem; Studio never
+falls back to a plain-text file on its own.
 
 ## Tests
 

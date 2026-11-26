@@ -636,12 +636,17 @@ class Mcp(Base):
         names = {t["name"] for t in mcp_server.TOOLS}
         self.assertTrue({"meta_tests_list", "meta_test_results", "meta_test_add_to_draft"} <= names)
         with mock.patch.object(meta, "use", lambda k: "act_123"):
-            rows = mcp_server.call("meta_tests_list", {})
+            with self.assertRaises(mcp_server.NotCached):  # cache only: a cold cache asks for refresh=true, fetches nothing
+                mcp_server.call("meta_test_results", {"study_id": "902"})
+            rows = mcp_server.call("meta_tests_list", {"refresh": True})
             self.assertEqual(len(rows), 3)
+            mcp_server.meta_tests._mem.clear()  # the next call reads the file written above
+            self.assertEqual(mcp_server.call("meta_tests_list", {}), rows)
             items = mcp_server.call("meta_test_add_to_draft", {"mode": "split", "test": {"name": "T", "ids": ["s1", "s2"], "end_date": D(10)},
                                                                 "note": "why"})
             self.assertEqual((items[0]["by"], items[0]["problems"]), ("claude", []))
             self.assertEqual(self.f.posts, [], "the MCP tool only drafts")
+            self.assertEqual(mcp_server.call("meta_test_results", {"study_id": "902", "refresh": True})["study"]["status"], "Scheduled")
             self.assertEqual(mcp_server.call("meta_test_results", {"study_id": "902"})["study"]["status"], "Scheduled")
         desc = next(t for t in mcp_server.TOOLS if t["name"] == "add_to_draft")["description"]
         self.assertIn("meta_test_split", desc)

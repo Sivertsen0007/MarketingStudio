@@ -60,6 +60,8 @@ _LIVE = {
                            "ad_group_ad.ad.responsive_search_ad.path2"),
     "sitelink": ("asset", "asset.final_urls, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, "
                           "asset.sitelink_asset.description2"),
+    "campaign_asset": ("campaign_asset", "campaign_asset.status"),
+    "customer_asset": ("customer_asset", "customer_asset.status"),
 }
 # kind -> (fields, FROM resource, parent id field, rest of the WHERE, extra fields a batch also reads, live kind they fill):
 # the per-parent id lists Ids resolves names from (cache key = kind + parent id)
@@ -82,7 +84,7 @@ _LISTS = {
             "campaign_criterion.type = LOCATION AND campaign_criterion.negative = FALSE AND campaign_criterion.status != 'REMOVED'", "", None),
 }
 _ROW = {"campaign": "campaign", "ad_group": "adGroup", "ad_group_criterion": "adGroupCriterion", "ad_group_ad": "adGroupAd", "asset": "asset",
-        "campaign_criterion": "campaignCriterion"}
+        "campaign_criterion": "campaignCriterion", "campaign_asset": "campaignAsset", "customer_asset": "customerAsset"}
 CAMPAIGNS_GAQL = "SELECT campaign.id, campaign.name FROM campaign WHERE campaign.status != 'REMOVED'"
 AD_GROUPS_GAQL = ("SELECT ad_group.id, ad_group.name, campaign.id FROM ad_group "
                   "WHERE ad_group.status != 'REMOVED' AND campaign.status != 'REMOVED'")
@@ -791,7 +793,19 @@ def ops_for(ids, c, enable_new):
             else:
                 res, kind, undo = f"customers/{a}/campaignAssets/{_id(camp)}~{aid}~{field}", "campaignAssetOperation", \
                     {"campaign": camp, "asset": asset, "fieldType": field}
-            out.append(_remove(kind, res, f'unlink {t} "{txt}" from {where}', undo_create=undo))
+            # undo restores the link as it was: a paused link comes back paused, not Enabled
+            lk = "customer_asset" if account else "campaign_asset"
+            try:
+                was = (_read(ids, _live_gaql(lk, res)) or [{}])[0].get(_ROW[lk], {}).get("status")
+            except Exception:  # noqa: BLE001 - the unlink itself doesn't need it; undo then links it again as Enabled
+                was = None
+            if was and was not in ("ENABLED", "REMOVED", "UNKNOWN", "UNSPECIFIED"):
+                undo = {**undo, "status": was}
+            op = _remove(kind, res, f'unlink {t} "{txt}" from {where}' + (f" (was {was.lower()})" if "status" in undo else ""),
+                         undo_create=undo)
+            if not was:
+                op["undo_note"] = "undo links it again as Enabled (its status could not be read)"
+            out.append(op)
         return out
 
     if t in ("sitelink", "callout", "snippet") and not c.get("edit"):

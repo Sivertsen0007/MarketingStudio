@@ -367,9 +367,15 @@ function wireCal(main){
   };
 }
 async function newAt(day, hour){
-  let when = new Date(`${day}T09:00`).toISOString();
+  // fallbacks are wall-clock times in the posting zone, like the engine's slot answer, never this Mac's own zone
+  const tz = ptz(), at = (fromZone(`${day}T${String(hour ?? 9).padStart(2, "0")}:00`, tz) || new Date(`${day}T09:00`));
+  let when = at.toISOString();
   try { const r = await sapi("slot?" + qs({day, hour: hour ?? "", channels: "facebook,instagram"})); when = r.when } catch(e) {}
-  if (new Date(when) < new Date()) { const n = new Date(); n.setMinutes(0, 0, 0); n.setHours(n.getHours() + 1); if (ymd(n) === day) when = n.toISOString() }
+  if (new Date(when) < new Date()){
+    const w = zoneISO(new Date(Date.now() + 3600000), tz);  // the next full hour, in the posting zone
+    const n = fromZone(w.slice(0, 14) + "00", tz);
+    if (n && w.slice(0, 10) === day) when = n.toISOString();
+  }
   openPost(null, {when});
 }
 async function confirmMove(id){

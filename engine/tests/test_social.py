@@ -63,6 +63,8 @@ def write(name, data):
 def fresh():
     for f in ("social_draft.json", "social_queue.json", "social_settings.json"):
         (Path(TMP) / f).unlink(missing_ok=True)
+    from areas import _social_meta as sm
+    sm._FAILED["c"] = None  # a failed Meta read from an earlier test is not this test's negative cache
 
 
 class Checks(unittest.TestCase):
@@ -1609,6 +1611,11 @@ class V023Schedule(unittest.TestCase):
                 self.assertEqual(pv["refused"]["linkedin"], [social.LI_NOT_CONNECTED])
                 self.assertTrue(any("LinkedIn is not connected" in x for x in social.check(store.get(p["id"]), links=False)["problems"]))
                 self.assertEqual(pv["options"], [{"label": "Schedule Facebook only", "channels": ["facebook"]}])
+                # S7: the reason is listed once (under refused), not again from the check
+                self.assertFalse(any("LinkedIn is not connected" in x for x in pv["problems"]))
+                r = social.schedule({"id": p["id"], "pressed": "user"})
+                self.assertFalse(r["ok"])
+                self.assertEqual(sum("LinkedIn is not connected" in x for x in r["problems"]), 1)
         finally:
             social.save_settings({"local_scheduler": False})
 
@@ -1628,6 +1635,16 @@ class V023TimeZone(unittest.TestCase):
             self.assertEqual(store.posting_tz_name(), "Europe/London")
         with self.assertRaises(ValueError):
             social.set_posting_tz("Mars/Olympus")
+
+    def test_refused_competitors_save_no_posting_zone(self):  # S7: a refused field saves nothing, the zone included
+        import appconfig
+        before = appconfig.get("EMAIL_TIMEZONE")
+        with self.assertRaises(ValueError):
+            social.save_settings({"posting_tz": "Asia/Bangkok", "competitors": ["not a username!"]})
+        self.assertEqual(appconfig.get("EMAIL_TIMEZONE"), before)
+        with self.assertRaises(ValueError):
+            social.save_settings({"posting_tz": "Mars/Olympus", "competitors": ["fine_name"]})
+        self.assertNotIn("fine_name", store.settings().get("competitors") or [])
 
     def test_slots_and_quick_picks_in_the_posting_zone(self):
         from zoneinfo import ZoneInfo

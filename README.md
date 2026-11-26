@@ -50,7 +50,8 @@ It is a small native Mac app around a local engine that only listens on `127.0.0
 ## Install
 
 1. Download **`MarketingStudio-macOS-arm64.zip`** from the [latest release](https://github.com/Sivertsen0007/MarketingStudio/releases/latest).
-2. Unzip it and drag **Marketing Studio.app** into **Applications**.
+2. Unzip it and drag **Marketing Studio.app** into **Applications** (`/Applications`, or your own `~/Applications` if you
+   can't write to the shared one; `./build.sh --install` uses `~/Applications`).
 3. The first time: **right-click the app > Open**, then **Open** again. The app is signed with our own certificate,
    not an Apple Developer ID, so macOS asks once. (Or: System Settings > Privacy & Security > **Open Anyway**.)
 
@@ -642,7 +643,13 @@ Claude adds show up in the app straight away, marked *Claude*. Connect it once (
 claude mcp add marketing-studio -s user -- python3 "/Applications/Marketing Studio.app/Contents/Resources/engine/mcp_server.py"
 ```
 
-(If you put the app in `~/Applications`, use that path.) Then, in any Claude Code session:
+That is the path for `/Applications`. If the app is in your own `~/Applications` (for example after `./build.sh --install`), use:
+
+```sh
+claude mcp add marketing-studio -s user -- python3 "$HOME/Applications/Marketing Studio.app/Contents/Resources/engine/mcp_server.py"
+```
+
+Setup's Copy button always gives the path of the copy you are running. Then, in any Claude Code session:
 
 > *"Which Meta ad sets spent the most last week without results? Pause the worst three in the draft."*
 >

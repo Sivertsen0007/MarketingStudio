@@ -602,7 +602,7 @@ class McpAdapter:
                 raise AdapterError("the platform's merge tag list could not be read")
             return tags
         try:
-            return self._cached("merge_tags", get)  # a failure raises before anything is written to the cache
+            return self._cached("merge_tags2", get)  # a failure raises before anything is written; "2": older builds cached []
         except Exception:  # noqa: BLE001 - optional tool
             return None
 
@@ -1297,6 +1297,7 @@ def _source(a, s=None):
     s = s or settings()
     out = {"source": a.source, "source_label": a.label, "demo": a.demo, "connected": not a.demo, "can": dict(a.can), "needs_api": NEEDS_API}
     out["platform"] = PLATFORM
+    out["send_tz"] = getattr(LONDON, "key", None) or "Europe/London"  # the shared posting zone (Setup: EMAIL_TIMEZONE)
     if s["api_url"] and s["token"] and a.source != "api":
         ok, msg = probe(_cached_adapter("api", s["api_url"], s["token"]))
         out["api_note"] = "" if ok else f"The Email API is set up, but it did not answer ({msg})."
@@ -1661,7 +1662,7 @@ def _team(body, what, fn):
 
 @_guard
 def p_schedule(body):
-    when = to_utc(body.get("when"), body.get("tz") or "Europe/London")
+    when = to_utc(body.get("when"), body.get("tz") or getattr(LONDON, "key", None) or "Europe/London")
     if when < _now() + dt.timedelta(minutes=2):
         raise ValueError("pick a time at least a few minutes from now (or use Send now)")
     return _team(body, "Scheduled an email", lambda: _schedule(adapter(), body, when, False))

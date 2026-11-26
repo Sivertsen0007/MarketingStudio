@@ -22,6 +22,7 @@ import concurrent.futures
 import csv
 import datetime as dt
 import io
+import re
 import threading
 import time
 
@@ -279,6 +280,13 @@ PLAIN = (  # (pieces of a raw error, the plain sentence shown instead); the raw 
 )
 
 
+def _hit(key, low):
+    """A status code only as a whole number ("HTTP 404", not an id like 1404233 or "took 1500 ms"); words as before."""
+    if key.isdigit():
+        return re.search(rf"\b{key}\b", low) is not None
+    return key in low
+
+
 def plain_error(raw):
     """A raw error (Python exception text, HTTP errors) -> one plain sentence for the page."""
     t = str(raw or "")
@@ -286,7 +294,7 @@ def plain_error(raw):
     head, sep, rest = t.partition(": ")
     who = f"{head}: " if sep and len(head) <= 40 and "<" not in head and "error" not in head.lower() else ""
     for keys, msg in PLAIN:
-        if any(k in low for k in keys):
+        if any(_hit(k, low) for k in keys):
             return who + msg
     if any(x in t for x in ("Traceback", "Errno", "<urlopen", "Error(", "Exception", "object has no attribute", "NoneType")):
         return who + "Could not read it (details in the tooltip)."

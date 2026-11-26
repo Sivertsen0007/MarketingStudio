@@ -63,6 +63,7 @@ KEYS = [
     ("EMAIL_OWN_DOMAINS", "Own domains", "Email", False, "Optional, comma separated: domains whose addresses may be shown (the From domain always is)."),
     ("STUDIO_TEST_EMAIL", "Test email addresses", "Email", False, "One or more, separated by commas. With one, Send test goes there; with several you pick one when you send. The platform may only accept internal addresses."),
     ("EMAIL_TIMEZONE", "Send timezone", "Email", False, "IANA name, e.g. Europe/London (default)."),
+    ("EMAIL_MERGE_TAGS", "Extra merge tags", "Email", False, "Optional, comma separated: merge tags your platform fills in that Studio does not know yet, e.g. loyalty_tier, trip_name."),
     ("EMAIL_IMAGE_HOST", "Image host", "Email", False, "Optional: warn when an image is not on this host, e.g. media.example.com."),
     ("WP_STUDIO_USER", "WordPress user", "WordPress (SEO)", False, "The user that owns the application password."),
     ("WP_STUDIO_APP_PASSWORD", "Application password", "WordPress (SEO)", True, "Users > Profile > Application passwords."),
@@ -84,8 +85,9 @@ class KeychainError(RuntimeError):
     """The macOS Keychain could not be read or written. Nothing falls back to a plain file."""
 
 
-_KC = {"error": None}  # the last Keychain problem (plain words), for status() / Setup; cleared by the next success
+_KC = {"error": None, "until": 0.0}  # the last Keychain problem (plain words), for status() / Setup; cleared by the next success
 _KC_NOT_FOUND = 44  # `security` exit code: no such item (a key that simply isn't set)
+_KC_HOLD = 45  # seconds a failed Keychain read is remembered, so a locked or hanging Keychain can't stall every get()
 
 
 def _use_keychain():
@@ -97,10 +99,20 @@ def _kc_fail(detail, saving):
     msg = (f"The macOS Keychain is not answering ({detail}), so {'the key was not saved' if saving else 'saved keys cannot be read'}. "
            "Try again, and unlock the Keychain if macOS asks.")
     _KC["error"] = msg
+    _KC["until"] = time.time() + _KC_HOLD
     return KeychainError(msg)
 
 
+def _kc_ok():
+    _KC["error"] = None
+    _KC["until"] = 0.0
+
+
 def _kc_run(args, saving, **kw):
+    # reads within _KC_HOLD seconds of a failure don't ask again (no repeated 10 s stalls or unlock prompts);
+    # saving is the person's own action, so it always asks
+    if not saving and _KC["error"] and time.time() < _KC["until"]:
+        raise KeychainError(_KC["error"])
     if shutil.which("security") is None:
         raise _kc_fail("the security tool is missing", saving)
     try:
@@ -135,10 +147,10 @@ def _kc_get(name):
     """The secret, or None when it isn't set. KeychainError when the Keychain can't be asked."""
     r = _kc_run(["find-generic-password", "-s", SERVICE, "-a", name, "-w"], saving=False)
     if r.returncode == 0:
-        _KC["error"] = None
+        _kc_ok()
         return r.stdout.rstrip("\n")
     if r.returncode == _KC_NOT_FOUND:
-        _KC["error"] = None
+        _kc_ok()
         return None
     raise _kc_fail(f"code {r.returncode}", saving=False)
 
@@ -149,7 +161,7 @@ def _kc_set(name, value):
         r = _kc_run(["delete-generic-password", "-s", SERVICE, "-a", name], saving=True)
         if r.returncode not in (0, _KC_NOT_FOUND):
             raise _kc_fail(f"code {r.returncode}", saving=True)
-        _KC["error"] = None
+        _kc_ok()
         return
     if "\n" in value:
         raise ValueError("a key can't contain a line break")
@@ -157,7 +169,7 @@ def _kc_set(name, value):
     r = _kc_run(["-i"], saving=True, input=cmd)
     if r.returncode != 0 or "error" in (r.stderr or "").lower():
         raise _kc_fail("it refused the key", saving=True)
-    _KC["error"] = None
+    _kc_ok()
 
 
 def _secret_get(name):
@@ -248,8 +260,20 @@ def status():
                     "set": bool(v), "value": "" if secret else v, "from_env": bool(os.environ.get(name))})
     return {"keys": out, "google_signed_in": bool(get("GOOGLE_REFRESH_TOKEN")), "google_account": get("GOOGLE_ACCOUNT_EMAIL"),
             "google_service_account": bool(get("GOOGLE_SA_JSON")), "home": str(HOME), "keychain": _use_keychain(),
-            "keychain_error": _KC["error"] if _use_keychain() else None,
+            "keychain_error": _keychain_problem(),
             "ready": bool(get("META_ACCESS_TOKEN") or google_ready())}
+
+
+def _keychain_problem():
+    """The Keychain problem for Setup, or None. Also names a plain secrets.json left from a test or an older build while
+    the Keychain is in use: Studio never reads it then, so its keys look unset and the file is a plain-text copy."""
+    if not _use_keychain():
+        return None
+    msgs = [_KC["error"]] if _KC["error"] else []
+    if SECRETS_FILE.exists():
+        msgs.append(f"A plain-text secrets.json is still in {HOME}. Studio keeps keys in the macOS Keychain and does not read "
+                    "that file: enter any key that shows as not set again here, then delete the file.")
+    return " ".join(msgs) or None
 
 
 def google_ready():

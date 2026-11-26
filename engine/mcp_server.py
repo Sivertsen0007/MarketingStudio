@@ -137,7 +137,9 @@ AREA_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "seo_add_draft",
      "description": "Add one change to the SEO draft (never to WordPress). Edit: {post_id, field, new, note}. Suggestion without text: "
-                    "{post_id, field, note, kind: 'todo'}. Same post + field replaces the earlier edit. The user checks and publishes.",
+                    "{post_id, field, note, kind: 'todo'}. Same post + field replaces the earlier edit. The user checks and publishes. "
+                    "seo_title (30-60 chars), meta_desc (120-156) and focus_kw are Yoast fields, written only when the Studio snippet "
+                    "(wp-snippets/yoast-rest-fields.php) is installed.",
      "inputSchema": {"type": "object", "properties": {"post_id": {"type": "integer"},
                                                       "field": {"type": "string", "enum": ["title", "slug", "seo_title", "meta_desc", "focus_kw", "excerpt", "categories", "content"]},
                                                       "new": {},
@@ -148,7 +150,9 @@ AREA_TOOLS = [
                     "WordPress: the user reads and edits it in Studio (SEO > Topical map > the node, or Draft) and publishes it with their "
                     "own Publish button, which creates the post and points the node at its URL. One page per node: calling again for the "
                     "same node (or with id) updates it. Fields: title, slug (made from the title if empty), seo_title (30-60 chars), "
-                    "meta_desc (70-160), focus_kw, excerpt, categories [ids], content (WordPress HTML: h2/h3, p, ul, a; no h1). "
+                    "meta_desc (120-156), focus_kw, excerpt, categories [ids], content (WordPress HTML: h2/h3, p, ul, a; no h1). "
+                    "seo_title, meta_desc and focus_kw are Yoast fields: they are only saved when the Studio snippet "
+                    "(wp-snippets/yoast-rest-fields.php) is installed on the site; the draft check says so when it is not. "
                     "Follow the node's entity, attribute, macro context and target queries, link to the parent and the nodes in its "
                     "links list, and use only facts you can source. To change an EXISTING post use seo_add_draft (field content etc.).",
      "inputSchema": {"type": "object", "properties": {
@@ -565,7 +569,8 @@ def call_audiences(name, a):
             return meta_audiences.rows(meta.load())
         bad = [c for c in changes if not (c.get("type") == meta_audiences.TYPE or (
             c.get("type") == "meta_targeting" and any(c.get(k) for k in meta_audiences.AUD_KEYS)
-            and "countries" not in c and not c.get("countries_clear") and not any(c.get(k) for k in ("age_min", "age_max"))))]
+            and "countries" not in c and not c.get("countries_clear")
+            and not any(c.get(k) not in (None, "", []) for k in ("age_min", "age_max", "age_range"))))]
         if bad:
             raise ValueError("audience_add_to_draft takes Meta audience changes only (meta_audience, or meta_targeting with "
                              "audiences_add / audiences_remove / excluded_add / excluded_remove); use add_to_draft for the rest")

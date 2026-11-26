@@ -212,6 +212,10 @@ def _fb_scheduled():
              "text": (x.get("message") or "")[:300], "url": x.get("permalink_url", "")} for x in rows]
 
 
+FAIL_TTL = 60  # seconds a failed read of the published posts is reused (a short negative cache)
+_FAILED = {"t": 0.0, "c": None}
+
+
 def published(max_age=CACHE_TTL, limit=100):
     """The latest `limit` published posts per channel (Facebook + Instagram) with insights, newest first, plus Facebook posts Meta has scheduled.
     Cached in social_cache_meta.json (our own posts' numbers only, no personal data)."""
@@ -222,6 +226,8 @@ def published(max_age=CACHE_TTL, limit=100):
             return c
     except (OSError, ValueError, KeyError):
         pass
+    if max_age != 0 and _FAILED["c"] and time.time() - _FAILED["t"] < FAIL_TTL:
+        return _FAILED["c"]  # Meta failed a moment ago: don't ask again on every call (a Refresh, max_age 0, does)
     errors = []
     rows = []
     for fn, name in ((_fb_posts, "Facebook"), (_ig_posts, "Instagram")):
@@ -235,6 +241,9 @@ def published(max_age=CACHE_TTL, limit=100):
     if not errors:
         f.write_text(json.dumps(c, ensure_ascii=False))
         _mark()
+        _FAILED["c"] = None
+    else:
+        _FAILED["t"], _FAILED["c"] = time.time(), c
     return c
 
 

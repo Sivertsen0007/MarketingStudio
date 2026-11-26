@@ -427,6 +427,15 @@ class Buttons(unittest.TestCase):
         self.assertTrue(any(c[0] == "reschedule" for c in social._fakes["facebook"].calls))
         self.assertIsNone(store.get(p["id"])["move"])
 
+    def test_partly_published_post_cannot_move(self):
+        """C30: once one channel of a post is published, a calendar drag can't move the rest."""
+        p = self.new(channels=["facebook", "instagram"], when=store.iso(store.now() + dt.timedelta(hours=3)))
+        store.update(p["id"], lambda x: x.__setitem__("results", {"facebook": {"status": "published"}}))
+        with self.assertRaises(ValueError) as cm:
+            social.move({"id": p["id"], "when": store.iso(store.now() + dt.timedelta(days=2))})
+        self.assertIn("already published", str(cm.exception))
+        self.assertFalse(store.get(p["id"]).get("move"))
+
     def test_delete_live(self):
         p = self.new(channels=["facebook"])
         social.post_now({"id": p["id"], "pressed": "user"})
@@ -522,6 +531,15 @@ class Insights(unittest.TestCase):
                                    {"name": "post_clicks_by_type", "period": "lifetime", "values": [{"value": {"link clicks": 4, "other clicks": 6}}]}]}}
         r = sm.fb_row(x)
         self.assertEqual((r["reach"], r["link_clicks"], r["clicks"], r["engagement"], r["format"]), (1271, 4, 10, 13, "Reel"))
+
+    def test_link_clicks_unknown_when_missing(self):
+        """C30: no "link clicks" key from Meta is unknown (None), not 0; no click breakdown at all leaves All clicks unknown too."""
+        from areas import _social_meta as sm
+        base = {"id": "1_3", "created_time": "2026-11-08T15:53:01+0000", "permalink_url": "https://www.facebook.com/x/posts/3"}
+        r = sm.fb_row({**base, "insights": {"data": [{"name": "post_clicks_by_type", "period": "lifetime", "values": [{"value": {"other clicks": 6}}]}]}})
+        self.assertEqual((r["link_clicks"], r["clicks"]), (None, 6))
+        r = sm.fb_row({**base, "insights": {"data": []}})
+        self.assertEqual((r["link_clicks"], r["clicks"]), (None, None))
 
 
 class LinkedIn(unittest.TestCase):

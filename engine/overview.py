@@ -99,6 +99,16 @@ def _meta_name():
         return "ML Meta"
 
 
+def _link_clicks(r):
+    """C25: Meta's link clicks (inline_link_clicks), the same kind of click as Google's, so the two can be added up in
+    "Clicks by destination". Meta's own "clicks" counts every click (likes, profile, see more). No link clicks in the
+    answer (a campaign without links) counts as 0."""
+    try:
+        return int(float(r.get("inline_link_clicks") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _meta(days, failed=None):
     """-> (rows, errors). failed (a list) collects the name of the Meta account that could not be read."""
     if not meta.TOKEN:
@@ -107,14 +117,14 @@ def _meta(days, failed=None):
     try:
         cur = meta.load()["account"]["currency"]
         rows = meta.get_all(f"{meta.act()}/insights", level="campaign", date_preset=WINDOWS[days][1],
-                            fields="campaign_name,campaign_id," + meta.F_INS)
+                            fields="campaign_name,campaign_id,inline_link_clicks," + meta.F_INS)
     except Exception as ex:  # noqa: BLE001
         if failed is not None:
             failed.append(name)
         return [], [f"Meta: {ex}"]
     status = {c["id"]: c["status"].title() for c in meta.load()["campaigns"]}
     return [{"channel": "Meta", "account": name, "campaign": r["campaign_name"], "status": status.get(r["campaign_id"], ""),
-             "currency": cur, "spend": round(float(r.get("spend", 0)), 2), "clicks": int(r.get("clicks", 0)),
+             "currency": cur, "spend": round(float(r.get("spend", 0)), 2), "clicks": _link_clicks(r),
              "impressions": int(r.get("impressions", 0)),
              "results": round(sum(float(x["value"]) for x in r.get("actions", []) if x["action_type"] in meta.RESULT_ACTIONS), 1),
              "select_cabin": meta._conv_vals(r, float(r.get("spend", 0)))["select_cabin"] or 0}

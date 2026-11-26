@@ -39,7 +39,7 @@ WARN_AFTER_DAYS = 20
 RETENTION_DAYS = 730  # proposal: two years of archived activity, then pruned by snapshot(). Confirm with the director.
 SOURCES = {"google": "Google Ads", "meta": "Meta", "email": "Email", "blog": "Blog", "social": "Social", "studio": "Studio"}
 TILES = [("google", "Google Ads changes"), ("meta", "Meta changes"), ("email", "Emails sent"), ("blog_pub", "Blog posts published"),
-         ("blog_edit", "Blog posts edited"), ("social", "Social posts published"), ("studio", "Studio pushes and undos")]
+         ("blog_edit", "Blog posts edited"), ("social", "Social posts published"), ("studio", "Studio pushes")]
 CSV_COLS = [("time", "Time (UK)"), ("channel", "Channel"), ("account", "Account"), ("type", "Change"), ("object_type", "Object type"),
             ("object", "Object"), ("where", "Where"), ("old", "Old"), ("new", "New"), ("by", "Made by"), ("who", "Who"), ("link", "Link")]
 

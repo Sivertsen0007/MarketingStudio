@@ -13,7 +13,7 @@ async function call(path, body){
   const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); return j;
 }
 const say = m => (typeof toast === "function" ? toast(m) : alert(m));
-const colour = c => /^#[0-9a-fA-F]{6}$/.test(c || "") ? c : "#888888";
+const colour = c => /^#[0-9a-fA-F]{6}$/.test(c || "") ? c : "var(--who)";
 const CH = {facebook:"Facebook", instagram:"Instagram", linkedin:"LinkedIn", email:"Email", blog:"Blog"};
 const pad = n => String(n).padStart(2, "0");
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -56,7 +56,7 @@ const CSS = `
 .tc-day h4{display:flex;align-items:center;gap:6px;margin:0 0 6px;font-size:12px;font-weight:600;color:var(--text2)}
 .tc-day h4 .d{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:var(--r-pill);font-variant-numeric:tabular-nums}
 .tc-day h4 .n{margin-left:auto;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-pill);background:var(--sunken);color:var(--muted);font-size:10.5px}
-.tc-day h4 .n.over{background:var(--bad-bg);color:var(--bad-text, #c8303a)}
+.tc-day h4 .n.over{background:var(--bad-bg);color:var(--bad-text)}
 .tc-it{--oc:var(--faint);display:block;background:color-mix(in srgb,var(--oc) 10%,var(--panel));box-shadow:inset 3px 0 0 var(--oc);border-radius:var(--r-sm);padding:7px 8px 7px 10px;min-height:32px;box-sizing:border-box;margin-bottom:4px;font-size:12px;line-height:1.35;overflow:hidden;cursor:default;color:var(--text2);transition:background var(--t) var(--ease)}
 .tc-it:hover{background:color-mix(in srgb,var(--oc) 17%,var(--panel))}
 .tc-it .t{font-weight:600;color:var(--text)} .tc-it .s{color:var(--muted);font-size:11px;font-weight:500}
@@ -91,7 +91,7 @@ const CSS = `
 .tc-lib button{height:30px;padding:0 12px;font-size:12.5px}
 #tcPick{position:fixed;z-index:60;display:none;font-size:11px;font-weight:600;height:22px;line-height:22px;padding:0 9px;border-radius:var(--r-pill);border:0;background:var(--panel);color:var(--accent);box-shadow:var(--sh-pop)}
 #tcPickDlg{border:0;border-radius:var(--r-xl);padding:0;width:min(640px,calc(100% - 32px));background:var(--panel);color:var(--text);box-shadow:var(--sh-dlg)}
-#tcPickDlg::backdrop{background:rgba(17,19,24,.35);backdrop-filter:blur(2px)}
+#tcPickDlg::backdrop{background:var(--scrim);backdrop-filter:blur(2px)}
 #tcPickDlg .h{display:flex;gap:8px;align-items:center;padding:18px 22px 12px;font-size:18px;font-weight:600}
 #tcPickDlg .h select,#tcPickDlg .h input,#tcPickDlg .h button{font-size:13px}
 #tcPickDlg .b{padding:4px 22px 20px;max-height:60vh;overflow:auto}
@@ -106,7 +106,7 @@ const T = {el:null, tab: lget("tab") || "cal", view: lget("view") || "week", anc
 function render(el){
   T.el = el;
   el.innerHTML = `<div class="tc-root"><div class="tc-head"><div class="ttl"><h1>Calendar</h1><p>Every channel in one place, each owner in their team colour.</p></div>
-      <button id="tcRefresh">Refresh</button></div>
+      <button id="tcRefresh">Refresh Calendar</button></div>
     <div class="toolbar tc-bar">
       <span class="tc-tabs"><button data-tab="cal">Calendar</button><button data-tab="lib">Library</button><button data-tab="set">Team settings</button></span>
       <span id="tcNav" class="tc-bar"><span style="width:10px"></span><span class="tc-seg"><button data-v="week">Week</button><button data-v="month">Month</button></span>

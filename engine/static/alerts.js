@@ -14,7 +14,7 @@ const STYLE = `
 .al-hd{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:16px 20px 12px}
 .al-hd h3{margin:0;font-size:16px;font-weight:600;color:var(--text)}
 .al-count{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:var(--r-sm);background:var(--sunken);color:var(--text2);font-size:11.5px;font-weight:600}
-.al-count.hot{background:var(--bad-bg);color:var(--bad-text, #c8303a)}
+.al-count.hot{background:var(--bad-bg);color:var(--bad-text)}
 .al-note{font-size:12px;font-weight:500;color:var(--muted);line-height:1.55;margin:0 0 10px}
 .al-foot{padding:4px 4px 0}
 .al-root .warnl{padding:10px 14px;border-radius:var(--r);background:var(--warn-bg);color:var(--warn);font-size:13px;font-weight:500}
@@ -38,7 +38,7 @@ const STYLE = `
 .al-form input[type=number]{width:96px}
 .al-form button{height:36px}
 .al-chip{display:inline-flex;align-items:center;height:22px;font-size:11px;font-weight:600;padding:0 8px;border-radius:var(--r-sm);background:var(--sunken);color:var(--text2);white-space:nowrap;vertical-align:middle}
-.al-chip.on{background:var(--ok-bg);color:var(--ok)}
+.al-chip.on{background:var(--ok-bg);color:var(--ok-text)}
 .al-chip.warn{background:var(--warn-bg);color:var(--warn)}
 .al-chip.info{background:var(--accent-bg);color:var(--accent)}
 .al-empty{padding:28px 20px;text-align:center;color:var(--muted);font-size:13px;font-weight:500;border-top:1px solid var(--line2)}
@@ -50,8 +50,8 @@ const STYLE = `
 .al-menu[hidden]{display:none}
 .al-menu button{display:flex;align-items:center;width:100%;height:32px;padding:0 10px;border-radius:var(--r-sm);font-size:13px;font-weight:600;text-align:left}
 .al-menu button:hover{background:var(--hover);text-decoration:none}
-.al-root button.link.danger,.al-root button.danger{color:var(--bad-text, #c8303a)}
-#alBadge .n{display:inline-block;min-width:18px;padding:0 6px;margin-left:6px;border-radius:var(--r-pill);background:var(--bad-text, #c8303a);color:var(--ink-text);font-size:11px;font-weight:700;line-height:18px;text-align:center}
+.al-root button.link.danger,.al-root button.danger{color:var(--bad-text)}
+#alBadge .n{display:inline-block;min-width:18px;padding:0 6px;margin-left:6px;border-radius:var(--r-pill);background:var(--bad-text);color:var(--ink-text);font-size:11px;font-weight:700;line-height:18px;text-align:center}
 `;
 if (!document.getElementById("al-css")){ const st = document.createElement("style"); st.id = "al-css"; st.textContent = STYLE; document.head.appendChild(st) }
 
@@ -133,7 +133,7 @@ function draw(){
   const jobs = (v.jobs || []).map(j => `${h(j.label)}: ${j.enabled ? (j.held ? "held (Refresh data is manual)" : "next " + h(fmtWhen(j.next_run))) : "off in Settings"}`).join(" · ");
   $("#alPolicy").textContent = v.policy === "manual" ? "Refresh data is manual: rules are checked when you press Check rules now or refresh Google / Meta" : "Checked hourly, conversion rules daily";
   const open = v.alerts.filter(x => !x.acked_at).length;
-  const checks = Object.entries(v.last_check || {}).map(([id, c]) => `${h(acctName(id))}: ${h(fmtWhen(c.at))}${c.error ? ` <span class="al-chip warn" title="${h(c.error)}">error</span>` : c.skipped ? ` <span class="al-chip warn" title="${h(c.skipped)}">skipped</span>` : ""}${c.capped ? ` <span class="al-chip warn" title="At most 20 alerts per rule per check: the rest fire at the next check">+${h(c.capped)} more</span>` : ""}`).join(" · ");
+  const checks = Object.entries(v.last_check || {}).map(([id, c]) => `${h(acctName(id))}: ${h(fmtWhen(c.at))}${c.error ? ` <span class="al-chip warn" title="${h(c.error)}">Error</span>` : c.skipped ? ` <span class="al-chip warn" title="${h(c.skipped)}">Skipped</span>` : ""}${c.capped ? ` <span class="al-chip warn" title="At most 20 alerts per rule per check: the rest fire at the next check">+${h(c.capped)} more</span>` : ""}`).join(" · ");
   let out = "";
   if (v.meta_backoff) out += `<div class="warnl" style="margin-bottom:12px">Meta checks are paused until ${h(fmtWhen(v.meta_backoff.until))} (${h(v.meta_backoff.why)}): Meta asked Studio to slow down.</div>`;
   out += `<div class="al-card"><div class="al-hd"><h3>Fired alerts</h3><span class="al-count ${open ? "hot" : ""}">${open} to look at</span><span class="spacer" style="flex:1"></span>
@@ -153,18 +153,20 @@ function draw(){
 function alertRow(x){
   const d = x.delivered || {}, sent = ["Studio"].concat(d.mac === "shown" ? ["Mac"] : []).concat(d.team === "sent" ? ["Team"] : []).join(", ");
   const why = d.team && !["sent", "off", "solo"].includes(d.team) ? ` <span class="al-chip warn" title="${h(d.team)}">team: ${h(String(d.team).split(":")[0])}</span>` : "";
-  const st = x.snoozed_until ? `<span class="al-chip info">snoozed until ${h(fmtWhen(x.snoozed_until))}</span>` : x.acked_at ? `<span class="al-chip on">acknowledged</span>` : "";
+  const st = x.snoozed_until ? `<span class="al-chip info">Snoozed until ${h(fmtWhen(x.snoozed_until))}</span>` : x.acked_at ? `<span class="al-chip on">Acknowledged</span>` : "";
   return `<tr class="${x.acked_at ? "acked" : ""}"><td class="when">${h(fmtWhen(x.at))}</td><td><span class="t">${h(x.text)}</span>${(x.details || []).length > 1 ? `<div class="hint">${x.details.map(h).join("<br>")}</div>` : ""}</td>
     <td>${h(x.rule_name)}</td><td>${h(sent)}${why}</td>
     <td><div class="al-acts">${st}${x.acked_at ? "" : `<button data-ack="${h(x.id)}">Acknowledge</button>`}
       <select data-snooze="${h(x.id)}" title="Keep this rule quiet for this ${h(x.object && x.object.level === "account" ? "account" : "object")}"><option value="">Snooze ...</option><option value="4">4 hours</option><option value="24">1 day</option><option value="72">3 days</option><option value="168">1 week</option>${x.snoozed_until ? `<option value="0">Wake up now</option>` : ""}</select></div></td></tr>`;
 }
 
+const cap = s => { s = String(s ?? ""); return s.charAt(0).toUpperCase() + s.slice(1) };
+// C26: in manual mode the Check column says so ("Manual (hourly when automatic)"), never just "hourly"
 function ruleRow(r){
   return `<tr><td class="on"><input type="checkbox" data-on="${h(r.id)}" ${r.enabled ? "checked" : ""}></td>
-    <td><span class="t">${h(r.name)}</span>${r.name !== r.description ? `<div class="hint">${h(r.description)}</div>` : ""}${r.starter ? ` <span class="al-chip">starter</span>` : ""}</td>
+    <td><span class="t">${h(r.name)}</span>${r.name !== r.description ? `<div class="hint">${h(r.description)}</div>` : ""}${r.starter ? ` <span class="al-chip">Starter</span>` : ""}</td>
     <td>${h(acctName(r.account))}${r.account === "*" ? ` <span class="hint">(${h(PLAT[r.platform] || r.platform)})</span>` : ""}</td>
-    <td><span class="al-chip ${r.enabled ? "on" : ""}">${h(r.cadence)}</span></td><td class="num">${h(r.quiet_hours)} h</td>
+    <td><span class="al-chip ${r.enabled ? "on" : ""}" ${A.v && A.v.policy === "manual" ? `title="Refresh data is manual: checked when you press Check rules now or refresh Google / Meta. ${h(cap(r.cadence))} when Refresh data is automatic."` : ""}>${A.v && A.v.policy === "manual" ? `Manual (${h(r.cadence)} when automatic)` : h(cap(r.cadence))}</span></td><td class="num">${h(r.quiet_hours)} h</td>
     <td>${r.last_fired ? h(fmtWhen(r.last_fired)) : ""}</td>
     <td class="more"><span class="al-more-wrap"><button class="al-dots" data-menu="${h(r.id)}" aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${h(r.name)}" title="More actions">···</button>
       <span class="al-menu" role="menu" hidden><button class="link danger" role="menuitem" data-del="${h(r.id)}" title="Delete this rule">Delete rule</button></span></span></td></tr>`;

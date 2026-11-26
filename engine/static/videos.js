@@ -43,7 +43,7 @@
         <button id="vdAddVids" title="Add YouTube videos to the account's asset library by URL or id">+ Videos by URL</button>
         <button id="vdUpload" title="Upload a video file from this Mac to YouTube (unlisted, on the account's Google-managed channel)">Upload from Mac</button>
         <span style="flex:1"></span><span class="hint">Read ${h(String(L.fetched_at || "").replace("T", " ").slice(0, 16))}</span>
-        <button id="vdRefresh" title="Read again from Google Ads (read-only)">Refresh</button></div>
+        <button id="vdRefresh" title="Read again from Google Ads (read-only)">Refresh videos</button></div>
       <p class="hint" style="margin:0 0 10px">Video ads on YouTube are made as Demand Gen video ads (Google doesn't let tools create Video campaigns). Pick
         <b>YouTube only</b> channels to keep them on YouTube. Everything here goes into the draft; Push live sends it, new campaigns Paused.</p>
       ${errs.length ? `<p class="prob">Some parts didn't load: ${errs.map(([k, e]) => h(k + ": " + e)).join("; ")}</p>` : ""}

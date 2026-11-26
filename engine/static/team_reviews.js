@@ -15,7 +15,7 @@
   const get = (name, q) => call(R + name + (q ? "?" + new URLSearchParams(q).toString() : ""));
   const post = (name, body) => call(R + name, body || {});
   const say = m => (typeof toast === "function" ? toast(m) : alert(m));
-  const col = c => /^#[0-9a-fA-F]{6}$/.test(String(c || "")) ? c : "#888888"; // only a real colour goes into style=
+  const col = c => /^#[0-9a-fA-F]{6}$/.test(String(c || "")) ? c : "var(--who)"; // only a real colour goes into style=
   const AREA = {ads:"Ads", email:"Email", seo:"SEO", social:"SoMe", multi:"Several areas"};
   const STATUS = {open:"Waiting", approved:"Approved", changes_requested:"Changes requested", withdrawn:"Withdrawn"};
 
@@ -23,7 +23,7 @@
   #trBtn{position:relative} #trBtn .tr-n{display:none;min-width:18px;padding:0 6px;border-radius:var(--r-pill);font-size:11px;font-weight:700;line-height:18px;background:var(--accent);color:var(--ink-text);margin-left:6px;text-align:center}
   #trBtn .tr-n.on{display:inline-block}
   #trDlg{border:0;border-radius:var(--r-xl);padding:0;max-width:900px;width:calc(100% - 32px);background:var(--panel);color:var(--text);box-shadow:var(--sh-dlg)}
-  #trDlg::backdrop{background:rgba(17,19,24,.35);backdrop-filter:blur(2px)}
+  #trDlg::backdrop{background:var(--scrim);backdrop-filter:blur(2px)}
   .tr-h{display:flex;align-items:center;gap:10px;padding:20px 24px 12px;font-size:18px;font-weight:600}
   .tr-h button,.tr-h select{font-size:13px}
   .tr-h .sp{flex:1} .tr-b{padding:4px 24px 20px;max-height:72vh;overflow:auto} .tr-f{display:flex;gap:8px;justify-content:flex-end;padding:14px 24px;border-top:1px solid var(--line2)}
@@ -33,11 +33,11 @@
   .tr-tabs button:hover{background:transparent;color:var(--text)}
   .tr-tabs button.on{background:var(--panel);color:var(--text);box-shadow:var(--sh-1)}
   .tr-row{border-radius:var(--r-md);padding:12px 14px;margin-bottom:8px;cursor:pointer;background:var(--panel);box-shadow:var(--sh-card);transition:box-shadow var(--t) var(--ease),transform var(--t) var(--ease)}
-  .tr-row:hover{box-shadow:0 6px 20px rgba(17,19,24,.08),0 0 0 1px var(--line2);transform:translateY(-1px)}
+  .tr-row:hover{box-shadow:var(--sh-hover);transform:translateY(-1px)}
   .tr-row b{font-weight:600}
   .tr-meta{font-size:12px;font-weight:500;color:var(--muted);margin-top:2px}
   .tr-chip{display:inline-flex;align-items:center;height:20px;font-size:11px;font-weight:600;border-radius:var(--r-sm);padding:0 7px;margin-left:6px;background:var(--sunken);color:var(--text2);vertical-align:1px}
-  .tr-chip.approved{background:var(--ok-bg);color:var(--ok)} .tr-chip.changes_requested,.tr-chip.stale{background:var(--bad-bg);color:var(--bad)} .tr-chip.open{background:var(--accent-bg);color:var(--accent)}
+  .tr-chip.approved{background:var(--ok-bg);color:var(--ok-text)} .tr-chip.changes_requested,.tr-chip.stale{background:var(--bad-bg);color:var(--bad-text)} .tr-chip.open{background:var(--accent-bg);color:var(--accent)}
   .tr-item{border-radius:var(--r-md);padding:12px 14px;margin:10px 0;background:var(--head)}
   .tr-ln{display:grid;grid-template-columns:150px 1fr;gap:10px;font-size:13px;padding:6px 0;border-top:1px dashed var(--line)}
   .tr-ln span.old{text-decoration:line-through;color:var(--muted)} .tr-ln .new{color:var(--text);background:var(--draft-bg);border-radius:var(--r-xs);padding:0 4px} .tr-ln div{min-width:0;word-break:break-word;white-space:pre-wrap}
@@ -45,7 +45,7 @@
   .tr-cm textarea,.tr-note{width:100%;min-height:56px;box-sizing:border-box;font:500 13px/1.5 var(--font)}
   .tr-sec{border-radius:var(--r-md);padding:12px 14px;margin:12px 0;font-size:13px;background:var(--accent-bg)}
   .tr-sec .tr-needs{margin:4px 0 8px} .tr-sec label{display:flex;gap:6px;align-items:baseline;margin:4px 0}
-  .tr-sec .tr-why{width:100%;box-sizing:border-box;margin-top:6px} .tr-warn{color:var(--bad);font-weight:600}
+  .tr-sec .tr-why{width:100%;box-sizing:border-box;margin-top:6px} .tr-warn{color:var(--bad-text);font-weight:600}
   .tr-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
   .tr-frame{width:100%;height:320px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel)}
   #trOwner{position:fixed;left:16px;bottom:44px;z-index:50;background:var(--panel);border-radius:var(--r);padding:8px 12px;font-size:12.5px;font-weight:500;box-shadow:var(--sh-pop);display:none;color:var(--text2)}

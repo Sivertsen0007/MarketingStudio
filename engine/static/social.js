@@ -11,14 +11,14 @@ const SO = {view: localGet("so.view") || "calendar", mode: localGet("so.mode") |
 
 const CSS = `
 .so-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg)}
-.so-root{--so-fb:#4263eb;--so-ig:#e64980;--so-li:#0c8599}
-.so-root button.danger{color:var(--bad-text, #c8303a)}
+.so-root{--so-fb:var(--ch-fb);--so-ig:var(--ch-ig);--so-li:var(--ch-li)}
+.so-root button.danger{color:var(--bad-text)}
 .so-head{display:flex;align-items:flex-end;gap:12px;padding:22px 28px 14px;flex-wrap:wrap}
 .so-head .ttl{flex:1;min-width:240px}
 .so-head h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2;color:var(--text)}
 .so-head p{margin:4px 0 0;font-size:13.5px;font-weight:500;color:var(--muted)}
 .so-head .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.so-head .chip.ok{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-pill);background:var(--ok-bg);color:var(--ok);font-size:12px;font-weight:600}
+.so-head .chip.ok{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-pill);background:var(--ok-bg);color:var(--ok-text);font-size:12px;font-weight:600}
 .so-head .chip.ok::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
 .so-root .toolbar.so-bar{background:transparent;border:0;box-shadow:none;padding:0 28px 14px;gap:10px}
 .so-body{display:flex;flex:1;min-height:0;gap:12px;padding:0 28px 20px}
@@ -39,7 +39,7 @@ const CSS = `
 .so-day:nth-child(7n){border-right:0}
 .so-day:hover,.so-slot:hover{background:var(--hover)}
 .so-day.out{background:var(--head)}
-.so-day.out .so-dn{color:var(--faint)}
+.so-day.out .so-dn{color:var(--muted)}
 .so-day.today .so-dn{background:var(--accent);color:var(--ink-text);border-radius:var(--r-pill);padding:0 7px;min-width:22px}
 .so-day.over,.so-slot.over{outline:2px dashed var(--accent);outline-offset:-3px;background:var(--accent-bg)}
 .so-dn{font-size:12px;font-weight:600;color:var(--text2);display:inline-flex;align-items:center;justify-content:center;height:22px;margin:0 0 4px 2px;font-variant-numeric:tabular-nums}
@@ -57,7 +57,7 @@ const CSS = `
 :is(.so-day,.so-slot) .so-ev .so-st.scheduled{background:var(--accent)}:is(.so-day,.so-slot) .so-ev .so-st.published{background:var(--ok)}:is(.so-day,.so-slot) .so-ev .so-st.failed{background:var(--bad)}:is(.so-day,.so-slot) .so-ev .so-st.draft{background:var(--draft)}
 :is(.so-day,.so-slot) .so-ev .so-st.needs_checking,:is(.so-day,.so-slot) .so-ev .so-st.missed,:is(.so-day,.so-slot) .so-ev .so-st.not_scheduled,:is(.so-day,.so-slot) .so-ev .so-st.publishing{background:var(--c4)}
 .so-st{display:inline-flex;align-items:center;height:18px;font-size:10.5px;font-weight:600;padding:0 6px;border-radius:var(--r-xs);margin-left:4px;background:var(--sunken);color:var(--text2);white-space:nowrap}
-.so-st.scheduled{background:var(--accent-bg);color:var(--accent)}.so-st.published{background:var(--ok-bg);color:var(--ok)}.so-st.failed{background:var(--bad-bg);color:var(--bad)}.so-st.draft{background:var(--draft-bg);color:var(--draft)}
+.so-st.scheduled{background:var(--accent-bg);color:var(--accent)}.so-st.published{background:var(--ok-bg);color:var(--ok-text)}.so-st.failed{background:var(--bad-bg);color:var(--bad-text)}.so-st.draft{background:var(--draft-bg);color:var(--draft-text)}
 .so-st.needs_checking,.so-st.missed,.so-st.not_scheduled,.so-st.publishing{background:var(--warn-bg);color:var(--warn)}
 .so-week{display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr));flex:1 0 auto}
 .so-week>.so-dow{position:sticky;top:0;z-index:1;height:38px}
@@ -67,7 +67,7 @@ const CSS = `
 .so-legend>span{display:inline-flex;align-items:center;gap:4px}
 .so-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
 .so-pending{background:var(--draft-bg);color:var(--text);padding:10px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px}
-.so-pending b{color:var(--draft);font-weight:600}
+.so-pending b{color:var(--draft-text);font-weight:600}
 .so-pending button{height:30px;padding:0 12px;font-size:12.5px}
 .so-unpl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:12px 18px;border-top:1px solid var(--line2);font-size:13px}
 .so-unpl b{font-weight:600;color:var(--text2)}
@@ -82,7 +82,7 @@ const CSS = `
 .so-row>label.inl{display:flex;gap:8px;align-items:center;color:var(--text);font-size:13px;font-weight:500}
 .so-row input[type=text],.so-row input[type=datetime-local],.so-row select{width:100%}
 .so-ticks{display:flex;gap:14px;flex-wrap:wrap}.so-ticks label{display:flex;gap:6px;align-items:center;font-weight:500}
-.so-cnt{font-size:11.5px;font-weight:500;color:var(--muted);text-align:right;margin-top:4px}.so-cnt.over{color:var(--bad)}
+.so-cnt{font-size:11.5px;font-weight:500;color:var(--muted);text-align:right;margin-top:4px}.so-cnt.over{color:var(--bad-text)}
 .so-tabs{display:inline-flex;gap:2px;margin-bottom:6px;padding:3px;border-radius:var(--r-md);background:var(--sunken)}
 .so-tabs button{height:32px;padding:0 12px;font-size:12px;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--muted)}
 .so-tabs button:hover{background:transparent;color:var(--text)}
@@ -91,12 +91,12 @@ const CSS = `
 .so-mi img{width:100%;height:100%;object-fit:cover}.so-mi .x{position:absolute;top:3px;right:3px;padding:0 6px;font-size:11px;line-height:18px;height:18px}
 .so-mi .l{position:absolute;bottom:3px;left:3px;padding:0 6px;font-size:11px;line-height:18px;height:18px}
 .so-prob,.so-warn,.so-okk{font-size:12.5px;font-weight:500;border-radius:var(--r-sm);padding:7px 10px;margin:4px 0;color:var(--text2)}
-.so-prob{background:var(--bad-bg)} .so-prob b{color:var(--bad)}
+.so-prob{background:var(--bad-bg)} .so-prob b{color:var(--bad-text)}
 .so-warn{background:var(--warn-bg)} .so-warn b{color:var(--warn)}
-.so-okk{background:var(--ok-bg)} .so-okk b{color:var(--ok)}
+.so-okk{background:var(--ok-bg)} .so-okk b{color:var(--ok-text)}
 .so-main>.so-prob,.so-main>.so-warn{margin:12px 18px}
 .so-consent{background:var(--warn-bg);color:var(--text2);border-radius:var(--r);padding:8px 10px;font-size:12.5px;margin-top:6px}
-.so-acts{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line2);padding:12px 20px;display:flex;gap:8px;flex-wrap:wrap;box-shadow:0 -6px 16px rgba(17,19,24,.04)}
+.so-acts{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line2);padding:12px 20px;display:flex;gap:8px;flex-wrap:wrap;box-shadow:var(--sh-up)}
 .so-acts .hint{margin:0;font-size:12px}
 .so-phones{display:flex;gap:14px;overflow-x:auto;padding:4px 2px 10px}
 .so-phone{flex:none;width:236px;border:7px solid var(--ink);border-radius:26px;background:var(--panel);color:var(--text);font-size:12px;overflow:hidden;box-shadow:var(--sh-pop)}
@@ -104,7 +104,7 @@ const CSS = `
 .so-phone .hd{display:flex;align-items:center;gap:7px;padding:8px 10px;font-weight:600}.so-phone .av{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--violet))}
 .so-phone .md{background:var(--sunken);aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;color:var(--muted);overflow:hidden;position:relative}
 .so-phone .md img{width:100%;height:100%;object-fit:cover}.so-phone.instagram .md{aspect-ratio:4/5}
-.so-phone .md .n{position:absolute;top:6px;right:6px;background:rgba(17,19,24,.7);color:var(--ink-text);border-radius:var(--r-pill);padding:0 7px;font-size:10px}
+.so-phone .md .n{position:absolute;top:6px;right:6px;background:var(--overlay);color:var(--ink-text);border-radius:var(--r-pill);padding:0 7px;font-size:10px}
 .so-phone .cp{padding:8px 10px;white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:hidden;color:var(--text2)}
 .so-phone .cp.sub{color:var(--muted)}
 .so-phone .lk{margin:0 10px 10px;border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 8px;color:var(--muted);font-size:11px;word-break:break-all}
@@ -118,7 +118,7 @@ const CSS = `
 .so-grid td.txt{max-width:340px;color:var(--text)}
 .so-grid td button{height:28px;padding:0 10px;font-size:12px}
 .so-grid img{width:34px;height:34px;object-fit:cover;border-radius:var(--r-sm);vertical-align:middle}
-.so-chan{font-weight:600}.so-chan.facebook{color:var(--so-fb)}.so-chan.instagram{color:var(--so-ig)}.so-chan.linkedin{color:var(--so-li)}
+.so-chan{font-weight:600}.so-chan.facebook{color:var(--so-fb)}.so-chan.instagram{color:var(--ch-ig-text)}.so-chan.linkedin{color:var(--ch-li-text)}
 .so-quick{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}.so-quick button{height:26px;font-size:12px;padding:0 9px;border-radius:var(--r-pill)}
 .so-libbar{display:flex;gap:6px;flex-wrap:wrap}.so-libbar select{flex:1;min-width:120px}
 .so-tagsug{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;align-items:center}
@@ -129,10 +129,10 @@ const CSS = `
 .so-ldh{font-weight:600;font-size:13.5px;color:var(--text);padding:10px 0 8px;border-bottom:1px solid var(--line2);margin-bottom:6px;display:flex;gap:10px;align-items:center}
 .so-lrow{display:flex;gap:10px;align-items:center;padding:3px 0}.so-lrow .so-ev{width:auto;max-width:640px;margin:0}
 .so-feed{display:grid;grid-template-columns:repeat(3,minmax(0,170px));gap:4px;padding:16px 18px;justify-content:start}
-.so-ft{aspect-ratio:4/5;background:linear-gradient(160deg,var(--accent-bg),var(--violet-bg));position:relative;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--muted);border-radius:var(--r-xs);transition:filter var(--t) var(--ease)}
+.so-ft{aspect-ratio:3/4;background:linear-gradient(160deg,var(--accent-bg),var(--violet-bg));position:relative;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--muted);border-radius:var(--r-xs);transition:filter var(--t) var(--ease)}
 .so-ft:hover{filter:brightness(.96)}
 .so-ft img{width:100%;height:100%;object-fit:cover}.so-ft.plan{outline:2px dashed var(--accent);outline-offset:-2px}
-.so-fl{position:absolute;left:4px;bottom:4px;right:4px;background:rgba(17,19,24,.72);color:var(--ink-text);font-size:10.5px;padding:3px 6px;border-radius:var(--r-sm);display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.so-fl{position:absolute;left:4px;bottom:4px;right:4px;background:var(--overlay);color:var(--ink-text);font-size:10.5px;padding:3px 6px;border-radius:var(--r-sm);display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .so-ana{padding:18px 20px}
 .so-main:has(> .so-ana:not(.so-lib)){background:transparent;box-shadow:none;border-radius:0}
 .so-main>.so-ana:not(.so-lib){padding:0 0 8px}
@@ -170,7 +170,9 @@ const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const fmtDate = s => s ? window.studioFmt.dateTime(s) : "";  // 25 Nov 2026, 14:05
 const num = v => v == null || v === "" ? "" : Number(v).toLocaleString("en-GB");
 const mondayOf = d => { const x = new Date(d); x.setHours(0,0,0,0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x };
-const stChip = s => `<span class="so-st ${esc(String(s).replace(/ .*/, ""))}">${esc(String(s).replace(/_/g, " "))}</span>`;
+// U22: statuses are shown capitalised ("Scheduled", "Needs checking"), like Email and Ads; the class keeps the raw value
+const stWord = s => { const t = String(s ?? "").replace(/_/g, " "); return t.charAt(0).toUpperCase() + t.slice(1) };
+const stChip = s => `<span class="so-st ${esc(String(s).replace(/ .*/, ""))}">${esc(stWord(s))}</span>`;
 const mediaUrl = id => "/api/meta/media?" + qs({acct: "meta", id});
 const sapi = (k, body) => api(A + k, body);
 // ---- the posting time zone (SoMe settings, shared with Email; default Europe/London): the editor's time field, quick
@@ -202,7 +204,7 @@ function render(el){
   el.innerHTML = `<div class="so-root">
     <div class="so-head"><div class="ttl"><h1>SoMe</h1><p>Organic Facebook, Instagram and LinkedIn posts. Post now, Schedule and Cancel are your own buttons.</p></div>
       <div class="acts"><span id="soTest"></span>
-      <button id="soRefresh" title="Read posts and insights from Meta again">Refresh</button>
+      <button id="soRefresh" title="Read posts and insights from Meta again">Refresh SoMe</button>
       <button id="soSet">SoMe settings</button>
       <button class="primary" id="soNew">New post</button></div></div>
     <div class="toolbar so-bar">
@@ -236,7 +238,7 @@ function render(el){
     try { if (typeof dataRefresh === "function") await dataRefresh("social", null, {reload: false});
       else { const r = await sapi("refresh", {}); toast(r.errors && r.errors.length ? r.errors.join("; ") : "Read from Meta") } } catch(e) { toast(e.message) }
     SO.tags = null; SO.quick = null; SO.lib = null;
-    b.disabled = false; b.textContent = "Refresh"; await loadState(); draw() };
+    b.disabled = false; b.textContent = "Refresh SoMe"; await loadState(); draw() };
   loadState().then(draw);
 }
 
@@ -288,9 +290,11 @@ async function loadCalendar(){
 function drawCal(){ if (!SO.cal) return; if (SO.view === "list") drawList(); else drawCalendar() }
 const shown = ev => (!SO.fch || ev.channel === SO.fch) && (!SO.fst || (ev.moved ? "draft" : ev.status) === SO.fst);
 function evHTML(ev){
-  const t = new Date(ev.when), drag = ev.source === "studio" && ev.status !== "published";
+  // C30: a post with any channel already published can't move (the move would shift its other channels' time only)
+  const partly = ev.post && ((SO.cal && SO.cal.events) || []).some(z => z.post === ev.post && z.status === "published");
+  const t = new Date(ev.when), drag = ev.source === "studio" && ev.status !== "published" && !partly;
   return `<button class="so-ev ${esc(ev.channel)} ${ev.moved ? "moved" : ""}" data-ev="${esc(ev.key)}" ${drag ? `draggable="true"` : ""}
-    title="${esc(CH[ev.channel] + " · " + ev.status + " · " + fmtDate(ev.when) + (ev.moved ? " (moved, not confirmed)" : "") + "\n" + ev.title)}"><span class="t">${pad(t.getHours())}:${pad(t.getMinutes())}</span>${esc(ev.title || "(no text)")}${stChip(ev.moved ? "moved" : ev.status)}</button>`;
+    title="${esc(CH[ev.channel] + " · " + stWord(ev.status) + " · " + fmtDate(ev.when) + (ev.moved ? " (moved, not confirmed)" : "") + "\n" + ev.title)}"><span class="t">${pad(t.getHours())}:${pad(t.getMinutes())}</span>${esc(ev.title || "(no text)")}${stChip(ev.moved ? "moved" : ev.status)}</button>`;
 }
 function calHead(c){
   const moved = [...new Set(c.events.filter(e => e.moved).map(e => e.post))];
@@ -360,6 +364,7 @@ function wireCal(main){
   main.ondrop = async e => {
     const t = e.target.closest("[data-day]"); if (!t) return; e.preventDefault(); t.classList.remove("over");
     const x = SO.cal.events.find(z => z.key === e.dataTransfer.getData("text/plain")); if (!x || !x.post) return;
+    if (SO.cal.events.some(z => z.post === x.post && z.status === "published")) return toast("Part of this post is already published, so it can't be moved. Open it to change the other channels.");
     const old = new Date(x.when), [y, m, d] = t.dataset.day.split("-").map(Number);
     const nw = new Date(y, m - 1, d, t.dataset.hour !== undefined ? +t.dataset.hour : old.getHours(), old.getMinutes());
     if (+nw === +old) return;
@@ -455,7 +460,7 @@ function drawEditor(){
   side.innerHTML = `<div class="so-ed" ${p.id ? `data-team-coll="social" data-team-id="${esc(p.id)}" data-team-label="${esc(p.title || (p.caption || "").slice(0, 60))}"` : ""}>
     <div class="so-edh"><h3>${p.id ? "Post" : "New post"} ${stChip(p.status || "draft")}</h3><button id="soClose" title="Close">Close</button></div>
     ${ro ? `<div class="so-warn">Scheduled: cancel it to edit. You can still move it in the calendar.</div>` : ""}
-    ${res.length ? `<div class="so-res">${res.map(([c, r]) => `<div class="${r.error ? "so-prob" : "so-okk"}"><b>${esc(CH[c])}</b>: ${esc(r.status)}${r.scheduled_for && r.status === "scheduled" ? " for " + esc(fmtDate(r.scheduled_for)) + (r.via === "vps" ? " (VPS job)" : r.via === "local" ? " (Studio on this Mac)" : " (Meta)") : ""}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">open</a>` : ""}${r.error ? " · " + esc(r.error) : ""}${r.warning ? " · " + esc(r.warning) : ""}${r.status === "missed" ? " · use Post now if you still want it" : ""}${r.status === "needs_checking" ? ` <button data-checkagain="${esc(c)}">Check again</button>` : ""}</div>`).join("")}</div>` : ""}
+    ${res.length ? `<div class="so-res">${res.map(([c, r]) => `<div class="${r.error ? "so-prob" : "so-okk"}"><b>${esc(CH[c])}</b>: ${esc(stWord(r.status))}${r.scheduled_for && r.status === "scheduled" ? " for " + esc(fmtDate(r.scheduled_for)) + (r.via === "vps" ? " (VPS job)" : r.via === "local" ? " (Studio on this Mac)" : " (Meta)") : ""}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">open</a>` : ""}${r.error ? " · " + esc(r.error) : ""}${r.warning ? " · " + esc(r.warning) : ""}${r.status === "missed" ? " · use Post now if you still want it" : ""}${r.status === "needs_checking" ? ` <button data-checkagain="${esc(c)}">Check again</button>` : ""}</div>`).join("")}</div>` : ""}
     <div class="so-row"><label>Name in Studio (not posted)</label><input type="text" id="so_title" value="${esc(p.title)}" ${dis}></div>
     <div class="so-row"><label>Channels</label><div class="so-ticks">${CHS.map(c => { const off = c === "linkedin" && !li && !p.channels.includes(c);
       return `<label ${off ? `title="LinkedIn is not connected: see SoMe settings"` : ""}><input type="checkbox" data-chan="${c}" ${p.channels.includes(c) ? "checked" : ""} ${dis || (off ? "disabled" : "")}> ${CH[c]}${c === "linkedin" && !li ? ` <span class="chip">not connected</span>` : ""}</label>` }).join("")}</div></div>
@@ -479,7 +484,7 @@ function drawEditor(){
     <div class="so-row"><label>Alt text (what the image shows)</label><input type="text" id="so_alt_text" value="${esc(p.alt_text)}" ${dis}></div>
     <div class="so-row"><label>Location (optional: the location's Facebook Page ID)</label><input type="text" id="so_location" value="${esc(p.location)}" ${dis}></div>
     <div class="so-row"><label>Media: one image, 2-10 images (carousel) or one video / Reel. JPG, PNG, MP4 or MOV (Instagram: JPG only).</label>
-      <div class="so-media" id="soMedia">${(p.media || []).map((m, i) => `<div class="so-mi">${m.kind === "image" ? `<img src="${esc(mediaUrl(m.media_id))}" alt="">` : `Video<br>${esc(m.name || "")}`}${ro ? "" : `<button class="x" data-rm="${i}" title="Remove">x</button>${i ? `<button class="l" data-left="${i}" title="Move left">‹</button>` : ""}`}</div>`).join("")}</div>
+      <div class="so-media" id="soMedia">${(p.media || []).map((m, i) => `<div class="so-mi">${m.kind === "image" ? `<img src="${esc(mediaUrl(m.media_id))}" alt="">` : `Video<br>${esc(m.name || "")}`}${ro ? "" : `<button class="x" data-rm="${i}" title="Remove" aria-label="Remove media ${i + 1}">x</button>${i ? `<button class="l" data-left="${i}" title="Move left" aria-label="Move media ${i + 1} left">‹</button>` : ""}`}</div>`).join("")}</div>
       ${ro ? "" : `<input type="file" id="soFile" accept=".jpg,.jpeg,.png,.mp4,.mov" multiple style="margin-top:6px">`}
       ${(p.media || []).some(m => m.kind === "video") ? `<label style="display:flex;gap:6px;margin-top:6px"><input type="checkbox" id="so_reel" ${p.format === "reel" ? "checked" : ""} ${dis}> Post as a Reel on Instagram (videos on Instagram are always Reels)</label>` : ""}</div>
     <div class="so-row"><label style="display:flex;gap:6px;color:var(--text)"><input type="checkbox" id="so_guest" ${p.guest_photos ? "checked" : ""} ${dis}> The media shows guests or other people</label>
@@ -618,7 +623,7 @@ async function saveDraft(show){
 function resultDialog(title, r, list, notTitle){
   const ran = r.results && Object.keys(r.results).length;
   showDialog(r.ok ? title : (notTitle || "Not done"), `${ran ? (list || "") : ""}<p>${esc(r.message || "")}</p>${(r.problems || []).map(x => `<div class="so-prob">${esc(x)}</div>`).join("")}
-    ${r.results ? `<div class="so-res">${Object.entries(r.results).map(([c, x]) => `<div class="${x.error ? "so-prob" : "so-okk"}"><b>${esc(CH[c])}</b>: ${esc(x.status)}${x.url ? ` · <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.url)}</a>` : ""}${x.error ? " · " + esc(x.error) : ""}</div>`).join("")}</div>` : ""}`, []);
+    ${r.results ? `<div class="so-res">${Object.entries(r.results).map(([c, x]) => `<div class="${x.error ? "so-prob" : "so-okk"}"><b>${esc(CH[c])}</b>: ${esc(stWord(x.status))}${x.url ? ` · <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.url)}</a>` : ""}${x.error ? " · " + esc(x.error) : ""}</div>`).join("")}</div>` : ""}`, []);
 }
 async function confirmThen(title, html, label, fn){
   showDialog(title, html, [["Back", () => dlg.close()], [label, fn, "live"]]);

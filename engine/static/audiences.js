@@ -73,7 +73,7 @@
     r = r || {op: "contains", value: ""};
     const op = r.field === "event" ? "event" : r.op;
     return `<div class="ln a-rule"><select class="a-op">${ops.map(([k, l]) => `<option value="${k}" ${k === op ? "selected" : ""}>${h(l)}</option>`).join("")}</select>
-      <input class="a-val" value="${h(r.value)}" placeholder="/egypt or SelectCabin" style="flex:1"><button class="link danger" onclick="this.parentElement.remove()">✕</button></div>`;
+      <input class="a-val" value="${h(r.value)}" placeholder="/egypt or SelectCabin" style="flex:1"><button class="link danger" onclick="this.parentElement.remove()" title="Remove this rule" aria-label="Remove this rule">✕</button></div>`;
   }
   function ruleBox(id, ops, list){
     return `<div class="lines" id="${id}">${(list && list.length ? list : [null]).map(r => ruleRow(ops, r)).join("")}</div>

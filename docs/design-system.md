@@ -29,15 +29,21 @@ radius or shadow: they use the tokens below.
 | `--violet` / `--violet-bg` | `#a56bf0` / `#f4ecfe` | Second series, Claude and draft accents |
 | `--ink` / `--ink-2` | `#17181c` / `#2a2c33` | Primary (dark) button, toast / primary button on hover |
 | `--on-accent` | `#fff` | Text and icons on a blue or coloured fill |
-| `--ok` / `--ok-bg` | `#1c9a4c` / `#e3f7e9` | Live, success, up |
+| `--ok` / `--ok-bg` | `#1c9a4c` / `#e3f7e9` | Live, success, up: dots, bars and fills (3.25:1 as text on `--ok-bg`, so never text) |
+| `--ok-text` | `#137a3a` | All green text: `.pill.Enabled`/`.Active`, `.chip.ok`, `.chip.trend`, `.st.Enabled`, done states (5.42:1 on white, 4.84:1 on `--ok-bg`) |
 | `--warn` / `--warn-bg` | `#b45309` / `#fff4e0` | Warnings |
 | `--warn-dot` | `#f5a524` | Amber status dot (connections, data warning, legend) |
 | `--idle` | `#a9acb4` | Paused / unknown status dot |
 | `--bad` / `--bad-bg` | `#e5484d` / `#fdecec` | Problems, errors, down, notification dot, bars and dots (fills, not text) |
 | `--bad-text` | `#c8303a` | All red text: danger buttons (`button.danger`, `button.link.danger`, dialog danger buttons), `.chip.bad`, `.prob`, `.flag.perm`, `.pill.Removed`, `.chip.trend.down`, `.jobpill.bad`, the alerts counter (5.33:1 on white, 4.67:1 on `--bad-bg`) |
-| `--draft` / `--draft-bg` | `#8b4fe0` / `#f4ecfe` | In draft |
+| `--draft` / `--draft-bg` | `#8b4fe0` / `#f4ecfe` | In draft: dots, borders, the row marker |
+| `--draft-text` | `#7a3fd0` | Draft text: `.chip.draft`, `.ed.draft`, who-labels, the Hub badge in the topical map (5.30:1 on `--draft-bg`, 6.09:1 on white) |
 | `--c1` ... `--c6` | blue, violet, green, orange, light blue, red | Chart series, in that order |
-| `--scrim` | `rgba(17,19,24,.35)` | Dialog backdrop |
+| `--ch-fb` / `--ch-ig` / `--ch-li` | `#4263eb` / `#e64980` / `#0c8599` | Channel colours (Facebook, Instagram, LinkedIn): dots and tints in the SoMe calendar |
+| `--ch-ig-text` / `--ch-li-text` | `#c2255c` / `#0b7285` | Instagram / LinkedIn as text (5.66:1 / 5.59:1 on white; Facebook text uses `--ch-fb`, 4.98:1) |
+| `--who` | `#888888` | A teammate without a colour of their own (dot only) |
+| `--scrim` | `rgba(17,19,24,.35)` | Dialog backdrop (every dialog, including the team, calendar and review dialogs) |
+| `--overlay` | `rgba(17,19,24,.72)` | Dark label over a picture (SoMe media counters, feed labels) |
 | `--glass` | `rgba(255,255,255,.22)` | Counter badge on a filled (blue) button |
 
 ### Type
@@ -64,6 +70,8 @@ Manrope (Google Fonts, 400/500/600/700), `--font`. Numbers use `font-variant-num
 | `--sh-card` | Cards and panels (soft shadow plus a 1px hairline) |
 | `--sh-pop` | Menus, dropdowns, tooltips, popovers |
 | `--sh-dlg` | Dialogs |
+| `--sh-hover` | A card that lifts on hover (Activity tiles, review rows) |
+| `--sh-up` | A sticky footer bar over scrolling content |
 | `--ring` | Focus ring on focused inputs. Keyboard focus everywhere is a 2px `--accent` outline, offset 2px (`:focus-visible`, `!important` so no component can cancel it) |
 | `--ease`, `--t` | 160 ms ease-out for hover, focus and open |
 
@@ -73,7 +81,8 @@ Spacing steps: 4, 8, 12, 16, 20, 24, 36. Cards pad 18-24, gaps between cards 12.
 
 **Top bar.** White, no bottom border, a 1px `--line2` hairline under it. Brand left: a 28px blue gradient mark and
 Marketing **Studio** (18). Then the pill tabs: Overview first, then the areas. 36 high, radius 9, padding 0/14, 13/600; inactive
-`--muted` on transparent, active `--text` on white with `--sh-1`. The Alerts tab carries a small red counter for unacknowledged
+`--muted` on transparent, active `--accent` on `--accent-soft` without a shadow (5.37:1), the same tint as the selected tree row and
+MANAGE tab, and marked `aria-current="page"`. The Alerts tab carries a small red counter for unacknowledged
 alerts (no separate button). Actions on the right are secondary buttons 34 high (`.tb`): Refresh data (one menu for every
 source and account), Push live, Connections, Setup, Settings. Push live turns blue with a counter when the draft has changes.
 Under 1380px the brand name and the Setup/Settings icons hide; under 1240px the Refresh data and Push live icons hide too.
@@ -100,12 +109,15 @@ track, white active pill) and 34px selects and buttons. The Edit/Draft switch is
 Selects carry a small chevron. Search inputs have a 14px search icon and may show a `⌘K` key hint (`--sunken`, radius 4).
 
 **Dropdowns and menus.** White, radius `--r-lg`, `--sh-pop`, padding 6. Items 32 high, radius `--r-sm`, hover `--hover`,
-selected item `--accent-bg` with `--accent` text. Group labels 11/600 `--muted`.
+selected item `--accent-bg` with `--accent` text. Group labels 11/600 `--muted`. Every pop-up menu (Refresh data, the status
+pill, More) uses one keyboard model (`menuKeys` in `index.html`): opening focuses the first item, Up/Down/Home/End move, Enter
+picks, Escape closes and puts focus back on the button that opened it; the button carries `aria-haspopup` and `aria-expanded`.
 
 **Chips and badges.** Radius 5-6, padding 3/8, 11/600. Status tints: ok, warn, bad, draft, info (`--accent-bg`), as
 `.chip.ok` and so on, text in the status colour. Trend chip `.chip.trend` (`.down` for red): `+4.8%` in `--ok` on `--ok-bg` with a
 small arrow. Counter badge on a button: pill, `--accent` on `--accent-bg`, or white on `--glass` inside a blue button.
-Status pill (`.pill`): pill radius, tinted by status (Enabled/Active green, Paused grey, Removed red), 7px dot.
+Status pill (`.pill`): pill radius, tinted by status (Enabled/Active `--ok-text` on `--ok-bg`, Paused grey, Removed red), 7px dot.
+Green and red text always use the `-text` tokens; `--ok` and `--bad` are for dots and fills.
 
 **Cards.** White, radius `--r-lg`, `--sh-card`, padding 18-24. Header row: title (16-18/600) left, small icon buttons
 (`+`, `···`), a secondary button or a neutral chip right. KPI card: label 13/500 `--text2`, big number, trend chip.
@@ -133,7 +145,8 @@ on top, gradient from the series colour to 35% of it. Lines 2px with a soft area
 = white card, radius 6, `--sh-pop`, date 10.5/500 and values 14/600.
 
 **Dialogs.** White, radius `--r-xl`, `--sh-dlg`, padding 24, title 18/600, footer actions right (secondary then primary).
-Backdrop `rgba(17,19,24,.35)` with a light blur.
+Backdrop `--scrim` with a light blur. Setup is a full-page dialog: `aria-modal`, the app behind it `inert`, focus moves in
+and comes back to the Setup button on close, one primary button (Save) in a sticky footer.
 
 **Country picker** (`static/geo_picker.js`, `.gp-*`). In a form: the selection as text ("United Kingdom, Germany +3") and a
 secondary "Choose countries" button. The pop-up is a second dialog (580 wide, `min(580px,94vw)`) over the form: the count as a neutral chip in
@@ -142,7 +155,8 @@ ticks the first match), quick groups as ghost buttons in `--accent`, then the li
 ticked rows `--sel`; countries that can't be picked are greyed with the reason in `--warn`). Regions and cities show
 read-only under the list. Footer: Clear (link, left), Cancel, Done (n). Escape cancels, Tab stays inside.
 
-**Toasts.** `--ink` background, white text, radius `--r`, `--sh-pop`, bottom centre.
+**Toasts.** `--ink` background, white text, radius `--r`, `--sh-pop`, bottom centre. `role="status"` with `aria-live="polite"` so
+screen readers hear them.
 
 **Tooltips.** `--ink` small tooltip for icons; white card tooltip for charts.
 

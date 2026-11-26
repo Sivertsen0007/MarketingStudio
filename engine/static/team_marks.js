@@ -26,8 +26,10 @@
 
   const TM = window.TeamMarks = {st:{joined:false}, marks:{}, counts:{}, claims:[], presence:[], unread:0, kinds:{},
     since:{}, anyway:{}, watch:{}, listeners:[], get, post, esc};
-  const colour = c => HEX.test(c || "") ? c : "#888888";
-  const hexA = (h, a) => { h = colour(h); return `rgba(${parseInt(h.slice(1,3),16)},${parseInt(h.slice(3,5),16)},${parseInt(h.slice(5,7),16)},${a})` };
+  // a teammate without a (valid) colour gets the --who token; read as hex so hexA can tint it
+  const WHO = () => { try { const v = getComputedStyle(document.documentElement).getPropertyValue("--who").trim(); return HEX.test(v) ? v : "" } catch(e) { return "" } };
+  const colour = c => HEX.test(c || "") ? c : (WHO() || "var(--who)");
+  const hexA = (h, a) => { h = colour(h); if (!HEX.test(h)) return `color-mix(in srgb,${h} ${Math.round(a * 100)}%,transparent)`; return `rgba(${parseInt(h.slice(1,3),16)},${parseInt(h.slice(3,5),16)},${parseInt(h.slice(5,7),16)},${a})` };
   const dot = (c, extra) => `<span class="tmk-d ${extra || ""}" style="background:${colour(c)}"></span>`;
   const meId = () => String(((TM.st || {}).me || {}).id);
   TM.colour = colour; TM.dot = dot;

@@ -16,22 +16,22 @@ const CSS = `
 .act-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:var(--r-pill);background:var(--panel);box-shadow:var(--sh-1);color:var(--text2);font-weight:600;cursor:default;transition:box-shadow var(--t) var(--ease)}
 .act-chip:hover{box-shadow:var(--sh-pop)}
 .act-chip i{width:7px;height:7px;border-radius:50%;background:var(--faint);display:inline-block}
-.act-chip.ok i{background:var(--ok)} .act-chip.error{color:var(--bad-text, #c8303a)} .act-chip.error i{background:var(--bad)} .act-chip.demo i{background:var(--c4)}
+.act-chip.ok i{background:var(--ok)} .act-chip.error{color:var(--bad-text)} .act-chip.error i{background:var(--bad)} .act-chip.demo i{background:var(--c4)}
 .act-chip.loading i{background:var(--accent);animation:actpulse 1s infinite alternate} .act-chip.not_connected{color:var(--muted)} .act-chip.not_connected i{background:var(--line)}
 @keyframes actpulse{from{opacity:.3}to{opacity:1}}
 .act-scroll{overflow:auto;flex:1;padding:0 28px 28px;min-height:0}
 .act-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin-bottom:12px}
 .act-tile{border-radius:var(--r-lg);padding:16px 18px 14px;background:var(--panel);box-shadow:var(--sh-card);cursor:pointer;
   transition:box-shadow var(--t) var(--ease),transform var(--t) var(--ease),background var(--t) var(--ease)}
-.act-tile:hover{box-shadow:0 6px 20px rgba(17,19,24,.08),0 0 0 1px var(--line2);transform:translateY(-1px)}
+.act-tile:hover{box-shadow:var(--sh-hover);transform:translateY(-1px)}
 .act-tile.on{background:var(--accent-bg);box-shadow:0 0 0 1.5px var(--accent),var(--sh-1)}
 .act-tile .k{font-size:13px;font-weight:500;color:var(--text2);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word}
 .act-tile .v{font-size:30px;font-weight:600;letter-spacing:-.6px;margin-top:6px;line-height:1.1;color:var(--text)}
 .act-tile .v .ast{font-size:13px;color:var(--muted);font-weight:500;letter-spacing:0}
 .act-tile .d{font-size:11.5px;font-weight:500;color:var(--muted);margin-top:8px;line-height:1.35}
 .act-tile .d.up,.act-tile .d.down{display:inline-block;padding:2px 7px;border-radius:var(--r-sm);font-weight:600}
-.act-tile .d.up{color:var(--ok);background:var(--ok-bg)} .act-tile .d.up::before{content:"↗";margin-right:4px}
-.act-tile .d.down{color:var(--bad-text, #c8303a);background:var(--bad-bg)} .act-tile .d.down::before{content:"↘";margin-right:4px}
+.act-tile .d.up{color:var(--ok-text);background:var(--ok-bg)} .act-tile .d.up::before{content:"↗";margin-right:4px}
+.act-tile .d.down{color:var(--bad-text);background:var(--bad-bg)} .act-tile .d.down::before{content:"↘";margin-right:4px}
 .act-chart{border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--sh-card);padding:18px 20px 12px;margin-bottom:12px;position:relative}
 .act-chart h3{margin:0 0 12px;font-size:16px;font-weight:600;color:var(--text)}
 .act-chart h3 small{font-size:12px;font-weight:500;color:var(--muted);margin-left:8px}
@@ -74,7 +74,7 @@ if (!document.getElementById("act-css")){ const st = document.createElement("sty
 
 const SRC = {google: "Google Ads", meta: "Meta", email: "Email", blog: "Blog", social: "Social", studio: "Studio"};
 const TILES = [["google", "Google Ads changes"], ["meta", "Meta changes"], ["email", "Emails sent"], ["blog_pub", "Blog posts published"],
-               ["blog_edit", "Blog posts edited"], ["social", "Social posts published"], ["studio", "Studio pushes and undos"]];
+               ["blog_edit", "Blog posts edited"], ["social", "Social posts published"], ["studio", "Studio pushes"]];
 const STATUS = {ok: "ok", error: "error", demo: "demo data", loading: "loading", not_connected: "not connected"};
 const MAC_TZ = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "Europe/London";
 const T = {period: localGet("act.period") || "last_30", from: "", to: "", tz: localGet("act.tz") || "Europe/London", compare: localGet("act.compare") !== "0",
@@ -94,7 +94,7 @@ function render(el){
                 ["last_7", "Last 7 days"], ["last_30", "Last 30 days"], ["last_90", "Last 90 days"], ["this_quarter", "This quarter"], ["custom", "Custom ..."]];
   el.innerHTML = `<div class="act-root"><div class="act-head"><div class="ttl"><h1>Activity</h1><p>Everything that happened in a period, across channels. Read-only.</p></div>
     <div class="acts"><span id="actPerLabel" class="act-per"></span>
-    <button id="actRefresh" title="Sync Google and Meta into the archive and read every source again (otherwise results are kept until you refresh)">Refresh</button></div></div>
+    <button id="actRefresh" title="Sync Google and Meta into the archive and read every source again (otherwise results are kept until you refresh)">Refresh Activity</button></div></div>
   <div class="toolbar act-bar">
     <select id="actPeriod" title="Period">${opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
     <span id="actCustom" style="display:none"><input type="date" id="actFrom"> to <input type="date" id="actTo"> <button id="actApply">Apply</button></span>
@@ -220,7 +220,7 @@ function notesHtml(){
   ["email", "blog", "social"].forEach(s => { const r = T.res[s] || {}; if (r.note) bits.push(`<b>${SRC[s]}:</b> ${esc(r.note)}`) });
   ((T.per || {}).notes || []).forEach(n => bits.push(`<b>Period:</b> ${esc(n)}`));
   Object.entries(T.res).forEach(([s, r]) => (r.errors || []).forEach((e, i) => { const raw = (r.error_details || []).join(" | ");
-    bits.push(`<span title="${esc(raw)}"><b style="color:var(--bad)">${SRC[s]} could not be read:</b> ${esc(e)}</span>`) }));
+    bits.push(`<span title="${esc(raw)}"><b style="color:var(--bad-text)">${SRC[s]} could not be read:</b> ${esc(e)}</span>`) }));
   bits.push("* = the archive does not cover the whole period yet. Meta's own automatic events (reviews, first delivery, billing) and demo or dry-run rows are listed but not counted.");
   return `<div class="act-notes"><p class="act-note">${bits.join("<br>")}</p></div>`;
 }

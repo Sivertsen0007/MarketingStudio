@@ -21,8 +21,10 @@
   --accent:#0a46e0;--accent-2:#2f6bf0;--accent-bg:#eef2ff;--accent-soft:#d3e1fb;--violet:#a56bf0;--violet-bg:#f4ecfe;
   --ink:#17181c;--ink-2:#2a2c33;--ink-text:#fff;--on-accent:#fff;
   /* status */
-  --ok:#1c9a4c;--ok-bg:#e3f7e9;--warn:#b45309;--warn-bg:#fff4e0;--warn-dot:#f5a524;--bad:#e5484d;--bad-text:#c8303a;--bad-bg:#fdecec;--idle:#a9acb4;
-  --draft:#8b4fe0;--draft-bg:#f4ecfe;--info-bg:#eef2ff;--sel:#eef2ff;--sel-text:#111318;--title:#17181c;--title-text:#fff;
+  --ok:#1c9a4c;--ok-text:#137a3a;--ok-bg:#e3f7e9;--warn:#b45309;--warn-bg:#fff4e0;--warn-dot:#f5a524;--bad:#e5484d;--bad-text:#c8303a;--bad-bg:#fdecec;--idle:#a9acb4;
+  --draft:#8b4fe0;--draft-text:#7a3fd0;--draft-bg:#f4ecfe;--info-bg:#eef2ff;--sel:#eef2ff;--sel-text:#111318;--title:#17181c;--title-text:#fff;
+  /* channels (SoMe calendar, chips) and the fallback colour for a teammate without one */
+  --ch-fb:#4263eb;--ch-ig:#e64980;--ch-li:#0c8599;--ch-ig-text:#c2255c;--ch-li-text:#0b7285;--who:#888888;
   /* chart series */
   --c1:#0a46e0;--c2:#a56bf0;--c3:#22b35a;--c4:#ff8a3d;--c5:#6aa0ff;--c6:#e5484d;
   /* shape */
@@ -31,8 +33,11 @@
   --sh-card:0 1px 6px rgba(17,19,24,.05),0 0 0 1px #eff0f4;              /* cards, panels */
   --sh-pop:0 4px 20px rgba(17,19,24,.14),0 0 0 1px rgba(17,19,24,.04);  /* menus, tooltips */
   --sh-dlg:0 20px 60px rgba(10,30,100,.22);                              /* dialogs */
+  --sh-hover:0 6px 20px rgba(17,19,24,.08),0 0 0 1px var(--line2);    /* lifted card on hover */
+  --sh-up:0 -6px 16px rgba(17,19,24,.04);                              /* sticky footer bar over scrolling content */
   --ring:0 0 0 3px rgba(10,70,224,.18);
   --scrim:rgba(17,19,24,.35);                                            /* dialog backdrop */
+  --overlay:rgba(17,19,24,.72);                                         /* dark label over a picture */
   --glass:rgba(255,255,255,.22);                                         /* counter on a filled button */
   --font:"Manrope",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,monospace;
@@ -115,7 +120,7 @@ body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 @media (max-width:1240px){#ovBtn,.atabs button{padding:0 9px;font-size:12.5px} .atabs{gap:2px} #setupBtn,#setBtn{padding:0 9px} #dataBtn>svg:first-child,#pushHdr>svg{display:none} .tb{padding:0 9px}}
 
 /* ---- push dialog bits ---- */
-.pushok{font-size:16px;margin:4px 0 12px} .pushok b{color:var(--ok)} .pushok.plain b{color:var(--text)}
+.pushok{font-size:16px;margin:4px 0 12px} .pushok b{color:var(--ok-text)} .pushok.plain b{color:var(--text)}
 /* background job: overall bar, per-item rows with a status chip, the top-bar pill */
 .jbar{height:8px;background:var(--accent-soft);border-radius:var(--r-pill);overflow:hidden;position:relative;margin:2px 0 4px}
 .jbar i{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent);transition:width .4s var(--ease)}
@@ -128,7 +133,7 @@ body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 .jrow .jr a{font-size:12px;font-weight:600;color:var(--accent);text-decoration:none} .jrow .jr a:hover{text-decoration:underline}
 .jrow .chip .spin{width:10px;height:10px;border-width:2px}
 .jobpill{background:var(--accent-bg);color:var(--accent);box-shadow:none;flex:none} .jobpill:hover{background:var(--accent-soft)}
-.jobpill.ok{background:var(--ok-bg);color:var(--ok)} .jobpill.ok:hover{background:var(--ok-bg)} .jobpill.bad{background:var(--bad-bg);color:var(--bad-text)} .jobpill.bad:hover{background:var(--bad-bg)}
+.jobpill.ok{background:var(--ok-bg);color:var(--ok-text)} .jobpill.ok:hover{background:var(--ok-bg)} .jobpill.bad{background:var(--bad-bg);color:var(--bad-text)} .jobpill.bad:hover{background:var(--bad-bg)}
 /* media library (new Meta ad): pick a stored file, Prepare for Meta uploads it ahead of the push */
 .medlib{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);padding:2px 10px}
 .medrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2);font-size:13px}
@@ -150,11 +155,11 @@ body.ov #ovLbl{display:none} body.ov #ovBtn::after{content:"Overview"}
 .chip:empty{display:none}
 .subbar .chip{background:var(--panel);box-shadow:var(--sh-1);padding:5px 10px}
 .chip.warn,.subbar .chip.warn{background:var(--warn-bg);color:var(--warn);box-shadow:none}
-.chip.draft,.subbar .chip.draft{background:var(--draft-bg);color:var(--draft);box-shadow:none}
-.chip.ok,.subbar .chip.ok{background:var(--ok-bg);color:var(--ok);box-shadow:none}
+.chip.draft,.subbar .chip.draft{background:var(--draft-bg);color:var(--draft-text);box-shadow:none}
+.chip.ok,.subbar .chip.ok{background:var(--ok-bg);color:var(--ok-text);box-shadow:none}
 .chip.bad{background:var(--bad-bg);color:var(--bad-text)}
 .chip.info{background:var(--accent-bg);color:var(--accent)}
-.chip.trend{background:var(--ok-bg);color:var(--ok);font-size:10.5px;padding:3px 8px} .chip.trend.down{background:var(--bad-bg);color:var(--bad-text)}
+.chip.trend{background:var(--ok-bg);color:var(--ok-text);font-size:10.5px;padding:3px 8px} .chip.trend.down{background:var(--bad-bg);color:var(--bad-text)}
 .tile .chip.trend{margin-top:8px}
 .chip.exp{font-size:10.5px;padding:1px 6px;margin-left:6px;background:var(--sunken);color:var(--text2)}
 .chip.exp.base{background:var(--warn-bg);color:var(--warn)}
@@ -259,9 +264,9 @@ tr.focus td.stk-name,tr.focus td.stk-name *{font-weight:700}
 .st{font-size:12.5px}
 .st.Paused{color:var(--muted)}
 .st.Removed{color:var(--bad-text)}
-.st.Enabled,.st.Active{color:var(--ok)}
+.st.Enabled,.st.Active{color:var(--ok-text)}
 .ed{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:var(--r-xs);background:var(--warn-bg);color:var(--warn)}
-.ed.draft{background:var(--draft-bg);color:var(--draft)}
+.ed.draft{background:var(--draft-bg);color:var(--draft-text)}
 
 /* ---- empty and loading states ---- */
 .empty{padding:40px 24px;text-align:center;color:var(--muted);font-size:13px}
@@ -278,7 +283,7 @@ tr.focus td.stk-name,tr.focus td.stk-name *{font-weight:700}
 .item{border-radius:var(--r-md);padding:12px 14px;margin-bottom:8px;background:var(--panel);box-shadow:var(--sh-card);transition:box-shadow var(--t) var(--ease)}
 .item:hover{box-shadow:var(--sh-1),0 0 0 1px var(--line)}
 .item .who{font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:6px}
-.item .who b{color:var(--draft);font-weight:700}
+.item .who b{color:var(--draft-text);font-weight:700}
 .item .who button.link{font-size:12px}
 .item .sum{margin:4px 0 0;color:var(--text);font-weight:600;word-break:break-word}
 .item .note{font-size:12px;color:var(--muted);margin-top:3px}
@@ -301,7 +306,7 @@ button.live:disabled{opacity:.45;cursor:default}
 /* ---- progress (push / undo) ---- */
 .prog-h{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-weight:600}
 .prog-h .spin{width:14px;height:14px}
-.prog-h .done{color:var(--ok)} .prog-h .bad{color:var(--bad-text)}
+.prog-h .done{color:var(--ok-text)} .prog-h .bad{color:var(--bad-text)}
 .prog-row{display:grid;grid-template-columns:1fr 150px 74px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line2);font-size:13px}
 .prog-row .bar{height:10px;background:var(--accent-soft);border-radius:var(--r-pill);overflow:hidden;position:relative}
 .prog-row .bar i{display:block;height:100%;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--accent-soft),var(--accent-2));transition:width .4s var(--ease)}
@@ -310,7 +315,7 @@ button.live:disabled{opacity:.45;cursor:default}
 .prog-row.busy .bar::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:shine 1.2s linear infinite}
 @keyframes shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 .prog-row .st{font-size:11.5px;font-weight:600;color:var(--muted);text-align:right}
-.prog-row.done .st{color:var(--ok)} .prog-row.failed .st,.prog-row.reversed .st{color:var(--bad-text)}
+.prog-row.done .st{color:var(--ok-text)} .prog-row.failed .st,.prog-row.reversed .st{color:var(--bad-text)}
 .spin{width:12px;height:12px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex:none;display:inline-block;vertical-align:-2px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .tick{display:flex;gap:8px;align-items:flex-start;margin:10px 0}
@@ -341,7 +346,11 @@ dialog::backdrop{background:var(--scrim);-webkit-backdrop-filter:blur(2px);backd
 .dlg-f details.adv>summary{list-style:none;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--muted);padding:7px 10px;border-radius:var(--r)}
 .dlg-f details.adv>summary::-webkit-details-marker{display:none}
 .dlg-f details.adv>summary:hover,.dlg-f details.adv[open]>summary{background:var(--hover);color:var(--text)}
-.advm{position:absolute;bottom:calc(100% + 6px);left:0;width:360px;padding:12px 14px;background:var(--panel);border-radius:var(--r-lg);box-shadow:var(--sh-pop);z-index:2}
+/* S6: the open Advanced panel sits in the footer's flow (its own line above the buttons), so it never covers the
+   dialog's last lines (the "Create as Enabled" tick) */
+.dlg-f:has(details.adv){flex-wrap:wrap}
+.dlg-f details.adv[open]{flex:1 1 100%;order:-1;margin-right:0} .dlg-f details.adv>summary{display:inline-block}
+.advm{margin-top:6px;max-width:520px;padding:12px 14px;background:var(--sunken);border-radius:var(--r-lg)}
 .advm .hint{margin:8px 0 0}
 .advm ul{margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--text2)}
 /* country picker for Meta ad sets (static/geo_picker.js): a summary + button in the form, a second dialog over it */
@@ -399,7 +408,7 @@ footer{display:flex;align-items:center;gap:14px;padding:6px 20px 8px;background:
 /* ---- status pill + menus ---- */
 .pill{display:inline-flex;align-items:center;gap:6px;padding:0 9px 0 8px;border-radius:var(--r-pill);background:var(--sunken);color:var(--text2);font-size:12px;font-weight:600;line-height:22px}
 .pill i{width:7px;height:7px;border-radius:50%;background:var(--idle);flex:none}
-.pill.Active,.pill.Enabled{background:var(--ok-bg);color:var(--ok)}
+.pill.Active,.pill.Enabled{background:var(--ok-bg);color:var(--ok-text)}
 .pill.Active i,.pill.Enabled i{background:var(--ok)}
 .pill.Removed{background:var(--bad-bg);color:var(--bad-text)} .pill.Removed i{background:var(--bad)}
 td.st-edit{cursor:pointer}
@@ -453,7 +462,7 @@ td.thumbc{padding:2px 6px;width:52px}
 .edit-body .fld>div{color:var(--text)}
 .edit-body .fld input,.edit-body .fld select,.edit-body .fld textarea{width:100%}
 .edit-body .fld.chg input,.edit-body .fld.chg textarea,.edit-body .fld.chg select{background-color:var(--draft-bg);border-color:var(--draft-bg)}
-.edit-body .fld.chg label span:first-child{color:var(--draft)}
+.edit-body .fld.chg label span:first-child{color:var(--draft-text)}
 .edit-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--line2)}
 .edit-head img{width:88px;height:88px;object-fit:cover;border-radius:var(--r-md);cursor:zoom-in;flex:none;background:var(--sunken);box-shadow:var(--sh-1)}
 .edit-head .t{font-size:15px;font-weight:600;color:var(--text);word-break:break-word;line-height:1.35}
@@ -467,7 +476,7 @@ td.thumbc{padding:2px 6px;width:52px}
 .prevbox iframe{border:0;transform-origin:top center}
 .edit-foot{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line2)}
 .edit-foot button{flex:1}
-.edit-foot .asstate{flex:2;align-self:center;font-size:12px;color:var(--muted)} .asstate.ok{color:var(--ok)} .asstate.bad{color:var(--bad-text)}
+.edit-foot .asstate{flex:2;align-self:center;font-size:12px;color:var(--muted)} .asstate.ok{color:var(--ok-text)} .asstate.bad{color:var(--bad-text)}
 
 /* ---- columns dialog ---- */
 .colpick{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -525,9 +534,11 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
 .tile .k{font-size:13px;font-weight:500;color:var(--text2)}
 .tile .v{font-size:28px;font-weight:600;letter-spacing:-.5px;line-height:1.25;margin-top:6px;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile.hi .v{color:var(--accent)}
-.ov-card .tiles{gap:0;margin:0}
-.ov-card .tile{box-shadow:none;border-radius:0;padding:0 20px;border-left:1px solid var(--line2)}
-.ov-card .tile:first-child{padding-left:0;border-left:0}
+/* U21: tiles fill the card in even columns and wrap cleanly: each tile carries its divider on the left, and the row's first
+   divider sits just outside the clipped grid, so a wrapped row never starts with a stray line. Numbers align at the bottom. */
+.ov-card .tiles{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px 0;margin:0 0 0 -20px;overflow:hidden}
+.ov-card .tile{box-shadow:none;border-radius:0;padding:0 20px;border-left:1px solid var(--line2);margin-left:-1px;display:flex;flex-direction:column;justify-content:space-between}
+.ov-card .tile .k{line-height:1.35}
 .ov-card .tile .v{font-size:30px}
 .ov-card.hero .tile .v{font-size:36px}
 /* bar chart (Select Cabin by destination) */
@@ -538,7 +549,7 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
 .ov-bars .b:hover i{filter:brightness(1.15)}
 .ov-bars .b span{font-size:12px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
 .ov-axis{display:flex;gap:14px;padding:8px 4px 0}
-.ov-axis span{flex:1;min-width:0;text-align:center;font-size:10.5px;font-weight:500;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-axis span{flex:1;min-width:0;text-align:center;font-size:10.5px;font-weight:500;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* share list (spend by destination) */
 .ov-share{display:flex;flex-direction:column;gap:14px}
 .ov-share .r{display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:center}
@@ -569,10 +580,10 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
   <h1><span class="brandmark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z"/></svg></span><span class="bname">Marketing <b>Studio</b></span></h1>
   <div class="htabs">
   <button id="ovBtn" class="tb" title="Dashboard: Ads spend, results and Select Cabin, plus Email, SEO and SoMe"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9zm0 7h6v-5H4v5zm8 0h8v-9h-8v9zm0-16v5h8V4h-8z"/></svg><span id="ovLbl">Overview</span></button>
-  <nav id="areaTabs" class="atabs"><button data-area="ads" class="on">Ads</button></nav>
+  <nav id="areaTabs" class="atabs" aria-label="Areas"><button data-area="ads" class="on">Ads</button></nav>
   </div>
   <span class="spacer"></span>
-  <button id="dataBtn" class="tb" title="Studio keeps what it fetched until you refresh. Pick what to fetch again."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8l-4 4h3a6 6 0 0 1-8.8 5.3l-1.46 1.46A8 8 0 0 0 20 12h3l-4-4zM6 12a6 6 0 0 1 8.8-5.3l1.46-1.46A8 8 0 0 0 4 12H1l4 4 4-4H6z"/></svg>Refresh data<svg class="chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="dataWarn"></span></button>
+  <button id="dataBtn" class="tb" aria-haspopup="menu" aria-expanded="false" title="Studio keeps what it fetched until you refresh. Pick what to fetch again."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8l-4 4h3a6 6 0 0 1-8.8 5.3l-1.46 1.46A8 8 0 0 0 20 12h3l-4-4zM6 12a6 6 0 0 1 8.8-5.3l1.46-1.46A8 8 0 0 0 4 12H1l4 4 4-4H6z"/></svg>Refresh data<svg class="chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="dataWarn"></span></button>
   <button id="pushHdr" class="tb pushhdr" title="Review everything in the draft and push it live"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z"/></svg>Push live <span id="pushN" class="pushn"></span></button>
   <button id="hlBtn" class="tb" title="Connection health: Ads, Email, SEO and SoMe"><span id="hlDot" class="hdot"></span>Connections <span id="hlAge"></span></button>
   <button id="setupBtn" class="tb" title="Keys and Sign in with Google" onclick="openSetup()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.65 10A6 6 0 1 0 7 18a6 6 0 0 0 5.65-4H17v4h4v-4h2v-4H12.65zM7 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>Setup</button>
@@ -615,7 +626,7 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
     <div id="grid" class="grid-wrap"></div>
   </section>
   <aside class="draft">
-    <div class="rtabs"><button id="rtEdit" data-p="edit">Edit</button><button id="rtDraft" data-p="draft" class="on">Draft <span id="draftN" class="chip draft"></span></button><button id="sideClose" class="rclose" title="Close the panel for a full-width grid">&times;</button></div>
+    <div class="rtabs" role="group" aria-label="Edit or Draft"><button id="rtEdit" data-p="edit">Edit</button><button id="rtDraft" data-p="draft" class="on">Draft <span id="draftN" class="chip draft"></span></button><button id="sideClose" class="rclose" title="Close the panel for a full-width grid" aria-label="Close the Edit and Draft panel">&times;</button></div>
     <div id="paneEdit" class="pane"><div id="editBody" class="edit-body"><div class="empty">Click a row to see and edit it here.</div></div><div id="editFoot" class="edit-foot" style="display:none"></div></div>
     <div id="paneDraft" class="pane on">
       <div id="draft" class="draft-list" style="padding-top:12px"></div>
@@ -632,9 +643,9 @@ body.ov .ovpage{display:block} body.ov main, body.ov .subbar, body.ov #sideOpen{
 </div>
 <dialog id="dlg"><div class="dlg-h"><span id="dlgT"></span><button class="link" onclick="dlg.close()">Close</button></div>
 <div id="dlgB" class="dlg-b"></div><div id="dlgF" class="dlg-f"></div></dialog>
-<div id="toast" class="toast"></div>
-<div id="menu" class="menu" style="display:none"></div>
-<div id="dataMenu" class="dmenu" style="display:none"></div>
+<div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+<div id="menu" class="menu" style="display:none" aria-label="Change status"></div>
+<div id="dataMenu" class="dmenu" style="display:none" aria-label="Refresh data"></div>
 <div id="tbMoreMenu" class="tbmenu" role="group" aria-label="More controls"></div>
 <div id="hoverPrev" class="hoverprev"></div>
 <script>
@@ -663,6 +674,8 @@ const gbDT = v => v == null || v === "" ? "" : window.studioFmt ? studioFmt.date
 const DATEF = v => esc(gbDate(v));
 // en-GB grouping for plain number cells, keeping every decimal the data has (CTR 2.37, frequency 1.0423, CPC 0.85)
 const numGB = v => Number(v).toLocaleString("en-GB", {maximumFractionDigits:6});
+// U22: Google's bid strategy names in en-GB for display only ("Maximise clicks"); the value Studio stores and sends stays Google's own
+const bidGB = v => String(v ?? "").replace(/\bMaximize\b/g, "Maximise").replace(/\bmaximize\b/g, "maximise");
 // ---- display currency (Settings, saved server-side). DISPLAY ONLY: what is typed, stored in a draft or pushed to
 // Google/Meta is always the account's own currency (native values from the server, never converted here). ----
 S.disp = "own"; S.fx = null;
@@ -713,7 +726,7 @@ const CA = {key:"campaign", label:"Campaign"}, AG = {key:"ad_group", label:"Ad g
 const ED = {key:"editor", label:"Editor", fmt:v => v ? `<span class="ed ${v==="draft"?"draft":""}">${esc(v)}</span>` : ""};
 const VIEWS = {
   campaigns:{label:"Campaigns", cols:[{...ST, edit:"status3"}, CA, {key:"type",label:"Type"}, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money"},
-    {key:"shared_budget",label:"Shared budget"}, {key:"bidding",label:"Bid strategy"}, {key:"max_cpc_cap",label:"Max CPC cap",num:1,fmt:money},
+    {key:"shared_budget",label:"Shared budget"}, {key:"bidding",label:"Bid strategy",fmt:v => esc(bidGB(v))}, {key:"max_cpc_cap",label:"Max CPC cap",num:1,fmt:money},
     {key:"target_cpa",label:"Target CPA",num:1,fmt:money}, {key:"ad_groups",label:"Ad groups",num:1}, {key:"keywords",label:"Keywords",num:1},
     {key:"start",label:"Start",fmt:DATEF}, {key:"end",label:"End",fmt:DATEF}, ED], bulk:1},
   ad_groups:{label:"Ad groups", cols:[{...ST, edit:"status"}, CA, AG, {key:"max_cpc",label:"Default max CPC",num:1,fmt:money,edit:"money"},
@@ -772,7 +785,7 @@ const DL = {key:"delivery", label:"Delivery"}, AS = {key:"ad_set", label:"Ad set
 const MST = {...ST, edit:"mstatus"};
 const META_VIEWS = {
   campaigns:{label:"Campaigns", cols:[MST, CA, DL, {key:"objective",label:"Objective"}, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money",when:r => r.budget != null},
-    {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money}, {key:"budget_level",label:"Budget on"}, {key:"bidding",label:"Bid strategy"},
+    {key:"lifetime_budget",label:"Lifetime budget",num:1,fmt:money}, {key:"budget_level",label:"Budget on"}, {key:"bidding",label:"Bid strategy",fmt:v => esc(bidGB(v))},
     {key:"ad_sets",label:"Ad sets",num:1}, {key:"ads",label:"Ads",num:1}, ...STATS, UPD, IDC], bulk:1},
   adsets:{label:"Ad sets", cols:[MST, CA, AS, DL, {key:"budget",label:"Budget/day",num:1,fmt:money,edit:"money",when:r => r.budget != null},
     {key:"optimisation",label:"Optimisation"}, {key:"countries",label:"Countries"}, {key:"locations",label:"Locations",hide:1}, {key:"age",label:"Age"}, {key:"audiences",label:"Audiences"},
@@ -899,7 +912,7 @@ const canAdd = () => !!(isMeta() ? META_ADD[S.kind] : ADD[S.kind]);  // G10: no 
 function renderTabs(){
   $("#addBtn").textContent = (ADD_LABEL[chan()] || {})[S.kind] || "Add";
   $("#addBtn").style.display = canAdd() ? "" : "none";
-  $("#tabs").innerHTML = Object.entries(V()).filter(([k, v]) => !v.api || S.gsrc !== "editor").map(([k, v]) => `<button class="tab ${k === S.kind ? "on" : ""}" data-k="${k}" ${v.tip ? `title="${esc(v.tip)}"` : ""}>${v.label}${k === S.kind ? `<span class="n">${S.loading ? "" : S.rows.length}</span>` : ""}</button>`).join("");
+  $("#tabs").innerHTML = Object.entries(V()).filter(([k, v]) => !v.api || S.gsrc !== "editor").map(([k, v]) => `<button class="tab ${k === S.kind ? "on" : ""}" data-k="${k}" aria-pressed="${k === S.kind}" ${v.tip ? `title="${esc(v.tip)}"` : ""}>${v.label}${k === S.kind ? `<span class="n">${S.loading ? "" : S.rows.length}</span>` : ""}</button>`).join("");
 }
 $("#tabs").onclick = e => { const b = e.target.closest(".tab"); if (!b) return; $("#grid").scrollLeft = 0; const was = S.kind; S.kind = b.dataset.k; localSet("kind", S.kind); S.sort = null; S.focus = null;
   if (was !== S.kind) resetGrid(); renderTabs(); renderViews(); loadGrid() };
@@ -1010,7 +1023,7 @@ function renderGrid(){
       const shown = mon ? mon[0] : c.fmt ? c.fmt(val) : c.num && !/(^|_)id$/.test(c.key) && val !== "" && val != null && !isNaN(val) ? numGB(val) : esc(val);
       const editable = c.edit && !r._new && !isTrial(r) && (!c.when || c.when(r)) && !(S.kind === "campaigns" && c.key === "budget" && r.shared_budget);
       const stEdit = editable && (c.edit.startsWith("status") || c.edit === "mstatus");
-      h += `<td class="${SK[c.key]} ${c.num ? "num" : ""} ${d ? "changed" : ""} ${stEdit ? "st-edit" : editable ? "edit" : ""}" data-k="${c.key}" title="${esc(mon ? mon[1] : val)}">${d ? `<span class="old">${isMoney(c) ? moneyCell(c, r[c.key])[0] : c.fmt ? c.fmt(r[c.key]) : esc(r[c.key])}</span>` : ""}${shown}${c.key === "campaign" ? expChip(r) : ""}</td>`;
+      h += `<td class="${SK[c.key]} ${c.num ? "num" : ""} ${d ? "changed" : ""} ${stEdit ? "st-edit" : editable ? "edit" : ""}" data-k="${c.key}" ${stEdit ? `tabindex="0" role="button" aria-haspopup="menu" aria-expanded="false" aria-label="Status: ${esc(cellVal(r, c))}. Change status"` : ""} title="${esc(mon ? mon[1] : val)}">${d ? `<span class="old">${isMoney(c) ? moneyCell(c, r[c.key])[0] : c.fmt ? c.fmt(r[c.key]) : esc(r[c.key])}</span>` : ""}${shown}${c.key === "campaign" ? expChip(r) : ""}</td>`;
     }
     h += "</tr>";
   });
@@ -1077,11 +1090,17 @@ $("#grid").onclick = e => {
   const tr = e.target.closest("tr[data-i]");
   if (tr && !e.target.closest("td.cb")) focusRow(S.rows[+tr.dataset.i]);
 };
+// the status pill opens its menu from the keyboard too (Enter or Space on the cell)
+$("#grid").addEventListener("keydown", e => {
+  const st = e.target.closest && e.target.closest("td.st-edit"); if (!st || (e.key !== "Enter" && e.key !== " ")) return;
+  e.preventDefault(); const tbl = st.closest("table[data-kind]"); if (tbl && tbl.dataset.kind !== S.kind) return; statusMenu(st);
+});
 // ---- keyboard: Up/Down (and Home/End, PageUp/PageDown) move through the rows like in Editor ----
 document.addEventListener("keydown", e => {
   const keys = {ArrowDown:1, ArrowUp:-1, PageDown:10, PageUp:-10, Home:-1e9, End:1e9};
   if (!(e.key in keys) || e.altKey || e.ctrlKey || e.metaKey) return;
   if ($("#dlg").open || (document.getElementById("geoDlg") || {}).open || document.body.classList.contains("area") || document.body.classList.contains("ov")) return;
+  if (e.target && e.target.closest && e.target.closest(".menu, .dmenu, .tbmenu")) return;  // arrows move inside an open menu
   const t = e.target; if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   const trs = [...document.querySelectorAll("#grid tr[data-i]")]; if (!trs.length) return;
   e.preventDefault();
@@ -1119,14 +1138,40 @@ function statusMenu(td){
     addChanges([changeFor(r, "status", v, kind)], "");
   }, v === cur]).concat(inDraft ? [["sep"], ["Keep it as it is live (drop from draft)", async () => { await api("/api/draft/remove", {ids:[r._draft.status.draft_id]}); poll(true) }]] : []));
 }
+// U10: one keyboard model for every pop-up menu (status pill, Refresh data, More): opening focuses the first item,
+// Up/Down/Home/End move, Enter or Space picks (they are buttons), Escape closes and puts focus back on the opener, Tab closes.
+function menuRoles(m, role = "menu"){
+  m.setAttribute("role", role);
+  if (role === "menu") m.querySelectorAll("button").forEach(b => { b.setAttribute("role", "menuitem"); b.tabIndex = -1 });
+}
+const menuItems = m => [...m.querySelectorAll("button, select, input")].filter(b => !b.disabled && b.offsetParent !== null);
+function menuKeys(m, opener, close, role = "menu"){
+  menuRoles(m, role);
+  if (opener){ opener.setAttribute("aria-expanded", "true"); if (!opener.hasAttribute("aria-haspopup")) opener.setAttribute("aria-haspopup", role === "menu" ? "menu" : "true") }
+  m.onkeydown = e => {
+    const it = menuItems(m), i = it.indexOf(document.activeElement);
+    if (e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); close(); if (opener && opener.focus) opener.focus(); return }
+    if (e.key === "Tab"){ if (role === "menu"){ close(); if (opener && opener.focus){ e.preventDefault(); opener.focus() } } return }
+    if (role !== "menu" && document.activeElement && /^(SELECT|INPUT)$/.test(document.activeElement.tagName)) return;  // a select keeps its own arrows
+    if (!it.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp"){ e.preventDefault(); e.stopPropagation(); it[e.key === "ArrowDown" ? (i + 1) % it.length : (i <= 0 ? it.length - 1 : i - 1)].focus() }
+    else if (e.key === "Home" || e.key === "End"){ e.preventDefault(); e.stopPropagation(); it[e.key === "Home" ? 0 : it.length - 1].focus() }
+  };
+  const first = menuItems(m)[0]; if (first) first.focus();
+}
+function menuClosed(opener){ if (opener) opener.setAttribute("aria-expanded", "false") }
 function openMenu(anchor, items){
   const m = $("#menu");
-  m.innerHTML = items.map((it, i) => it[0] === "sep" ? `<div class="sep"></div>` : `<button data-mi="${i}" class="${it[2] ? "cur" : ""}">${it[0]}</button>`).join("");
+  m.innerHTML = items.map((it, i) => it[0] === "sep" ? `<div class="sep" role="separator"></div>` : `<button data-mi="${i}" class="${it[2] ? "cur" : ""}" ${it[2] ? `aria-current="true"` : ""}>${it[0]}</button>`).join("");
   const b = anchor.getBoundingClientRect();
   m.style.display = "block"; m.style.left = Math.min(b.left, innerWidth - m.offsetWidth - 8) + "px";
   m.style.top = (b.bottom + m.offsetHeight > innerHeight ? b.top - m.offsetHeight : b.bottom) + "px";
-  m.onclick = e => { const x = e.target.closest("[data-mi]"); if (!x) return; m.style.display = "none"; items[+x.dataset.mi][1]() };
-  setTimeout(() => document.addEventListener("click", function off(e){ if (!m.contains(e.target)){ m.style.display = "none"; document.removeEventListener("click", off) } }), 0);
+  let off;
+  const close = () => { m.style.display = "none"; m.onkeydown = null; menuClosed(anchor); if (off) document.removeEventListener("click", off) };
+  m.onclick = e => { const x = e.target.closest("[data-mi]"); if (!x) return; close(); if (anchor.focus) anchor.focus(); items[+x.dataset.mi][1]() };
+  setTimeout(() => document.addEventListener("click", off = function(e){ if (!m.contains(e.target)) close() }), 0);
+  menuKeys(m, anchor, close);
+  const cur = m.querySelector(".cur"); if (cur) cur.focus();  // the current value is where the keyboard starts
 }
 // ---- hover a thumbnail: bigger picture ----
 document.addEventListener("mouseover", e => {
@@ -1167,14 +1212,14 @@ function tbFit(){
 }
 function tbMenu(on){
   const menu = $("#tbMoreMenu"), more = $("#tbMore"); menu.classList.toggle("on", on); more.setAttribute("aria-expanded", on);
-  if (!on) return;
+  if (!on){ menu.onkeydown = null; return }
   const b = more.getBoundingClientRect();
   menu.style.top = b.bottom + 4 + "px"; menu.style.left = Math.max(8, Math.min(b.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8)) + "px";
-  const first = menu.querySelector("select, button"); if (first) first.focus();
+  menuKeys(menu, more, () => tbMenu(false), "group");  // a group of controls (selects, pills): Escape and arrows, Tab moves through it
 }
 $("#tbMore").onclick = e => { e.stopPropagation(); tbMenu(!$("#tbMoreMenu").classList.contains("on")) };
 document.addEventListener("click", e => { const m = $("#tbMoreMenu"); if (m.classList.contains("on") && !m.contains(e.target) && !e.target.closest("#tbMore")) tbMenu(false) });
-document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#tbMoreMenu").classList.contains("on")){ tbMenu(false); $("#tbMore").focus() } });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#tbMoreMenu").classList.contains("on")){ tbMenu(false); $("#tbMore").focus() } });  // Escape from outside the menu too
 if (window.ResizeObserver) new ResizeObserver(() => tbFit()).observe(document.querySelector("main > section"));
 
 
@@ -1882,7 +1927,7 @@ async function prepareForMeta(mediaId, out, onReady, onFail){
       show(`${jobBar(j)}<span>${esc(p.label || "Uploading")}${m || !p.total ? "" : ` ${Math.round(100 * (p.done || 0) / p.total)}%`}</span>`);
       return setTimeout(tick, 500);
     }
-    if (j.state === "done" && j.ok !== false){ show(`<span style="color:var(--ok)">${esc((j.result && (j.result.summary || j.result.message)) || "Ready for Meta")}</span>`); onReady(); toast("Ready for Meta: Push live reuses it") }
+    if (j.state === "done" && j.ok !== false){ show(`<span style="color:var(--ok-text)">${esc((j.result && (j.result.summary || j.result.message)) || "Ready for Meta")}</span>`); onReady(); toast("Ready for Meta: Push live reuses it") }
     else { show(errHTML(jobErr(j.state === "failed" ? (j.progress || {}).label || "Not prepared" : j.lost ? "Lost contact with Studio's upload job; check Activity, or try again." : "The upload to Meta stopped with an error. Try again; Push live also uploads it.", j.error))); if (onFail) onFail() }
   };
   tick();
@@ -1920,8 +1965,8 @@ const ADD = {
     showDialog("New campaign", `<p class="hint">New campaigns are created Paused in Editor.</p>
       <div class="row"><label>Name</label><input id="f_name" placeholder="[15] - Search - ..."></div>
       <div class="row"><label>${esc(curLabel("Budget/day"))}</label><input id="f_budget" type="number" step="0.01"></div>
-      <div class="row"><label>Bid strategy</label><select id="f_bid"><option>Manual CPC</option><option>Maximize clicks</option></select></div>
-      <div class="row"><label>${esc(curLabel("Max CPC cap"))}</label><input id="f_cap" type="number" step="0.01" placeholder="for Maximize clicks"></div>
+      <div class="row"><label>Bid strategy</label><select id="f_bid"><option value="Manual CPC">Manual CPC</option><option value="Maximize clicks">Maximise clicks</option></select></div>
+      <div class="row"><label>${esc(curLabel("Max CPC cap"))}</label><input id="f_cap" type="number" step="0.01" placeholder="for Maximise clicks"></div>
       <div class="row"><label>Location IDs</label><input id="f_loc" placeholder="2826, 2276"></div>
       ${geoRow}${noteRow}`,
       [["Add to draft", () => submit([{type:"campaign", new:true, campaign:val("f_name"), budget:+val("f_budget"), bid_strategy:val("f_bid"),
@@ -1998,7 +2043,7 @@ function rsaDialog(r, isNew){
   const ds = r.descriptions.length ? r.descriptions : Array.from({length:2}, () => ({text:"", pin:0}));
   const ln = (kind, x, i, max, pins) => `<div class="ln"><input class="${kind}" value="${esc(x.text)}" maxlength="${max + 20}"><span class="cnt"></span>
     <select class="${kind}-pin">${[0, ...Array.from({length:pins}, (_, k) => k + 1)].map(p => `<option value="${p}" ${+x.pin === p ? "selected" : ""}>${p ? "Pin " + p : "-"}</option>`).join("")}</select>
-    <button class="link danger" onclick="this.parentElement.remove()">✕</button></div>`;
+    <button class="link danger" onclick="this.parentElement.remove()" title="Remove this line" aria-label="Remove this line">✕</button></div>`;
   showDialog((isNew ? "New responsive search ad" : "Edit ad") + " · " + r.ad_group, `
     ${isNew ? `<p class="hint">New ads are created Paused.</p>` : `<p class="hint">Only what you change is saved. A change to any headline or description replaces all of this ad's text.</p>`}
     <div class="row"><label>Final URL</label><input id="f_url" value="${esc(r.final_url)}"></div>
@@ -2237,18 +2282,26 @@ function drawData(){
   h += item("social", "", "SoMe", so.fetched_at, "top", !so.available);
   h += item("activity", "", "Activity (sync the archive)", ac.fetched_at, "top") + (ac.warning ? `<div class="dwarn">${esc(ac.warning)}</div>` : "");
   h += `<div class="sep"></div>` + item("fx", "", "Exchange rates", fxr.fetched_at, "sub");
-  $("#dataMenu").innerHTML = h;
+  const dm = $("#dataMenu"), had = dm.contains(document.activeElement) && document.activeElement.dataset ? [document.activeElement.dataset.ds, document.activeElement.dataset.da] : null;
+  dm.innerHTML = h; menuRoles(dm);
+  if (had && dm.style.display !== "none"){ const b = dm.querySelector(`[data-ds="${CSS.escape(had[0] || "")}"][data-da="${CSS.escape(had[1] || "")}"]`); (b && !b.disabled ? b : menuItems(dm)[0] || $("#dataBtn")).focus() }  // a redraw keeps the keyboard place
 }
+function dataMenuClose(){ const m = $("#dataMenu"); m.style.display = "none"; m.onkeydown = null; menuClosed($("#dataBtn")) }
+// Escape also closes a menu that was opened with the mouse (focus still on the page)
+document.addEventListener("keydown", e => { if (e.key !== "Escape") return;
+  if ($("#dataMenu").style.display !== "none"){ dataMenuClose(); $("#dataBtn").focus() }
+  else if ($("#menu").style.display !== "none" && $("#menu").onkeydown) $("#menu").onkeydown(e) });
 $("#dataBtn").onclick = async e => {
   e.stopPropagation();
   const m = $("#dataMenu");
-  if (m.style.display !== "none"){ m.style.display = "none"; return }
+  if (m.style.display !== "none") return dataMenuClose();
   drawData(); m.style.display = "block";
   const b = $("#dataBtn").getBoundingClientRect();
   m.style.top = b.bottom + 4 + "px"; m.style.left = Math.max(8, Math.min(b.left, innerWidth - m.offsetWidth - 8)) + "px";
+  menuKeys(m, $("#dataBtn"), dataMenuClose);
   loadDataStatus();
 };
-document.addEventListener("click", e => { const m = $("#dataMenu"); if (m.style.display !== "none" && !m.contains(e.target) && !e.target.closest("#dataBtn")) m.style.display = "none" });
+document.addEventListener("click", e => { const m = $("#dataMenu"); if (m.style.display !== "none" && !m.contains(e.target) && !e.target.closest("#dataBtn")) dataMenuClose() });
 $("#dataMenu").onclick = e => { const b = e.target.closest("[data-ds]"); if (b && !b.disabled) dataRefresh(b.dataset.ds, b.dataset.da || null) };
 const DLABEL = {all:"everything", google:"Google Ads", meta:"Meta", email:"Email", seo:"SEO", social:"SoMe", activity:"Activity", fx:"exchange rates", overview:"Overview"};
 // Refresh one source (or one account of it). Area pages call this from their own Refresh buttons with {reload:false}.
@@ -2293,16 +2346,17 @@ async function overviewPage(days){
   let o; try { o = await api("/api/overview?days=" + days) } catch(e) { pg.innerHTML = head("") + `<div class="prob">${esc(e.message)}</div>`; return }
   const keys = [...new Set(o.destinations.flatMap(d => Object.keys(d.spend)))].sort();
   const tbl = (head, rows, nums) => `<div class="tbl"><table><thead><tr>${head.map((h, i) => `<th class="${nums.includes(i) ? "num" : ""}">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const CLICKS_TIP = "Google clicks + Meta link clicks (clicks that open the ad's link)";
   const tile = (k, v, hi, title) => `<div class="tile ${hi ? "hi" : ""}" ${title ? `title="${esc(title)}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
   const card = (title, chip, body, cls, id) => `<section class="ov-card ${cls || ""}" ${id ? `id="${id}"` : ""}><div class="ov-card-h"><h3>${title}</h3>${chip ? `<span class="chip">${chip}</span>` : ""}</div>${body}</section>`;
   const pill = s => s ? `<span class="pill ${esc(s)}"><i></i>${esc(s)}</span>` : "";
   // o.display is set when Settings has a display currency: converted figures sit next to the native ones (native in the tooltips)
   const dc = o.display && o.display.currency, nat = (v, cur) => v == null ? "" : `${money(v)} ${cur} (native)`;
   const allT = dc && o.all_channels ? card(`All channels`, `converted to ${esc(dc)} · ${o.all_channels.campaigns} campaigns with spend`, `<div class="tiles">
-    ${tile("Spend", esc(curFmt(o.all_channels.spend, dc)), 0, o.totals.map(t => `${t.channel}: ${nat(t.spend, t.currency)}`).join(" + "))}${tile("Clicks", fmtN(o.all_channels.clicks))}${tile("Results", fmtN(o.all_channels.results))}
+    ${tile("Spend", esc(curFmt(o.all_channels.spend, dc)), 0, o.totals.map(t => `${t.channel}: ${nat(t.spend, t.currency)}`).join(" + "))}${tile("Clicks", fmtN(o.all_channels.clicks), 0, CLICKS_TIP)}${tile("Results", fmtN(o.all_channels.results))}
     ${tile("Select Cabin", fmtN(o.all_channels.select_cabin), 1)}${tile("Cost / Select Cabin", esc(curFmt(o.all_channels.cost_per_select_cabin, dc)), 1)}</div>`, "hero", "ovAll") : "";
   const tiles = allT + o.totals.map((t, ti) => card(esc(t.channel), `${esc(t.currency)}${dc ? ` (shown in ${esc(dc)})` : ""} · ${t.campaigns} campaigns with spend`, `<div class="tiles">
-    ${dc ? tile("Spend", esc(curFmt(t.spend_display, dc)), 0, nat(t.spend, t.currency)) : tile("Spend", esc(curFmt(t.spend, t.currency)))}${tile("Clicks", fmtN(t.clicks))}${tile("Results", fmtN(t.results))}
+    ${dc ? tile("Spend", esc(curFmt(t.spend_display, dc)), 0, nat(t.spend, t.currency)) : tile("Spend", esc(curFmt(t.spend, t.currency)))}${tile("Clicks", fmtN(t.clicks), 0, t.channel === "Meta" ? "Link clicks: clicks that open the ad's link" : "")}${tile("Results", fmtN(t.results))}
     ${tile("Select Cabin", fmtN(t.select_cabin), 1)}${dc ? tile("Cost / Select Cabin", esc(curFmt(t.cost_per_select_cabin_display, dc)), 1, nat(t.cost_per_select_cabin, t.currency)) : tile("Cost / Select Cabin", esc(curFmt(t.cost_per_select_cabin, t.currency)), 1)}</div>`, !dc && ti === 0 ? "hero" : "")).join("");
   // two small charts drawn from the destination rows already on the page (no extra data)
   const dests = o.destinations.slice().sort((a, b) => (b.select_cabin || 0) - (a.select_cabin || 0)).slice(0, 8);
@@ -2310,10 +2364,10 @@ async function overviewPage(days){
   const bars = dests.length ? card("Select Cabin by destination", `last ${esc(o.days)} days`, `<div class="ov-bars">${dests.map(d => `<div class="b" title="${esc(d.destination)}: ${fmtN(d.select_cabin || 0)} Select Cabin"><span>${fmtN(d.select_cabin || 0)}</span><i style="height:${Math.max(2, Math.round(82 * (d.select_cabin || 0) / scMax))}%"></i></div>`).join("")}</div>
     <div class="ov-axis">${dests.map(d => `<span title="${esc(d.destination)}">${esc(d.destination)}</span>`).join("")}</div>`) : "";
   const byClicks = o.destinations.slice().sort((a, b) => (b.clicks || 0) - (a.clicks || 0)).slice(0, 5), clTot = o.destinations.reduce((a, d) => a + (d.clicks || 0), 0) || 1;
-  const share = byClicks.length ? card("Clicks by destination", "share of all clicks", `<div class="ov-share">${byClicks.map(d => `<div class="r"><b>${esc(d.destination)}</b><em>${fmtN(d.clicks)} · ${Math.round(100 * (d.clicks || 0) / clTot)}%</em><div class="trk"><i style="width:${Math.max(2, Math.round(100 * (d.clicks || 0) / clTot))}%"></i></div></div>`).join("")}</div>`) : "";
+  const share = byClicks.length ? card("Clicks by destination", "Google clicks + Meta link clicks", `<div class="ov-share">${byClicks.map(d => `<div class="r"><b>${esc(d.destination)}</b><em>${fmtN(d.clicks)} · ${Math.round(100 * (d.clicks || 0) / clTot)}%</em><div class="trk"><i style="width:${Math.max(2, Math.round(100 * (d.clicks || 0) / clTot))}%"></i></div></div>`).join("")}</div>`) : "";
   const n0 = 2 + keys.length;
   pg.innerHTML = head(`<div class="ov-tools"><span class="fresh" id="ovFetched" title="Kept until you press this Refresh or Refresh data > All">Fetched ${esc(fmtWhen(o.fetched_at))}</span><select id="ovDays">${["7", "14", "30"].map(d => `<option value="${d}" ${d === String(o.days) ? "selected" : ""}>Last ${d} days</option>`).join("")}</select>
-    <button id="ovRefresh" class="primary">Refresh</button></div>`) + `<p class="ov-note" id="ovCurNote">${dc ? esc(o.display.note) : "Currencies are never added together."}</p>
+    <button id="ovRefresh" class="primary">Refresh Overview</button></div>`) + `<p class="ov-note" id="ovCurNote">${dc ? esc(o.display.note) : "Currencies are never added together."}</p>
     ${(o.newer_sources || []).length ? `<div class="warnl" style="margin-bottom:12px">Refreshed after this Overview was built: ${esc(srcNames(o.newer_sources))}. Press Refresh here to rebuild it with the new data.</div>` : ""}
     ${o.errors.map(e => `<div class="prob">${esc(e)}</div>`).join("")}
     ${tiles}
@@ -2332,7 +2386,12 @@ async function overviewPage(days){
 function setMode(ov){
   document.body.classList.toggle("ov", ov); $("#ovLbl").textContent = ov ? "Marketing Studio" : "Overview";
   $("#ovBtn").title = ov ? "Back to the studio: accounts, campaigns, edits and pushes" : "Dashboard: spend, results and Select Cabin across Google and Meta";
-  localSet("mode", ov ? "overview" : "studio"); if (ov) overviewPage();
+  localSet("mode", ov ? "overview" : "studio"); markCurrent(); if (ov) overviewPage();
+}
+// U15: the open page (Overview or an area tab) is aria-current="page" for screen readers
+function markCurrent(){
+  const ov = document.body.classList.contains("ov"), cur = (el, on) => on ? el.setAttribute("aria-current", "page") : el.removeAttribute("aria-current");
+  cur($("#ovBtn"), ov); $("#areaTabs").querySelectorAll("button[data-area]").forEach(b => cur(b, !ov && b.dataset.area === S.area));
 }
 $("#ovBtn").onclick = () => setMode(!document.body.classList.contains("ov"));
 if (localGet("mode") === "overview") setMode(true);
@@ -2344,7 +2403,7 @@ function setArea(name){
   S.area = name; localSet("area", name);
   document.body.classList.toggle("area", name !== "ads");
   $("#areaTabs").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.area === name));
-  if (document.body.classList.contains("ov")) setMode(false);
+  if (document.body.classList.contains("ov")) setMode(false); else markCurrent();
   if (name !== "ads"){ const el = $("#areaPage"); el.innerHTML = ""; try { AREAS[name].render(el) } catch(e) { console.error("Studio: area " + name, e); el.innerHTML = `<div class="prob">${esc(friendlyErr(e))}</div>` } }
 }
 $("#areaTabs").onclick = e => { const b = e.target.closest("[data-area]"); if (b) setArea(b.dataset.area) };
@@ -2363,10 +2422,12 @@ $("#areaTabs").onclick = e => { const b = e.target.closest("[data-area]"); if (b
     if (AREAS[a.name]) $("#areaTabs").insertAdjacentHTML("beforeend", `<button data-area="${esc(a.name)}">${esc(AREAS[a.name].label || a.label)}</button>`);
   }
   const want = localGet("area"); if (want && want !== "ads" && AREAS[want] && localGet("mode") !== "overview") setArea(want);
+  markCurrent();
 })();
 
 // ---- right panel: Edit | Draft ----
 function showPane(p){ $("#rtEdit").classList.toggle("on", p === "edit"); $("#rtDraft").classList.toggle("on", p === "draft");
+  $("#rtEdit").setAttribute("aria-pressed", p === "edit"); $("#rtDraft").setAttribute("aria-pressed", p === "draft");
   $("#paneEdit").classList.toggle("on", p === "edit"); $("#paneDraft").classList.toggle("on", p === "draft") }
 $("#rtEdit").onclick = () => showPane("edit");
 $("#rtDraft").onclick = () => showPane("draft");
@@ -2406,7 +2467,7 @@ function wireCounts(){ document.querySelectorAll("#editBody .cnt[data-max]").for
 const AUTO = {t:null, job:null, chain:Promise.resolve(), ids:{}};
 function asStatus(txt, cls){ const s = $("#asState"); if (s){ s.textContent = txt; s.className = "asstate " + (cls || "") } }
 // collect() reads the panel right now -> list of changes (throws Error("why") when it can't be saved yet)
-function autoSave(r, keys, collect, level = MLEVEL[S.kind]){ AUTO.job = {r, keys, collect, level, acct:S.acct}; clearTimeout(AUTO.t); AUTO.t = setTimeout(asFlush, 1000); asStatus("Saving ...") }
+function autoSave(r, keys, collect, level = MLEVEL[S.kind], fold = false){ AUTO.job = {r, keys, collect, level, acct:S.acct, fold}; clearTimeout(AUTO.t); AUTO.t = setTimeout(asFlush, 1000); asStatus("Saving ...") }
 // ---- the Edit panel rewrites the draft items of its row; it must never drop what it can't show ----
 // Fields of a draft change the panel shows (and so rebuilds from its inputs); everything else in an item is kept.
 const PANEL_FIELDS = {meta_status:["status"], meta_rename:["new_name"], meta_budget:["budget", "lifetime"], meta_end:["end_date"],
@@ -2458,7 +2519,16 @@ function panelStrip(pc, oc, keys){
 }
 const hasFields = c => Object.keys(c).some(k => !MBASE.includes(k));
 const cloneCh = c => ({...c, ...(c.cards ? {cards:c.cards.map(x => ({...x}))} : {})});
-function panelPlan(r, ch, olds){
+// an End test status (with_end) on this object among these draft items: the panel never sets the status next to it
+const endItems = (items, level, id) => (items || []).filter(it => { const c = it.change || {}; return c.type === "meta_status" && c.with_end && c.level === level && String(c.id) === String(id) });
+// draft items on this object that hold the same kind twice (from Claude, the API or a teammate): {type: [items]} for kinds the panel shows
+function dupKinds(r, items, level){
+  const by = {};
+  for (const it of items || []){ const c = it.change || {}; if (c.level !== level || String(c.id) !== String(r.id) || /^meta_new_/.test(c.type || "") || MWHOLE.includes(c.type)) continue;
+    if (!panelKeys(c, r).length) continue; (by[c.type] = by[c.type] || []).push(it) }
+  return Object.fromEntries(Object.entries(by).filter(([, l]) => l.length > 1));
+}
+function panelPlan(r, ch, olds, opt = {}){
   const pcs = ch.map(cloneCh), meta = {};
   const pcFor = oc => pcs.find(c => c.type === oc.type && c.level === oc.level && String(c.id) === String(oc.id));
   const v = olds.map(it => { const oc = it.change || {}, keys = panelKeys(oc, r); return {it, oc, keys, pc:pcFor(oc), touched:panelTouched(oc, pcFor(oc), keys)} });
@@ -2471,6 +2541,10 @@ function panelPlan(r, ch, olds){
     const rest = cloneCh(pc); group.filter(x => !x.touched).forEach(x => panelStrip(rest, x.oc, x.keys));
     if (group.some(x => x.touched) || hasFields(rest)) group.forEach(x => { x.touched = true });
   }
+  // the panel opened on an object with two items of one kind: fold them into one now (the caller announces it)
+  const folded = [];
+  if (opt.fold) for (const pc of pcs){ if (MWHOLE.includes(pc.type)) continue;
+    const group = v.filter(x => x.pc === pc && x.keys.length); if (group.length > 1){ group.forEach(x => { x.touched = true }); folded.push({type:pc.type, n:group.length}) } }
   const keep = [], remove = [], extra = [], announce = [];
   for (const x of v.filter(x => !x.touched)){  // the item already holds what the panel shows: it stays as it is (author, note)
     keep.push(x.it.id);
@@ -2478,9 +2552,11 @@ function panelPlan(r, ch, olds){
     if (MWHOLE.includes(x.oc.type)){ pcs.splice(pcs.indexOf(pc), 1); continue }
     if (!hasFields(panelStrip(pc, x.oc, x.keys))) pcs.splice(pcs.indexOf(pc), 1);
   }
-  // an End test status (with_end) in the draft already sets this status: the panel adds no plain status next to it
-  for (const it of S.draftItems || []){ const oc = it.change || {}; if (oc.type !== "meta_status" || !oc.with_end) continue;
-    const pc = pcFor(oc); if (pc && pvEq("status", pc.status, oc.status)) pcs.splice(pcs.indexOf(pc), 1) }
+  // S6: an End test status (with_end) on this object (among the job's own items) sets the status: the panel's status change is
+  // always dropped, whatever it says (a second, plain status would be refused at push: "same field changed twice")
+  const ends = olds.filter(it => { const c = it.change || {}; return c.type === "meta_status" && c.with_end });
+  for (const oc of ends.map(it => it.change).concat(r._withEnd && !ends.length ? [r._withEnd] : [])){
+    const pc = pcFor(oc); if (pc) pcs.splice(pcs.indexOf(pc), 1) }
   for (const x of v.filter(x => x.touched)){  // rebuilt from the panel; what it can't show is folded in, or stays with its author
     remove.push(x.it.id);
     const left = panelLeft(x.oc, x.keys), pc = x.pc && pcs.includes(x.pc) ? x.pc : null;
@@ -2493,7 +2569,7 @@ function panelPlan(r, ch, olds){
       if (x.it.by && x.it.by !== "you") announce.push(x.it);
     } else if (left){ extra.push({...x.it, change:left}); if (x.it.by && x.it.by !== "you") announce.push(x.it) }  // shown fields back to live; the rest stays as it was
   }
-  return {keep, remove, add:pcs.map((c, i) => ({change:c, note:[...new Set((meta[i] || {notes:[]}).notes)].join("; ")})), extra, announce};
+  return {keep, remove, add:pcs.map((c, i) => ({change:c, note:[...new Set((meta[i] || {notes:[]}).notes)].join("; ")})), extra, announce, folded};
 }
 function asFlush(){
   clearTimeout(AUTO.t); AUTO.t = null; const j = AUTO.job; AUTO.job = null; if (!j) return AUTO.chain;
@@ -2507,7 +2583,7 @@ function asFlush(){
     if (!olds.length && !ch.length){ asStatus("No changes", ""); return }
     const send = (path, body) => fetch(path, {method:"POST", headers:{"Content-Type":"application/json", "X-Studio-Press":PRESS}, body:JSON.stringify({acct:j.acct, ...body})})
       .then(async r => { const x = await r.json(); if (!r.ok) throw new Error(x.error || r.statusText); return x });
-    const plan = panelPlan(j.r, ch, olds), gone = olds.filter(i => plan.remove.includes(i.id));
+    const plan = panelPlan(j.r, ch, olds, {fold:j.fold}), gone = olds.filter(i => plan.remove.includes(i.id));
     if (!gone.length && !plan.add.length){ AUTO.ids[key] = plan.keep; asStatus(olds.length ? "In the draft" : "No changes", ""); return }
     if (gone.length) await send("/api/draft/remove", {ids:gone.map(i => i.id)});
     const items = [];
@@ -2523,7 +2599,10 @@ function asFlush(){
     }
     AUTO.ids[key] = [...plan.keep, ...items.map(i => i.id)];
     const bad = items.filter(i => i.problems.length);
-    const upd = plan.announce.length ? "Updated " + plan.announce.map(i => `${whoseChange(i.by)} change to ${itemWords(i)}`).join("; ") : "";
+    const KIND = {meta_targeting:"targeting", meta_copy:"ad text", meta_carousel_copy:"carousel text", meta_feed_copy:"text options"};
+    const fold = (plan.folded || []).map(f => `${f.n} draft items for ${KIND[f.type] || f.type.replace(/^meta_/, "").replace(/_/g, " ")}`);
+    const upd = [fold.length ? "Joined " + fold.join(" and ") + " into one" : "",
+      plan.announce.length ? "Updated " + plan.announce.map(i => `${whoseChange(i.by)} change to ${itemWords(i)}`).join("; ") : ""].filter(Boolean).join(". ");
     asStatus(bad.length ? `Saved, but ${bad.length} need fixing (see Draft)` : upd || (plan.add.length || plan.keep.length ? "Saved to draft" : plan.extra.length ? "Back to live; kept what this panel doesn't show (see Draft)" : "Back to the live version"), bad.length ? "bad" : "ok");
     if (upd) toast(upd);
     if (j.acct === S.acct) await poll(true);
@@ -2538,7 +2617,16 @@ function wireAutoSave(r, keys, collect, onInput){
   b.oninput = go; b.onchange = go;
   const trigger = () => autoSave(r, keys, collect, level);
   editFoot([["Revert to live", async () => { AUTO.job = {r, keys, collect:() => [], level, acct:S.acct}; await asFlush(); renderEdit({...r, _draft:undefined}) }]]);
-  $("#editFoot").insertAdjacentHTML("beforeend", `<span id="asState" class="asstate">${r._draft && Object.keys(r._draft).length ? "In the draft. Edits save on their own." : "Edits save to the draft on their own."}</span>`);
+  $("#editFoot").insertAdjacentHTML("beforeend", `<span id="asState" class="asstate" role="status" aria-live="polite">${r._draft && Object.keys(r._draft).length ? "In the draft. Edits save on their own." : "Edits save to the draft on their own."}</span>`);
+  // S6: an End test status in the draft sets this object's status: the Status field is locked, with the reason under it
+  const ends = endItems(S.draftItems, level, r.id), st = document.getElementById("e_status");
+  r._withEnd = ends.length ? ends[0].change : null;
+  if (ends.length && st){ st.disabled = true; st.title = "The End test sets this status";
+    st.closest(".fld") && st.closest(".fld").insertAdjacentHTML("beforeend", `<div class="hint" style="margin:3px 0 0">The End test sets this status; remove it in Draft first.</div>`) }
+  // two draft items of one kind on this object (e.g. Claude's and yours): folded into one as the panel opens, announced
+  const dk = Object.keys(dupKinds(r, S.draftItems, level)), fk = S.acct + ":" + level + ":" + r.id + ":" + dk.sort().join(",");
+  AUTO.folded = AUTO.folded || new Set();
+  if (dk.length && !r._new && !AUTO.folded.has(fk)){ AUTO.folded.add(fk); AUTO.job = {r, keys, collect, level, acct:S.acct, fold:true}; clearTimeout(AUTO.t); AUTO.t = null; Promise.resolve().then(asFlush) }
   return trigger;
 }
 window.addEventListener("pagehide", () => asFlush());
@@ -2907,7 +2995,7 @@ $("#colBtn").onclick = () => {
   const draw = () => {
     $("#colAll").innerHTML = all.map(c => `<label class="c"><input type="checkbox" data-ck="${c.key}" ${chosen.includes(c.key) ? "checked" : ""}> ${esc(c.label)}</label>`).join("")
       + V()[S.kind].cols.filter(c => c.thumb).map(c => `<label class="c"><input type="checkbox" data-ck="${c.key}" ${chosen.includes(c.key) ? "checked" : ""}> Image preview</label>`).join("");
-    $("#colSel").innerHTML = chosen.map((k, i) => { const c = V()[S.kind].cols.find(x => x.key === k); return `<div class="r"><span>${esc(c.label || "Image preview")}</span><button data-up="${i}" title="Move up">↑</button><button data-dn="${i}" title="Move down">↓</button></div>` }).join("");
+    $("#colSel").innerHTML = chosen.map((k, i) => { const c = V()[S.kind].cols.find(x => x.key === k); return `<div class="r"><span>${esc(c.label || "Image preview")}</span><button data-up="${i}" title="Move up" aria-label="Move ${esc(c.label || "Image preview")} up">↑</button><button data-dn="${i}" title="Move down" aria-label="Move ${esc(c.label || "Image preview")} down">↓</button></div>` }).join("");
   };
   showDialog("Columns · " + V()[S.kind].label, `<p class="hint">Tick the columns you want and set their order. Save it as a view from the View menu to keep it under a name.</p>
     <div class="colpick"><div><b>Available</b><div id="colAll" class="list"></div></div><div><b>Shown, in this order</b><div id="colSel" class="list sel"></div></div></div>`,

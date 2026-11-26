@@ -106,7 +106,7 @@ const T = {el:null, tab: lget("tab") || "cal", view: lget("view") || "week", anc
 function render(el){
   T.el = el;
   el.innerHTML = `<div class="tc-root"><div class="tc-head"><div class="ttl"><h1>Calendar</h1><p>Every channel in one place, each owner in their team colour.</p></div>
-      <button id="tcRefresh">Refresh Calendar</button></div>
+      <button id="tcRefresh" title="Reads the open tab again: the calendar, or the Library or Settings when one of those is open">Refresh Calendar</button></div>
     <div class="toolbar tc-bar">
       <span class="tc-tabs"><button data-tab="cal">Calendar</button><button data-tab="lib">Library</button><button data-tab="set">Team settings</button></span>
       <span id="tcNav" class="tc-bar"><span style="width:10px"></span><span class="tc-seg"><button data-v="week">Week</button><button data-v="month">Month</button></span>

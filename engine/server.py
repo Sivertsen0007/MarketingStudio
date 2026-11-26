@@ -538,6 +538,16 @@ class H(BaseHTTPRequestHandler):
             return self._run(routes[u.path])
         self._send(404, {"error": "not found"})
 
+    def _drain_small(self, limit=1 << 20):
+        """Read a small refused body before answering, so closing the connection doesn't reset it and lose the answer.
+        Big bodies are not read (the connection is closed anyway)."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            if 0 < n <= limit:
+                self.rfile.read(n)
+        except (ValueError, OSError):
+            pass
+
     def _stage_video(self, store=None):
         """POST /api/videos/stage?name=<file name>: the raw bytes of a video picked in the page, streamed to Studio's
         staging folder (never read into memory) for a video_upload draft item. Same guards as every POST, but the body is
@@ -551,6 +561,7 @@ class H(BaseHTTPRequestHandler):
                 or (origin is not None and origin.rstrip("/").lower() not in (f"http://localhost:{self._port()}", f"http://127.0.0.1:{self._port()}")) \
                 or not secrets.compare_digest(self.headers.get("X-Studio-Press") or "", PRESS):
             self.close_connection = True
+            self._drain_small()
             return self._send(403, {"error": "upload staging needs Studio's own page"})
         q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
         try:

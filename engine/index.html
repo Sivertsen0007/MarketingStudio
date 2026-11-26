@@ -1257,46 +1257,72 @@ document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
 // ---- draft panel ----
 // M7 (one way to edit): the fields a Meta change sets on its object, e.g. "adset:123:status". A new change for a field
 // that is already in the draft replaces that draft item (its other fields are kept in the new change) instead of a duplicate.
-const MBASE = ["type", "level", "id"];
-function mFieldKeys(c){
+// Carousel copy: one item per ad, its cards merged per card. Never replaced: list additions (audiences in / out add up, they are unioned when items merge), a status change that ends
+// a test (with_end, from Tests: it stays next to a plain status change), and new objects.
+const MBASE = ["type", "level", "id"], MLIST = ["audiences_add", "audiences_remove", "excluded_add", "excluded_remove"];
+function mFieldKeys(c, fieldsOnly){
   const t = c.type || "";
-  if (!t.startsWith("meta_") || /^meta_new_/.test(t) || !c.level || c.id == null) return [];
+  if (!t.startsWith("meta_") || /^meta_new_/.test(t) || !c.level || c.id == null || (t === "meta_status" && c.with_end)) return [];
   const simple = {meta_status:"status", meta_rename:"name", meta_end:"end", meta_placements:"placements"};
   const g = simple[t] ? [simple[t]] : t === "meta_budget" ? [c.lifetime ? "lifetime_budget" : "budget"]
-    : Object.keys(c).filter(k => !MBASE.includes(k)).map(k => t === "meta_targeting" ? (k === "countries_clear" ? "countries" : /^age_(min|max)$/.test(k) ? "age" : k) : t + "." + k);
+    : Object.keys(c).filter(k => !MBASE.includes(k) && !MLIST.includes(k)).flatMap(k =>
+        t === "meta_targeting" ? [k === "countries_clear" ? "countries" : /^age_(min|max)$/.test(k) ? "age" : k]
+        : k === "cards" ? (Array.isArray(c.cards) ? c.cards : []).map(x => `${t}.card${x.index}`)  // carousel: one field per card
+        : [t + "." + k]);
+  // carousel copy: one item per ad (two would each make a new creative); cards merge per card, so none is lost
+  if (t === "meta_carousel_copy" && !fieldsOnly) g.push(t);
   return [...new Set(g)].map(f => `${c.level}:${c.id}:${f}`);
 }
+const keyOf = (oc, k, v) => mFieldKeys({type:oc.type, level:oc.level, id:oc.id, [k]:v}, true);
 function metaReplace(changes){
   const items = S.draftItems || [], drop = new Map(), out = [];
   for (const c of changes){
     const mine = new Set(mFieldKeys(c)); if (!mine.size){ out.push(c); continue }
-    let merged = {...c};
+    const merged = {...c};
     for (const it of items){
       const oc = it.change || {}, theirs = mFieldKeys(oc); if (!theirs.some(k => mine.has(k))) continue;
       drop.set(it.id, it);
       // the earlier item's other fields (same kind of change, other fields) stay, in the new change
-      if (oc.type === c.type && !["meta_status", "meta_budget", "meta_rename", "meta_end", "meta_placements"].includes(c.type))
-        for (const [k, v] of Object.entries(oc)) if (!MBASE.includes(k) && !(k in merged) && !mine.has(mFieldKeys({type:oc.type, level:oc.level, id:oc.id, [k]:v})[0])) merged[k] = v;
+      if (oc.type !== c.type || ["meta_status", "meta_budget", "meta_rename", "meta_end", "meta_placements"].includes(c.type)) continue;
+      for (const [k, v] of Object.entries(oc)){
+        if (MBASE.includes(k)) continue;
+        if (MLIST.includes(k)){ merged[k] = [...new Set([...(merged[k] || []), ...(v || [])])]; continue }  // audiences add up
+        if (k === "cards"){ const have = new Set((merged.cards || []).map(x => x.index)); merged.cards = [...(merged.cards || []), ...(v || []).filter(x => !have.has(x.index))]; continue }
+        if (!(k in merged) && !keyOf(oc, k, v).some(x => mine.has(x))) merged[k] = v;
+      }
     }
     out.push(merged);
   }
   return {changes:out, dropped:[...drop.values()]};
 }
+const whoseChange = by => !by || by === "you" ? "the" : by === "claude" ? "Claude's" : `${by}'s`;
+const itemWords = i => String(i.summary || "").replace(/^Meta /, "").replace(/\badset\b/g, "ad set").replace(/\badsets\b/g, "ad sets");
 async function addChanges(changes, note, extra){
   let replaced = [];
   if (isMeta()){
     const r = metaReplace(changes); changes = r.changes; replaced = r.dropped;
+    // the note of a replaced change carries over when this one has none
+    if (!note && replaced.length) note = [...new Set(replaced.map(i => i.note).filter(Boolean))].join("; ");
     if (replaced.length) await api("/api/draft/remove", {ids:replaced.map(i => i.id)});
   }
   let items;
   try { items = await api("/api/draft/add", {changes, note, by:"you"}) }
-  catch(e){  // put the replaced items back as they were
-    if (replaced.length){ try { await api("/api/draft/add", {changes:replaced.map(i => i.change), note:"", by:"you"}) } catch(e2) {} poll(true) }
+  catch(e){  // put the replaced items back as they were: their own author and note
+    if (replaced.length){
+      const groups = {};
+      for (const i of replaced){ const k = JSON.stringify([i.by || "you", i.note || ""]); (groups[k] = groups[k] || []).push(i.change) }
+      for (const [k, ch] of Object.entries(groups)){ const [by, n] = JSON.parse(k); try { await api("/api/draft/add", {changes:ch, note:n, by}) } catch(e2) {} }
+      poll(true);
+    }
     throw e;
   }
   const bad = items.filter(i => i.problems.length);
   const msg = bad.length ? `Added ${items.length} change${items.length === 1 ? "" : "s"}, but ${bad.length} need${bad.length === 1 ? "s" : ""} fixing` : `Added ${items.length} change${items.length === 1 ? "" : "s"} to the draft`;
-  const rep = replaced.length ? `Replaced the earlier change to ${replaced.slice(0, 2).map(i => i.summary.replace(/^Meta /, "")).join("; ")}${replaced.length > 2 ? ` and ${replaced.length - 2} more` : ""}` : "";
+  let rep = "";
+  if (replaced.length){
+    const by = {}; replaced.forEach(i => (by[i.by || "you"] = by[i.by || "you"] || []).push(i));
+    rep = "Replaced " + Object.entries(by).map(([w, list]) => `${whoseChange(w)} earlier change${list.length === 1 ? "" : "s"} to ${list.slice(0, 2).map(itemWords).join("; ")}${list.length > 2 ? ` and ${list.length - 2} more` : ""}`).join("; ");
+  }
   const head = rep ? rep + (bad.length ? ` (${bad.length} need${bad.length === 1 ? "s" : ""} fixing)` : "") : msg;
   toast(extra ? `${head}; ${extra}` : head);
   await poll(true);
@@ -2349,10 +2375,6 @@ function editFoot(buttons){
 }
 function wireCounts(){ document.querySelectorAll("#editBody .cnt[data-max]").forEach(c => { const max = +c.dataset.max; if (!max) return; const i = document.getElementById(c.dataset.for);
   const f = () => { c.textContent = i.value.length + "/" + max; c.classList.toggle("over", i.value.length > max) }; i.addEventListener("input", f); f() }) }
-async function replaceInDraft(oldIds, changes){
-  if (oldIds.length) await api("/api/draft/remove", {ids:oldIds});
-  if (changes.length) await addChanges(changes, ""); else { toast(oldIds.length ? "Back to the live version" : "Nothing changed"); await poll(true) }
-}
 // ---- autosave: Edit-panel edits go into the draft on their own, ~1s after you stop typing ----
 const AUTO = {t:null, job:null, chain:Promise.resolve(), ids:{}};
 function asStatus(txt, cls){ const s = $("#asState"); if (s){ s.textContent = txt; s.className = "asstate " + (cls || "") } }

@@ -256,6 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         wv.uiDelegate = self
         wv.navigationDelegate = self
         if #available(macOS 13.3, *) { wv.isInspectable = true }
+        wv.pageZoom = savedZoom()  // U26: the zoom from the last session
         webView = wv
 
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -516,6 +517,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Marketing Studio", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
+        // U26: File > Close Window (Cmd-W). Studio has one window, so closing it quits, like the red button.
+        let fileItem = NSMenuItem(); main.addItem(fileItem)
+        let file = NSMenu(title: "File"); fileItem.submenu = file
+        file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+
         let editItem = NSMenuItem(); main.addItem(editItem)
         let edit = NSMenu(title: "Edit"); editItem.submenu = edit
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -538,7 +544,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         view.addItem(withTitle: "Reload", action: #selector(reloadPage(_:)), keyEquivalent: "r")
         view.addItem(.separator())
         view.addItem(withTitle: "Actual Size", action: #selector(zoomReset(_:)), keyEquivalent: "0")
-        view.addItem(withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "+")
+        // U26: Cmd-= zooms in (no Shift needed); a hidden Cmd-+ does the same for keyboards where + has its own key
+        view.addItem(withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "=")
+        let zoomPlus = view.addItem(withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "+")
+        zoomPlus.isHidden = true
+        zoomPlus.allowsKeyEquivalentWhenHidden = true
         view.addItem(withTitle: "Zoom Out", action: #selector(zoomOut(_:)), keyEquivalent: "-")
         view.addItem(.separator())
         let fs = view.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
@@ -559,9 +569,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     @objc private func reloadPage(_ sender: Any?) {
         if studioLoaded { webView?.reloadFromOrigin() }
     }
-    @objc private func zoomIn(_ sender: Any?) { webView.pageZoom = min(3, webView.pageZoom + 0.1) }
-    @objc private func zoomOut(_ sender: Any?) { webView.pageZoom = max(0.5, webView.pageZoom - 0.1) }
-    @objc private func zoomReset(_ sender: Any?) { webView.pageZoom = 1 }
+    // U26: page zoom is remembered between launches (UserDefaults "pageZoom", 0.5-3, 1 = actual size)
+    private static let zoomKey = "pageZoom"
+    private func savedZoom() -> CGFloat {
+        let z = UserDefaults.standard.double(forKey: AppDelegate.zoomKey)
+        return z >= 0.5 && z <= 3 ? CGFloat(z) : 1
+    }
+    private func setZoom(_ z: CGFloat) {
+        let v = (min(3, max(0.5, z)) * 10).rounded() / 10  // steps of 0.1, no drift from adding 0.1 many times
+        webView.pageZoom = v
+        UserDefaults.standard.set(Double(v), forKey: AppDelegate.zoomKey)
+    }
+    @objc private func zoomIn(_ sender: Any?) { setZoom(webView.pageZoom + 0.1) }
+    @objc private func zoomOut(_ sender: Any?) { setZoom(webView.pageZoom - 0.1) }
+    @objc private func zoomReset(_ sender: Any?) { setZoom(1) }
     @objc private func fillScreen(_ sender: Any?) {
         guard let w = window, let s = w.screen ?? NSScreen.main else { return }
         w.setFrame(s.visibleFrame, display: true, animate: true)

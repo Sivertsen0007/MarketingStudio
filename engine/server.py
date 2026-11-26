@@ -561,6 +561,10 @@ class H(BaseHTTPRequestHandler):
         except ValueError as ex:
             self.close_connection = True
             return self._send(400, {"error": str(ex)})
+        except OSError as ex:  # e.g. the disk is full: a JSON answer the page can show, never a dropped connection
+            self.close_connection = True
+            return self._send(507 if getattr(ex, "errno", None) == 28 else 500,
+                              {"error": f"Studio couldn't save the file on this Mac ({ex.strerror or ex})"})
 
     def do_POST(self):
         if urlparse(self.path).path == "/api/videos/stage":

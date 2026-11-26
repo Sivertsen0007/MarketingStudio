@@ -183,6 +183,11 @@ class RawUpload(unittest.TestCase):
         self.assertEqual(st, 200, out)
         self.assertEqual((out["kind"], out["width"], out["height"]), ("image", 1080, 1350))
         self.assertEqual(call({"Content-Type": "application/octet-stream"})[0], 403)  # no press secret
+        full = OSError(28, "No space left on device")
+        with mock.patch.object(server.meta, "store_media_stream", mock.Mock(side_effect=full)):
+            st, out = call({"Content-Type": "application/octet-stream", "X-Studio-Press": server.PRESS})
+        self.assertEqual(st, 507)
+        self.assertIn("No space left", (out or {}).get("error", ""))
         self.assertEqual(call({"Content-Type": "application/json", "X-Studio-Press": server.PRESS})[0], 403)
 
 
@@ -459,6 +464,111 @@ class Undo(fp.Base):
         self.assertTrue(meta._same(live, tg))
         self.assertFalse(meta._same({**live, "age_min": 30}, tg))
         self.assertFalse(meta._same({**live, "custom_audiences": []}, tg))
+
+
+class VerifierFixes(unittest.TestCase):
+    """Second round (independent verifier): broken headers, keys added in Ads Manager, undo counts, re-check."""
+
+    def test_empty_or_cut_tkhd_is_size_unknown(self):
+        self.assertEqual(meta._moov_facts(b"\x00\x00\x00\x10trak" + b"\x00\x00\x00\x08tkhd"), {})
+        self.assertEqual(meta._moov_facts(b"\x00\x00\x00\x14trak" + b"\x00\x00\x00\x0ctkhd\x00\x00\x00\x00"), {})
+        bad = b"\x00\x00\x00\x08ftyp" + b"\x00\x00\x00\x18moov" + b"\x00\x00\x00\x10trak" + b"\x00\x00\x00\x08tkhd"
+        r = meta.store_media("cut.mp4", bad)
+        self.assertNotIn("width", r)
+        self.assertIn(r["media_id"], meta._media_index())  # stored and indexed, not left behind
+
+    def test_facts_reader_never_raises(self):
+        with mock.patch.object(meta, "_video_facts", mock.Mock(side_effect=IndexError("boom"))):
+            r = meta.store_media("boom.mp4", mp4(1080, 1920, 3) + b"boom")
+        self.assertIn(r["media_id"], meta._media_index())
+        with mock.patch.object(meta, "_jpeg_size", mock.Mock(side_effect=IndexError("boom"))):
+            self.assertEqual(meta._facts_of(meta.MEDIA_DIR / meta.media_info(r["media_id"])["file"], "image"), {})
+
+    def test_old_entry_with_broken_header_does_not_break_the_draft(self):
+        meta._cur.act = ACT
+        self.addCleanup(lambda: setattr(meta._cur, "act", None))
+        core.clear(meta.acct())
+        bad = b"\x00\x00\x00\x08ftyp" + b"\x00\x00\x00\x18moov" + b"\x00\x00\x00\x10trak" + b"\x00\x00\x00\x08tkhd" + b"old"
+        mid = meta.store_media("old.mp4", bad)["media_id"]
+        meta._media_save(lambda idx: idx[mid].pop("facts"))  # stored before facts were read
+        d = {"account": {"currency": "EUR"}, "campaigns": [], "ads": [], "audiences": [],
+             "adsets": [{"id": "s1", "name": "S", "campaign_id": "c1", "targeting": IG_STORY}]}
+        with mock.patch.object(meta, "load", lambda *a, **k: d), mock.patch.object(meta, "link_problem", lambda u: ""), \
+                mock.patch.object(meta, "page_check", lambda t, u: []):
+            got = meta.add([{"type": "meta_new_ad", "adset_id": "s1", "name": "Ad", "media_id": mid, "primary_text": "Hi",
+                             "headline": "H", "link": "https://example.com/o"}])
+            self.assertEqual(got[0]["problems"], [])
+            self.assertTrue(any("couldn't read" in w for w in got[0]["warnings"]), got[0]["warnings"])
+            self.assertEqual(len(meta.validate()), 1)
+        core.clear(meta.acct())
+
+    def test_keys_added_in_ads_manager_count_as_changed(self):
+        pushed = {"geo_locations": {"countries": ["GB"]}, "age_min": 25, "custom_audiences": [{"id": "w1"}]}
+        meta_added = {"geo_locations": {"countries": ["GB"], "location_types": ["home", "recent"]}, "age_min": 25,
+                      "custom_audiences": [{"id": "w1", "name": "Web"}], "targeting_automation": {"advantage_audience": 0},
+                      "brand_safety_content_filter_levels": ["FACEBOOK_STANDARD"]}
+        self.assertTrue(meta._same(meta_added, pushed))
+        city = json.loads(json.dumps(meta_added))
+        city["geo_locations"]["cities"] = [{"key": "2421836", "radius": 10, "distance_unit": "mile"}]
+        self.assertFalse(meta._same(city, pushed))
+        excl = {**meta_added, "excluded_custom_audiences": [{"id": "w9", "name": "Buyers"}]}
+        self.assertFalse(meta._same(excl, pushed))
+        self.assertTrue(meta._same({**meta_added, "excluded_custom_audiences": []}, pushed))
+
+    def test_recheck_and_refresh_read_pages_again(self):
+        calls = []
+        with mock.patch.object(meta, "_fetch_link", lambda u: calls.append(u) or {"code": None, "text": "", "error": ""}):
+            meta.forget_links()
+            meta.link_problem("https://example.com/r")
+            meta.link_problem("https://example.com/r")
+            self.assertEqual(len(calls), 1)
+            meta._cur.act = ACT
+            self.addCleanup(lambda: setattr(meta._cur, "act", None))
+            core.clear(meta.acct())
+            with mock.patch.object(meta, "load", lambda *a, **k: {"campaigns": [], "adsets": [], "ads": [], "audiences": []}):
+                meta.validate()
+            meta.link_problem("https://example.com/r")
+        self.assertEqual(len(calls), 2)
+
+
+class UndoCounts(Undo):
+    def test_wholly_skipped_change_is_not_counted_as_reversed(self):
+        g, pid = self.pushed()
+        g.objs["s1"]["daily_budget"] = "900"
+        u = meta.undo(pid, accept_spend=True)
+        self.assertTrue(u["ok"], u)
+        self.assertTrue(u["message"].startswith("Undone: 3 change(s) reversed."), u["message"])
+
+    def test_city_added_in_ads_manager_is_kept(self):
+        self.items[:] = push_items({"type": "meta_targeting", "level": "adset", "id": "s2", "countries": ["GB", "DE"]})
+        d = {"account": {"currency": "EUR"}, "audiences": [], "ads": [],
+             "campaigns": [{"id": "c1", "name": "Camp 1", "objective": "OUTCOME_TRAFFIC"}],
+             "adsets": [{"id": "s2", "name": "Set 2", "campaign_id": "c1", "targeting": {"geo_locations": {"countries": ["GB"]}}}]}
+        p = mock.patch.object(meta, "load", lambda *a, **k: d)
+        p.start()
+        self.addCleanup(p.stop)
+        g, pid = self.pushed()
+        g.objs["s2"]["targeting"]["geo_locations"]["cities"] = [{"key": "2421836"}]
+        g.objs["s2"]["targeting"]["excluded_custom_audiences"] = [{"id": "w9"}]
+        u = meta.undo(pid, accept_spend=True)
+        self.assertTrue(any("targeting was changed after the push" in x for x in u["skipped"]), u)
+        self.assertEqual(g.objs["s2"]["targeting"]["geo_locations"]["cities"], [{"key": "2421836"}])
+        self.assertEqual(g.objs["s2"]["targeting"]["geo_locations"]["countries"], ["GB", "DE"])
+
+    def test_preview_of_uploaded_video_gets_a_fresh_thumbnail(self):
+        mid = meta.store_media("pv.mp4", mp4(1080, 1920, 4) + b"pv")["media_id"]
+        meta._remember_upload(mid, {"video_id": "v5", "image_url": "https://expired"})
+        self.items[:] = push_items({"type": "meta_new_ad", "adset_id": "s1", "name": "Vid", "media_id": mid, "primary_text": "Hi",
+                                    "headline": "H", "link": "https://example.com/"})
+        g = self.graph()
+        g.objs["v5/thumbnails"] = {"data": [{"uri": "https://fresh/v5.jpg", "is_preferred": True}]}
+        p = meta.plan()
+        step = next(s for s in p["steps"] if s.get("kind") == "new_ad")
+        self.assertEqual(step["creative"]["object_story_spec"]["video_data"]["image_url"], "https://fresh/v5.jpg")
+        with mock.patch.object(meta, "_thumb_url", mock.Mock(side_effect=meta.MetaError({"message": "no answer from Meta"}))):
+            p = meta.plan()
+        step = next(s for s in p["steps"] if s.get("kind") == "new_ad")
+        self.assertEqual(step["creative"]["object_story_spec"]["video_data"]["image_url"], "https://expired")
 
 
 if __name__ == "__main__":

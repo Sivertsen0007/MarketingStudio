@@ -213,6 +213,7 @@ def _src():
 def refresh_account():
     """The Refresh menu, and after Push live / Undo: pull this ad account again and drop its insights and lead form
     copies made before now (each date range is fetched again, once, when next viewed). Read-only."""
+    forget_links()  # landing pages are read again at the next check too
     t0 = time.time()
     _bg.add(act())
     try:
@@ -1697,6 +1698,7 @@ def validate():
     """Re-check every draft item against the cached Meta data (the local checks; Meta's own check, on live data, runs in
     the live preview). In auto mode the cache is first re-pulled when older than a minute."""
     d = load(max_age=60, wait=True)
+    forget_links()  # an explicit Check reads the landing pages again (they may have changed)
     snap = core.draft(acct())["items"]  # checked outside the draft lock (landing pages are read over the network)
     pool = {it["id"]: it for it in snap}
     got = {it["id"]: (json.dumps(it["change"], sort_keys=True, default=str), r)
@@ -2397,6 +2399,11 @@ def ops_for(c, items=None):
         slot = have if have and (m["kind"] == "image" or have.get("image_url") or have.get("image_hash")) else None
         line = f'new ad "{c["name"]}" (Paused) in {where} with {m["kind"]} "{m["name"]}"'
         check_creative = True
+        if slot and m["kind"] == "video" and slot.get("video_id") and not slot.get("image_hash"):
+            try:  # the saved thumbnail URL may have expired: Meta's check gets a fresh one (push reads it again too)
+                slot = {**slot, "image_url": _thumb_url(slot["video_id"])}
+            except Exception:  # noqa: BLE001 - only for the check: the saved URL is tried as before
+                pass
         if slot:
             _set_media(cr, m["kind"], slot)
             line += " (already in the ad account's media library)"
@@ -3007,19 +3014,27 @@ def _blank(v):
     return v in (None, "", 0, "0", [], {})
 
 
-def _same(live, pushed):
-    """Is the value read now still the value the push wrote? Lenient where Meta reshapes what it stores: numbers as
-    text, dates in another offset format, extra keys Meta adds to a dict, lists of plain values in another order."""
+META_ADDS = {"targeting_automation", "brand_safety_content_filter_levels", "targeting_relaxation_types", "location_types",
+             "targeting_optimization"}  # keys Meta adds to targeting on write: not a change made since the push
+
+
+def _same(live, pushed, whole=True):
+    """Is the value read now still the value the push wrote? Lenient only where Meta reshapes what it stores: numbers
+    as text, dates in another offset format, lists of plain values in another order, the few keys Meta adds on write
+    (META_ADDS), and names Meta adds to list entries such as {"id": ..} audiences. Any other key that is in the live
+    object but was not pushed (a city added in Ads Manager, an exclusion) means it was changed since."""
     if _blank(pushed):
         return _blank(live)
     if isinstance(pushed, dict):
-        return isinstance(live, dict) and all(_same(live.get(k), v) for k, v in pushed.items())
+        if not isinstance(live, dict) or not all(_same(live.get(k), v) for k, v in pushed.items()):
+            return False
+        return not whole or all(k in pushed or k in META_ADDS or _blank(v) for k, v in live.items())
     if isinstance(pushed, (list, tuple)):
         if not isinstance(live, (list, tuple)) or len(live) != len(pushed):
             return False
         if all(not isinstance(x, (dict, list)) for x in pushed):
             return sorted(str(x) for x in pushed) == sorted(str(x) for x in live)
-        return all(any(_same(y, x) for y in live) for x in pushed)
+        return all(any(_same(y, x, whole=False) for y in live) for x in pushed)
     a, b = _when(pushed), _when(live)
     if a and b:
         return a == b
@@ -3059,9 +3074,10 @@ def _undo_guard(r):
     return out, skipped
 
 
-def _reverse(done, tick=None, guard=False, skipped=None):
+def _reverse(done, tick=None, guard=False, skipped=None, untouched=None):
     """tick(record, ok) after each reversal (for the progress list). guard (undo): read each object first and leave
-    fields changed since the push as they are (_undo_guard); those go to `skipped`."""
+    fields changed since the push as they are (_undo_guard); those go to `skipped`, and records left wholly as they
+    are go to `untouched` (not counted as reversed)."""
     errors = []
     for r in reversed(done):
         if r.get("undo") is None:  # a test made or ended on Meta: nothing can reverse it (meta_tests.py)
@@ -3085,6 +3101,8 @@ def _reverse(done, tick=None, guard=False, skipped=None):
                         continue
                     if skipped is not None:
                         skipped += left
+                    if not params and left and untouched is not None:
+                        untouched.append(r)
                 if params:
                     post(r["id"], params)
             ok = True
@@ -3590,10 +3608,10 @@ def undo(push_id, accept_spend=False):
         return {"ok": False, "message": refused, "not_undone": [refused], "errors": None}
     progress.start(a, "undo", [(n, "Undo: " + o["line"], 1) for n, o in enumerate(ops)], "sending", "Reversing on Meta, one change at a time")
     idx = {id(o): n for n, o in enumerate(ops)}
-    skipped = []
+    skipped, untouched = [], []
     try:
         errors = _reverse(ops, lambda r, ok: progress.sent(a, idx[id(r)]) if ok else progress.mark(a, idx[id(r)], "failed"),
-                          guard=True, skipped=skipped)
+                          guard=True, skipped=skipped, untouched=untouched)
     except Exception:
         progress.finish(a, False, "Stopped with an error")
         raise
@@ -3606,7 +3624,7 @@ def undo(push_id, accept_spend=False):
         refresh_account()  # only this ad account
     except MetaError:
         pass
-    n = len(rec["ops"]) - len(errors)
+    n = len(rec["ops"]) - len(errors) - len(untouched)  # a change whose every field was changed since: not reversed
     msg = f"Undone: {n} change(s) reversed." if not errors else f"Partly undone ({n} of {len(rec['ops'])})."
     if skipped:
         msg += (f" Left as they are, because they were changed after the push: {len(skipped)} field(s) "
@@ -3846,7 +3864,7 @@ def _moov_facts(b):
                 out["duration"] = round(du / ts, 2)
         elif typ == b"trak" and "width" not in out:
             for t2, s1, e1 in _boxes(b, s0, e0):
-                if t2 != b"tkhd":
+                if t2 != b"tkhd" or s1 >= e1:  # an empty or cut-off tkhd: no size in it
                     continue
                 w_at = 76 if b[s1] == 0 else 88
                 if e1 - s1 < w_at + 8:
@@ -3894,7 +3912,12 @@ def _facts_of(path, kind):
             head = f.read(HEAD_MAX)
     except OSError:
         return {}
-    wh = _png_size(head) or _jpeg_size(head)
+    except Exception:  # noqa: BLE001 - a broken header is "size unknown", never a failed upload or check
+        return {}
+    try:
+        wh = _png_size(head) or _jpeg_size(head)
+    except Exception:  # noqa: BLE001
+        return {}
     return {"width": wh[0], "height": wh[1]} if wh else {}
 
 
@@ -3961,7 +3984,7 @@ def media_warnings(media_id, targeting=None, label=""):
     try:
         m = media_info(media_id)
         f = media_facts(media_id)
-    except ValueError:
+    except Exception:  # noqa: BLE001 - warnings only: never break a check or an upload
         return []
     w, h = f.get("width"), f.get("height")
     groups = _groups(targeting)

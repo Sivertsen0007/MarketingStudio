@@ -1087,10 +1087,16 @@ document.querySelectorAll("[data-bulk]").forEach(b => b.onclick = async () => {
   }
   if (S.kind === "negatives" && st !== "removed") return toast("Negatives can only be removed");
   if (S.kind === "ads" && rows.some(r => r.ad_type !== "Responsive search ad")) return toast("Only responsive search ads can change status here");
-  if (st === "removed" && !confirm(`Remove ${rows.length} item(s)? (Draft only - nothing changes until you send to Editor and Post.)`)) return;
-  let changes = rows.map(r => changeFor(r, "status", st));
-  if (S.kind === "negatives") changes = rows.filter(r => r.level !== "Shared list").map(r => changeFor(r, "remove"));
+  // G15: negatives in a shared list are edited in the list itself, never one by one from this grid
+  const SHARED_MSG = "Negatives in a shared list can't be removed one by one here; edit the shared list itself";
+  const inList = S.kind === "negatives" ? rows.filter(r => r.level === "Shared list").length : 0;
+  if (inList && inList === rows.length) return toast(SHARED_MSG);
+  const todo = S.kind === "negatives" ? rows.filter(r => r.level !== "Shared list") : rows;
+  if (st === "removed" && !confirm(`Remove ${todo.length} item(s)?` + (inList ? ` (${inList} in a shared list will be skipped.)` : "") +
+    " (Draft only - nothing changes until you send to Editor and Post.)")) return;
+  const changes = S.kind === "negatives" ? todo.map(r => changeFor(r, "remove")) : todo.map(r => changeFor(r, "status", st));
   await addChanges(changes, "");
+  if (inList) toast(`Added ${todo.length} change${todo.length === 1 ? "" : "s"}; skipped ${inList} negative${inList === 1 ? "" : "s"} in a shared list (edit the shared list itself)`);
 });
 
 // ---- draft panel ----

@@ -387,7 +387,8 @@ SNIPPET_HEADERS = ("Amenities", "Brands", "Courses", "Degree programs", "Destina
 AD_EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍]")
 URL_RX = re.compile(r"^https?://[^\s/?#]+\.[^\s/?#]{2,}(?:[/?#]\S*)?$", re.I)
 CAPS_OK = {"PADI", "NAUI", "SSI", "SCUBA", "UK", "USA", "EU"}  # all-caps words that are names, not shouting
-BIG_JUMP = 3  # a budget / bid more than this many times the live value is a warning
+BIG_JUMP = 3
+MAX_MICROS = 2 ** 63 - 1  # Google's micros are int64  # a budget / bid more than this many times the live value is a warning
 
 
 def _txt(x):
@@ -403,6 +404,9 @@ def _num(c, key, problems, label=None):
     v = c.get(key)
     if v is None or v == "":
         return None
+    if isinstance(v, bool):
+        problems.append(f"{label or key}: {v!r} is not a number")
+        return None
     try:
         f = float(v)
     except (TypeError, ValueError):
@@ -414,7 +418,15 @@ def _num(c, key, problems, label=None):
     if f <= 0:
         problems.append(f"{label or key}: must be more than 0 (got {v})")
         return None
-    if gae.micros(f) <= 0:  # rounds to 0.00: Google would get 0
+    try:
+        m = gae.micros(f)
+    except ArithmeticError:  # decimal.InvalidOperation: more digits than Decimal's precision (e.g. 1e30)
+        problems.append(f"{label or key}: {v} is too large")
+        return None
+    if m > MAX_MICROS:
+        problems.append(f"{label or key}: {v} is too large")
+        return None
+    if m <= 0:  # rounds to 0.00: Google would get 0
         problems.append(f"{label or key}: {v} rounds to 0.00 - the smallest amount is 0.01")
         return None
     return f
@@ -866,6 +878,21 @@ def _readable(ex):
     return str(ex)
 
 
+def _own_text(change, rows):
+    """The columns of plan_rows that hold text this change adds or rewrites. Names that only point at something that
+    already exists (the campaign / ad group a change sits in, the keyword an edit or remove targets) are left out, so
+    the copy rules never block pausing, removing or re-bidding e.g. a keyword "bahamas liveaboard"."""
+    t, new = change.get("type"), bool(change.get("new"))
+    drop = set()
+    if not (t == "campaign" and new):
+        drop.add("Campaign")
+    if not (t == "ad_group" and new):
+        drop.add("Ad Group")
+    if (t == "keyword" and change.get("edit")) or (t == "negative" and change.get("remove")):
+        drop.add("Keyword")
+    return [{k: v for k, v in r.items() if k not in drop} for r in rows]
+
+
 def _shared_list_negative(c):
     """A negative that names a shared negative keyword list (rows of the Negatives grid's "Shared list" level)."""
     return bool(c.get("list")) or _norm(c.get("level")) == "shared list"
@@ -971,6 +998,7 @@ def check(change, acct=None):
         rows = []
         if not problems:  # google_rules names the field already; this is only the fallback
             problems.append(f"invalid change: {_readable(ex)}")
+    rows = _own_text(change, rows)
     lint = [_unrow(p) for p in gae.lint(rows)]
     if t == "promotion":  # Google's promotion item limit is 20 (google_rules), not the Editor column's 25
         lint = [p for p in lint if not p.startswith("Item:")]
@@ -986,7 +1014,9 @@ def check(change, acct=None):
 
 def add(acct, changes, by="you", note=None):
     """Add plan changes (gae plan format) to the draft. Returns the new items, each with its problems/warnings.
-    Refuses (ValueError, nothing added) when a change touches an experiment's trial campaign (experiments.py)."""
+    Refuses (ValueError, nothing added) when a change touches an experiment's trial campaign (experiments.py).
+    Negatives in a shared list are never added: all of them -> ValueError; some -> the rest is added and the first
+    returned item carries "skipped" (and a warning) naming the ones left out."""
     if isinstance(changes, dict):
         changes = [changes]
     shared = [c for c in changes if isinstance(c, dict) and c.get("type") == "negative" and _shared_list_negative(c)]
@@ -995,6 +1025,7 @@ def add(acct, changes, by="you", note=None):
     changes = [c for c in changes if c not in shared]
     if not changes:
         raise ValueError("Nothing to add: there were no changes")
+    skipped = [f"{_summary(c)} (in shared list {c.get('list')!r})" if c.get("list") else _summary(c) for c in shared]
     if by == "claude" and any(isinstance(c, dict) and c.get("type") == "video_upload" for c in changes):
         raise ValueError("Not added to the draft. Uploading a video to YouTube is the user's own Upload button in Studio's Videos tab")
     exps = experiments.known(acct)
@@ -1015,6 +1046,10 @@ def add(acct, changes, by="you", note=None):
     with draftstore.tx(_coll(acct), STUDIO_DIR, by=by) as t:
         for it in items:
             t.put(it["id"], it, by)
+    if skipped:  # mixed selection (MCP too): say what was dropped, on the answer only (not stored in the draft)
+        note = (f"Not added: {len(skipped)} negative{'s' if len(skipped) > 1 else ''} in a shared list (edit the shared list "
+                f"itself): " + "; ".join(skipped))
+        items[0] = {**items[0], "warnings": items[0]["warnings"] + [note], "skipped": skipped}
     return items
 
 

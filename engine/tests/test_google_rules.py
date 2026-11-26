@@ -287,10 +287,42 @@ class CampaignRules(Base):
         for bad in (float("inf"), float("nan"), "inf", "nan"):
             self.blocks({**self.NEW, "budget": bad}, "is not a usable amount")
 
+    def test_huge_and_bool_amounts(self):
+        self.blocks({**self.NEW, "budget": 1e30}, "budget: 1e+30 is too large")
+        self.blocks({**self.NEW, "budget": 1e15}, "is too large")
+        self.blocks({**self.NEW, "budget": True}, "budget: True is not a number")
+        self.blocks({"type": "ad_group", "campaign": "B", "ad_group": "G", "max_cpc": False}, "max_cpc: False is not a number")
+
     def test_micros_round_to_cents_first(self):
         self.assertEqual(gae.micros(1.005), 1010000)
         self.assertEqual(gae.micros(0.1 + 0.2), 300000)
         self.assertEqual(gae.micros("12.3456"), 12350000)
+
+
+class CopyRulesOnlyOnNewText(Base):
+    """Copy rules (Bahamas, em dash, ...) judge text a change adds or rewrites, never the name of what it points at."""
+
+    def test_status_and_bid_edits_on_existing_names_pass(self):
+        kw = {"type": "keyword", "edit": True, "campaign": "Bahamas trips", "ad_group": f"Islands {EM} all",
+              "match": "phrase", "keywords": ["bahamas liveaboard"]}
+        self.clean({**kw, "status": "paused"})
+        self.clean({**kw, "max_cpc": 1.1})
+        self.clean({"type": "negative", "remove": True, "campaign": "Bahamas trips", "match": "phrase", "keywords": ["bahamas cheap"]})
+        self.clean({"type": "campaign", "campaign": "Bahamas trips", "status": "paused"})
+        self.clean({"type": "ad_group", "campaign": "Bahamas trips", "ad_group": "Bahamas", "max_cpc": 1.0})
+        self.clean({"type": "rsa", "edit": True, "campaign": "Bahamas trips", "ad_group": "Bahamas", "local_id": 3, "status": "paused"})
+        self.assertFalse(any("cabins" in w for w in self.check({**kw, "keywords": ["cabins"], "status": "paused"})[1]))
+
+    def test_new_and_rewritten_text_is_still_judged(self):
+        self.blocks({"type": "keyword", "campaign": "C", "ad_group": "G", "match": "phrase", "keywords": ["bahamas liveaboard"]},
+                    "Keyword: mentions Bahamas")
+        self.blocks({"type": "negative", "campaign": "C", "match": "phrase", "keywords": ["bahamas"]}, "Keyword: mentions Bahamas")
+        self.blocks({"type": "campaign", "new": True, "campaign": "Bahamas 2027", "budget": 5, "locations": [{"id": 1}]},
+                    "Campaign: mentions Bahamas")
+        self.blocks({"type": "ad_group", "new": True, "campaign": "C", "ad_group": "Bahamas"}, "Ad Group: mentions Bahamas")
+        self.blocks(rsa(campaign="Bahamas trips", edit=True, final_url=None, descriptions=["Sail the Bahamas.", "Two."]),
+                    "Description 1: mentions Bahamas")
+        self.blocks(rsa(final_url="https://example.com/bahamas"), "Final URL: mentions Bahamas")
 
 
 class Messages(Base):
@@ -314,6 +346,22 @@ class DraftFlow(Base):
             core.add(A, [shared])
         self.assertIn("edit the shared list itself", str(cm.exception))
         self.assertEqual(core.draft(A)["items"], [])
+
+    def test_mixed_selection_reports_skipped_shared_list_negatives(self):
+        shared = {"type": "negative", "remove": True, "campaign": "", "level": "Shared list", "list": "Brand negatives",
+                  "match": "phrase", "keywords": ["free"]}
+        own = {"type": "negative", "remove": True, "campaign": "C", "match": "phrase", "keywords": ["cheap"]}
+        items = core.add(A, [shared, own])
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["change"], own)
+        self.assertEqual(len(items[0]["skipped"]), 1)
+        self.assertIn("'Brand negatives'", items[0]["skipped"][0])
+        self.assertTrue(any(w.startswith("Not added: 1 negative in a shared list") for w in items[0]["warnings"]))
+        stored = core.draft(A)["items"]
+        self.assertEqual(len(stored), 1)
+        self.assertNotIn("skipped", stored[0])
+        self.assertFalse(any("Not added" in w for w in stored[0]["warnings"]))
+        core.clear(A)
 
     def test_duplicate_new_names_in_one_draft_block(self):
         camp = {"type": "campaign", "new": True, "campaign": "[20] Twin", "budget": 5, "locations": [{"id": 2826}]}

@@ -388,6 +388,12 @@ def _build_base(cid):
                            "WHERE ad_group_criterion.type = LOCATION",
         "recommendations": "SELECT recommendation.resource_name, recommendation.type, recommendation.campaign, recommendation.ad_group, "
                            "recommendation.dismissed, recommendation.impact FROM recommendation",
+        # G11: the recommended values, in queries of their own so a refused field never empties the Recommendations tab
+        **{f"rec_{k}": f"SELECT recommendation.resource_name, recommendation.{k}_recommendation.current_budget_amount_micros, "
+                       f"recommendation.{k}_recommendation.recommended_budget_amount_micros FROM recommendation"
+           for k in ("campaign_budget", "forecasting_campaign_budget", "marginal_roi_campaign_budget")},
+        "rec_keyword": "SELECT recommendation.resource_name, recommendation.keyword_recommendation.keyword.text, "
+                       "recommendation.keyword_recommendation.keyword.match_type FROM recommendation",
         **{f"{lvl}_assets": f"SELECT {sel}{lvl}_asset.field_type, {lvl}_asset.status, asset.id, asset.final_urls, "
                             "asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2, "
                             "asset.sitelink_asset.start_date, asset.sitelink_asset.end_date, asset.callout_asset.callout_text, "
@@ -416,6 +422,8 @@ def _build_base(cid):
     extra["life_events"] = "SELECT life_event.id, life_event.name FROM life_event"
     q2 = _parallel(cid, extra)
     q["_errors"].update(q2.pop("_errors"))
+    for k in [k for k in q["_errors"] if k.startswith("rec_")]:  # optional extras (G11): without them the tab shows no values
+        q["_errors"].pop(k)
     geo = {g["geoTargetConstant"]["id"]: g["geoTargetConstant"] for k, v in q2.items() if k.startswith("geo") for g in v}
     names = {
         "userInterests": {r["userInterest"]["userInterestId"]: r["userInterest"]["name"] for r in q2.get("interests", [])},
@@ -614,7 +622,23 @@ def _rows(q, geo, names):
                            "_logical": (u.get("logicalUserList") or {}).get("rules") or []}
                           for u in (r["userList"] for r in q["user_lists"])]
 
-    recs = []
+    recs, rec_val = [], {}
+    for k in ("campaign_budget", "forecasting_campaign_budget", "marginal_roi_campaign_budget", "keyword"):
+        field = "".join(w.title() if i else w for i, w in enumerate(f"{k}_recommendation".split("_")))  # -> campaignBudgetRecommendation
+        for r in q.get(f"rec_{k}", []):
+            x = (r.get("recommendation") or {})
+            v = x.get(field)
+            if not v:
+                continue
+            if k == "keyword":
+                kw = v.get("keyword") or {}
+                if kw.get("text"):
+                    rec_val[x.get("resourceName")] = {"recommended": f'{kw["text"]} ({_title(kw.get("matchType", ""))})'}
+            elif v.get("recommendedBudgetAmountMicros"):
+                new = round(int(v["recommendedBudgetAmountMicros"]) / 1e6, 2)
+                cur = round(int(v["currentBudgetAmountMicros"]) / 1e6, 2) if v.get("currentBudgetAmountMicros") else None
+                rec_val[x.get("resourceName")] = {"recommended": f"{new:.2f}/day", "recommended_budget": new,
+                                                  "current": f"{cur:.2f}/day" if cur is not None else ""}
     for r in q["recommendations"]:
         x = r["recommendation"]
         cid, gid = _tail(x.get("campaign")) or None, _tail(x.get("adGroup")) or None
@@ -629,7 +653,7 @@ def _rows(q, geo, names):
                      "recommendation": x.get("type", ""), "dismissed": bool(x.get("dismissed")),
                      "impact_impressions": delta("impressions"), "impact_clicks": delta("clicks"), "impact_cost": delta("costMicros", True),
                      "impact_conversions": delta("conversions"), "impact_conv_value": delta("conversionsValue"),
-                     "resource_name": x["resourceName"]})
+                     "resource_name": x["resourceName"], **rec_val.get(x["resourceName"], {})})
     rows["recommendations"] = recs
 
     tree = []
@@ -874,7 +898,17 @@ def tree_any(acct, status="active"):
 
 
 def geo_any(acct, name):
-    return geo_search(acct, name) if use_api(acct) else core.geo_search(_cid(acct), name)
+    """Location search: the API when Studio reads this account from it, else Editor's location table. Without a Google
+    sign-in the API answer fails: then Editor's table (G12), and if there is no Editor either, a plain reason."""
+    if not use_api(acct):
+        return core.geo_search(_cid(acct), name)
+    try:
+        return geo_search(acct, name)
+    except Exception as ex:  # noqa: BLE001 - not signed in, offline, token expired ...
+        if _editor_ok(acct):
+            return core.geo_search(_cid(acct), name)
+        raise ValueError("Location search needs Sign in with Google (Setup) or Google Ads Editor with this account downloaded. "
+                         f"Google said: {str(ex)[:160]}") from ex
 
 
 def accounts_any():

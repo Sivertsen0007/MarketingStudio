@@ -7,6 +7,8 @@ window.studioFmt = window.studioFmt || (() => {
   const parse = v => {
     if (v == null || v === "") return null;
     if (v instanceof Date) return isNaN(v) ? null : v;
+    // U2: Editor (and gapi._ymd) give campaign / sitelink dates as the number 20230524 (YYYYMMDD), not epoch seconds
+    if (typeof v === "number" && Number.isInteger(v) && v >= 19000101 && v <= 21001231) return parse(String(v));
     if (typeof v === "number") return new Date(v < 1e12 ? v * 1000 : v);
     const s = String(v).trim();
     if (/^\d{8}$/.test(s)) return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8));

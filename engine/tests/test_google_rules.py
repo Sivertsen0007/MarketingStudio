@@ -128,6 +128,7 @@ class RsaRules(Base):
         self.blocks(rsa(path2="egypt"), "Path 2 needs Path 1")
         self.blocks(rsa(path1="x" * 16), "Path 1: 16 chars > 15")
         self.clean(rsa(path1="red-sea", path2="egypt"))
+        self.warns(rsa(path1="red sea"), "Path 1: a space in a display path")
         self.clean({"type": "rsa", "edit": True, "campaign": "C", "ad_group": "G", "local_id": 3, "status": "paused"})
 
     def test_pins(self):
@@ -136,9 +137,12 @@ class RsaRules(Base):
 
     def test_emoji_blocks_style_warns(self):
         self.blocks(rsa(headlines=["Dive now \U0001F420", "Two", "Three"]), "Headline 1: emoji")
-        self.warns(rsa(headlines=["BOOK NOW today", "Two", "Three"]), "Headline 1: written in CAPITALS")
+        self.warns(rsa(headlines=["BOOKING today", "Two", "Three"]), "Headline 1: written in CAPITALS")
+        for ok in ("BOOK now", "PADI courses", "SCUBA trips", "UK and USA", "NAUI SSI EU"):
+            self.assertFalse(any("CAPITALS" in w for w in self.clean(rsa(headlines=[ok, "Two", "Three"]))), ok)
         self.warns(rsa(descriptions=["Amazing!!", "Two."]), "Description 1: repeated punctuation")
-        self.warns(rsa(headlines=["Dive now!", "Two", "Three"]), "exclamation mark in headlines")
+        self.blocks(rsa(headlines=["Dive now!", "Two", "Three"]), "Headline 1: Google does not allow an exclamation mark")
+        self.clean(rsa(descriptions=["Dive now!", "Two."]))
         self.warns(rsa(descriptions=["Small  groups.", "Two."]), "Description 1: double space")
 
     def test_status(self):
@@ -162,6 +166,22 @@ class KeywordRules(Base):
         self.blocks(self.kw("dive", max_cpc=0), "max_cpc: must be more than 0")
         self.blocks(self.kw("dive", max_cpc=-1), "max_cpc: must be more than 0")
         self.clean(self.kw("red sea liveaboard", "dive & sail", max_cpc=1.2))
+
+    def test_edits_and_removes_take_existing_keywords_as_they_are(self):
+        # verifier repro: legacy broad match modifier keywords / negatives must stay editable and removable
+        bmm = dict(self.kw("+liveaboard +egypt", match="broad"), edit=True)
+        for extra in ({"status": "paused"}, {"max_cpc": 1.5}, {"status": "enabled"}):
+            self.clean({**bmm, **extra})
+        rm = {"type": "negative", "remove": True, "campaign": "C", "match": "broad", "keywords": ["+cheap", "[x]", "a, b"]}
+        self.clean(rm)
+        self.blocks({**rm, "keywords": [" "]}, "an empty keyword")
+        self.blocks(dict(self.kw("+liveaboard"), edit=True, keywords=[""], status="paused"), "an empty keyword")
+        self.blocks(self.kw("+liveaboard +egypt"), "remove the leading '+'")  # adding stays strict
+        item = {"id": "k1", "change": {**bmm, "status": "paused"}, "by": "you", "summary": "s", "problems": [], "warnings": []}
+        neg = {"id": "n1", "change": rm, "by": "you", "summary": "s", "problems": [], "warnings": []}
+        with mock.patch.object(live, "ops_for", lambda *a: []), mock.patch.object(live, "_plan_experiments", lambda *a: live.experiments.empty()):
+            p = live.plan(A, items=[item, neg], source="api")
+        self.assertEqual([e["problems"] for e in p["items"]], [[], []])
 
     def test_live_duplicates_and_jumps_warn(self):
         self.known = {"keywords": [{"campaign": "C", "ad_group": "G", "keyword": "red sea", "match": "Phrase", "status": "Enabled", "max_cpc": 1.0}]}
@@ -260,6 +280,13 @@ class CampaignRules(Base):
         self.blocks({"type": "ad_group", "campaign": "Brand", "ad_group": "Core", "max_cpc": 0}, "max_cpc: must be more than 0")
         self.blocks({"type": "ad_group", "new": True, "campaign": "Brand", "ad_group": "core"}, "already has an ad group", acct=A)
 
+    def test_amounts_that_cannot_be_sent(self):
+        self.blocks({**self.NEW, "budget": 0.004}, "budget: 0.004 rounds to 0.00")
+        self.blocks({"type": "ad_group", "campaign": "B", "ad_group": "G", "max_cpc": 0.001}, "max_cpc: 0.001 rounds to 0.00")
+        self.clean({"type": "ad_group", "campaign": "B", "ad_group": "G", "max_cpc": 0.005})
+        for bad in (float("inf"), float("nan"), "inf", "nan"):
+            self.blocks({**self.NEW, "budget": bad}, "is not a usable amount")
+
     def test_micros_round_to_cents_first(self):
         self.assertEqual(gae.micros(1.005), 1010000)
         self.assertEqual(gae.micros(0.1 + 0.2), 300000)
@@ -280,7 +307,29 @@ class DraftFlow(Base):
     def test_empty_add_explains(self):  # G15
         with self.assertRaises(ValueError) as cm:
             core.add(A, [])
-        self.assertIn("shared list", str(cm.exception))
+        self.assertEqual(str(cm.exception), "Nothing to add: there were no changes")
+        shared = {"type": "negative", "remove": True, "campaign": "", "level": "Shared list", "list": "Brand negatives",
+                  "match": "phrase", "keywords": ["free"]}
+        with self.assertRaises(ValueError) as cm:
+            core.add(A, [shared])
+        self.assertIn("edit the shared list itself", str(cm.exception))
+        self.assertEqual(core.draft(A)["items"], [])
+
+    def test_duplicate_new_names_in_one_draft_block(self):
+        camp = {"type": "campaign", "new": True, "campaign": "[20] Twin", "budget": 5, "locations": [{"id": 2826}]}
+        ag = {"type": "ad_group", "new": True, "campaign": "[20] Twin", "ad_group": "Core"}
+        first = core.add(A, [camp, ag])
+        self.assertEqual([i["problems"] for i in first], [[], []])
+        second = core.add(A, [{**camp, "campaign": "[20] twin "}, {**ag, "ad_group": "core"}, {**ag, "ad_group": "Other"}])
+        self.assertIn("already has a new campaign", second[0]["problems"][0])
+        self.assertIn("already has a new ad group", second[1]["problems"][0])
+        self.assertEqual(second[2]["problems"], [])
+        self.assertEqual(core.draft_duplicates([camp, camp, ag, dict(ag, campaign="Other")]),
+                         [[], ['the draft already has a new campaign called "[20] Twin"'], [], []])
+        with mock.patch.object(live, "ops_for", lambda *a: []), mock.patch.object(live, "_plan_experiments", lambda *a: live.experiments.empty()):
+            p = live.plan(A, items=core.draft(A)["items"], source="api")
+        self.assertEqual(sum(1 for e in p["items"] if any("the draft already has" in x for x in e["problems"])), 2)
+        core.clear(A)
 
     def test_validate_keeps_editor_problems_apart_and_live_plan_ignores_them(self):  # G2
         items = core.add(A, [{"type": "campaign", "campaign": "Brand", "status": "paused"}])

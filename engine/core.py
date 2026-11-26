@@ -386,6 +386,7 @@ SNIPPET_HEADERS = ("Amenities", "Brands", "Courses", "Degree programs", "Destina
                    "Models", "Neighborhoods", "Service catalog", "Shows", "Styles", "Types")
 AD_EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍]")
 URL_RX = re.compile(r"^https?://[^\s/?#]+\.[^\s/?#]{2,}(?:[/?#]\S*)?$", re.I)
+CAPS_OK = {"PADI", "NAUI", "SSI", "SCUBA", "UK", "USA", "EU"}  # all-caps words that are names, not shouting
 BIG_JUMP = 3  # a budget / bid more than this many times the live value is a warning
 
 
@@ -407,8 +408,14 @@ def _num(c, key, problems, label=None):
     except (TypeError, ValueError):
         problems.append(f"{label or key}: {v!r} is not a number")
         return None
-    if f != f or f <= 0:  # NaN too
+    if f != f or f in (float("inf"), float("-inf")):
+        problems.append(f"{label or key}: {v!r} is not a usable amount")
+        return None
+    if f <= 0:
         problems.append(f"{label or key}: must be more than 0 (got {v})")
+        return None
+    if gae.micros(f) <= 0:  # rounds to 0.00: Google would get 0
+        problems.append(f"{label or key}: {v} rounds to 0.00 - the smallest amount is 0.01")
         return None
     return f
 
@@ -428,12 +435,10 @@ def _style(field, text, warnings, headline=False):
     """Editorial points Google may flag: warnings, never blocks."""
     if not isinstance(text, str) or not text:
         return
-    if re.search(r"\b[A-Z]{4,}\b", text):
+    if any(w not in CAPS_OK for w in re.findall(r"\b[A-Z]{5,}\b", text)):
         warnings.append(f"{field}: written in CAPITALS (Google may disapprove excessive capitals)")
     if re.search(r"([!?])\1", text):
         warnings.append(f"{field}: repeated punctuation ({'!!' if '!!' in text else '??'}) is likely to be disapproved")
-    elif headline and "!" in text:
-        warnings.append(f"{field}: Google does not allow an exclamation mark in headlines")
     if "  " in text:
         warnings.append(f"{field}: double space")
     if text != text.strip():
@@ -447,6 +452,8 @@ def _ad_text(field, text, limit, problems, warnings, headline=False):
         return
     if AD_EMOJI.search(text):
         problems.append(f"{field}: emoji are not allowed in Google ads")
+    if headline and "!" in text:
+        problems.append(f"{field}: Google does not allow an exclamation mark in headlines")
     _style(field, text, warnings, headline)
 
 
@@ -470,6 +477,9 @@ def _match_ok(c, problems, default=None):
 
 
 def _keyword_texts(c, problems, label="Keyword"):
+    """The change's keyword texts. Syntax, characters and length are checked only when adding: an edit or a remove
+    names a keyword that already exists (e.g. a legacy "+liveaboard +egypt"), exactly as it is."""
+    adding = not (c.get("edit") or c.get("remove"))
     kws = c.get("keywords", [c.get("keyword")] if "keyword" in c else None)
     if not isinstance(kws, list) or not kws:
         problems.append("keywords: give one or more keywords")
@@ -480,6 +490,12 @@ def _keyword_texts(c, problems, label="Keyword"):
             problems.append(f"{label}: an empty keyword")
             continue
         name = f'{label} "{kw}"'
+        if _norm(kw) in seen:
+            problems.append(f"{name}: listed twice")
+        seen.add(_norm(kw))
+        out.append(kw)
+        if not adding:
+            continue
         if kw.strip()[:1] in '["' or kw.strip()[-1:] in ']"':
             problems.append(f"{name}: match type syntax ([ ] or \" \") typed in the text - pick the match type instead")
         elif kw.strip().startswith(("-", "+")):
@@ -493,10 +509,6 @@ def _keyword_texts(c, problems, label="Keyword"):
             problems.append(f"{name}: {len(kw.split())} words > {KW_MAX_WORDS}")
         if AD_EMOJI.search(kw):
             problems.append(f"{name}: emoji are not allowed")
-        if _norm(kw) in seen:
-            problems.append(f"{name}: listed twice")
-        seen.add(_norm(kw))
-        out.append(kw)
     return out
 
 
@@ -659,8 +671,10 @@ def _r_rsa(c, acct, problems, warnings):
         problems.append("Path 2 needs Path 1")
     for k in ("path1", "path2"):
         v = c.get(k)
-        if v and (" " in v.strip() or AD_EMOJI.search(v)):
-            problems.append(f"{k.replace('path', 'Path ')}: no spaces or emoji in a display path")
+        if v and AD_EMOJI.search(v):
+            problems.append(f"{k.replace('path', 'Path ')}: emoji are not allowed in a display path")
+        if v and " " in v.strip():
+            warnings.append(f"{k.replace('path', 'Path ')}: a space in a display path may be refused - use a dash")
     hl, ds = c.get("headlines"), c.get("descriptions")
     if c.get("edit") and not hl and not ds:
         return
@@ -852,6 +866,31 @@ def _readable(ex):
     return str(ex)
 
 
+def _shared_list_negative(c):
+    """A negative that names a shared negative keyword list (rows of the Negatives grid's "Shared list" level)."""
+    return bool(c.get("list")) or _norm(c.get("level")) == "shared list"
+
+
+def draft_duplicates(changes):
+    """[problems per change]: new campaigns / new ad groups whose name another new one in the same draft already uses
+    (Google refuses the second one). Every copy after the first is flagged."""
+    seen, out = set(), []
+    for c in changes:
+        probs = []
+        if isinstance(c, dict) and c.get("new") and c.get("type") in ("campaign", "ad_group"):
+            if c["type"] == "campaign":
+                key, what = ("c", _norm(c.get("campaign"))), f'a new campaign called "{c.get("campaign")}"'
+            else:
+                key = ("g", _norm(c.get("campaign")), _norm(c.get("ad_group")))
+                what = f'a new ad group called "{c.get("ad_group")}" in "{c.get("campaign")}"'
+            if key[-1]:
+                if key in seen:
+                    probs.append(f"the draft already has {what}")
+                seen.add(key)
+        out.append(probs)
+    return out
+
+
 def _unrow(p):
     """gae.lint says "row 1 Headline 2: 31 chars > 30"; keep the field name, drop only the row number (G8)."""
     return re.sub(r"^row \d+ ", "", p)
@@ -950,9 +989,12 @@ def add(acct, changes, by="you", note=None):
     Refuses (ValueError, nothing added) when a change touches an experiment's trial campaign (experiments.py)."""
     if isinstance(changes, dict):
         changes = [changes]
-    if not changes:  # G15: e.g. a bulk Remove where every selected negative sits in a shared list
-        raise ValueError("Nothing was added to the draft: there were no changes to add. Negatives in a shared list "
-                         "can't be removed one by one here; edit the shared list itself")
+    shared = [c for c in changes if isinstance(c, dict) and c.get("type") == "negative" and _shared_list_negative(c)]
+    if shared and len(shared) == len(changes):  # G15: e.g. a bulk Remove of negatives that sit in a shared list
+        raise ValueError("Nothing to add: negatives in a shared list can't be changed one by one here; edit the shared list itself")
+    changes = [c for c in changes if c not in shared]
+    if not changes:
+        raise ValueError("Nothing to add: there were no changes")
     if by == "claude" and any(isinstance(c, dict) and c.get("type") == "video_upload" for c in changes):
         raise ValueError("Not added to the draft. Uploading a video to YouTube is the user's own Upload button in Studio's Videos tab")
     exps = experiments.known(acct)
@@ -961,8 +1003,11 @@ def add(acct, changes, by="you", note=None):
     if refused:
         raise ValueError("Not added to the draft. " + "; ".join(refused))
     items = []
-    for c in changes:
+    before = [i["change"] for i in draft(acct)["items"]]
+    dups = draft_duplicates(before + list(changes))[len(before):]
+    for c, dup in zip(changes, dups):
         problems, warnings = check(c, acct)
+        problems = problems + [p for p in dup if p not in problems]
         warnings = warnings + experiments.check(exps, c)[1]
         items.append({"id": uuid.uuid4().hex[:8], "change": c, "by": by, "note": note or "",
                       "ts": dt.datetime.now().isoformat(timespec="seconds"), "summary": _summary(c),
@@ -1034,10 +1079,12 @@ def validate(acct):
         db.execute("begin")
         results = []
         exps = experiments.merge(experiments.known(acct), experiments.from_editor(db))
+        dups = dict(zip((i["id"] for i in items), draft_duplicates([i["change"] for i in items])))
         for it in items:
             if it["change"].get("type") == "video_upload":
                 continue  # runs from its own Upload button; never part of Send to Editor
             problems, warnings = check(it["change"], acct)
+            problems = problems + [p for p in dups[it["id"]] if p not in problems]
             xp, xw = experiments.check(exps, it["change"])
             problems, warnings = xp + problems, warnings + xw
             if live_only(it["change"]):
@@ -1253,8 +1300,10 @@ Edit existing:
 Optional on any change: nothing else.
 Hard checks (block): the copy rules set to block (e.g. em dash, Bahamas), character limits, Google's rules: empty or
 duplicate texts, 3-15 headlines / 2-4 descriptions, pins 1-3 / 1-2, valid final URL, Path 2 needs Path 1, emoji in ad
-text, keywords (<=80 chars, <=10 words, no ! @ % ^ * ( ) = { } ; ~ ` < > ? \\ | , and no [ ] or " " match syntax),
+text, "!" in a headline, new keywords (<=80 chars, <=10 words, no ! @ % ^ * ( ) = { } ; ~ ` < > ? \\ | , and no [ ] or " " match syntax),
 snippet header from Google's list with 3-10 values <=25, price 3-8 items, promotion item <=20, sitelink lines both or
-neither, budget / bids > 0, a new campaign's name not already used, end date not before start.
-Warnings: the copy rules set to warn, CAPITALS, "!!", double spaces, duplicates of live rows, negatives that block live
-keywords, budget / bid more than 3x the current, a new campaign with no locations."""
+neither, budget / bids at least 0.01, a new campaign / ad group name not already used (live or in the draft), end date
+not before start. Keyword edits and removes take the existing keyword text as it is.
+Warnings: the copy rules set to warn, CAPITALS (5+ letters, not PADI, SCUBA, UK, ...), "!!", double spaces, a space in a
+display path, duplicates of live rows, negatives that block live keywords, budget / bid more than 3x the current, a new
+campaign with no locations."""

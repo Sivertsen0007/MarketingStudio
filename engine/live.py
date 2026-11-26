@@ -954,7 +954,8 @@ def plan(acct, enable_new=False, items=None, source=None):
     ids = Ids(acct, source)
     ops, per_item = [], []
     exps = _plan_experiments(acct, ids, items) if items else experiments.empty()
-    for it in items:
+    dups = core.draft_duplicates([it["change"] for it in items])  # two new campaigns / ad groups with one name
+    for it, dup in zip(items, dups):
         xp, xw = experiments.check(exps, it["change"])
         # G2: start from core.check only. Stored problems may hold what Editor's dry run (Send to Editor) refused, which
         # says nothing about a live push; and a synced or merged draft never went through core.add at all.
@@ -964,7 +965,7 @@ def plan(acct, enable_new=False, items=None, source=None):
             again = core.check(it["change"], acct)[0] + core.audiences.refusals(acct, [it["change"]])
         except Exception as ex:  # noqa: BLE001 - a broken change is a refusal, never a crash
             again = [f"invalid change: {ex}"]
-        entry["problems"] += [p for p in again if p not in entry["problems"]]
+        entry["problems"] += [p for p in again + dup if p not in entry["problems"]]
         per_item.append(entry)
     if BATCH_READS:
         try:  # only fills the read cache: what it misses is read per item below, exactly as without it

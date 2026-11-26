@@ -569,7 +569,8 @@ class Mcp(MBase):
     def test_tools(self):
         names = {t["name"] for t in mcp_server.TOOLS}
         self.assertTrue({"audiences_list", "audience_add_to_draft"} <= names)
-        with mock.patch.object(meta, "use", lambda k: "act_123"):
+        with mock.patch.object(meta, "use", lambda k: "act_123"), \
+                mock.patch.object(meta, "_cached_copy", lambda *a: (DATA, True)):  # the tool reads the cache only
             rows = mcp_server.call("audiences_list", {"account": "meta"})["rows"]
             self.assertEqual(len(rows), len(AUDS))
             items = mcp_server.call("audience_add_to_draft", {"account": "meta", "changes": [MWEB], "note": "why"})
@@ -579,7 +580,8 @@ class Mcp(MBase):
                 with self.assertRaises(ValueError):
                     mcp_server.call("audience_add_to_draft", {"account": "meta", "changes": [bad]})
         self.assertEqual(self.f.posts, [], "the MCP tools only read and draft")
-        with mock.patch.object(gapi, "base", lambda *a, **k: BASE), mock.patch.object(core, "resolve", lambda a: A):
+        with mock.patch.object(gapi, "base", lambda *a, **k: BASE), mock.patch.object(core, "resolve", lambda a: A), \
+                mock.patch.object(gapi, "_read", lambda cid, key: BASE):  # the tool reads the cache only
             self.assertEqual(mcp_server.call("audiences_list", {"account": "ml"})["platform"], "google")
             core.clear(A)
             self.assertEqual(len(mcp_server.call("audience_add_to_draft", {"account": "ml", "changes": [WEBSITE]})), 1)

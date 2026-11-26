@@ -135,7 +135,10 @@ def refresh(source, account=None, **ctx):
         em = _area("email")
         if not em:
             raise ValueError("the Email area didn't load")
-        out.append({"source": "email", **em.refresh({})})
+        r = em.refresh({})
+        # demo data: nothing was fetched, so it is not reported as fresh data
+        errs = ["Email: demo data, no email platform connected (Setup > Email), so nothing was fetched"] if r.get("demo") else []
+        out.append({"source": "email", **r, "errors": list(r.get("errors") or []) + errs})
     elif source == "seo":
         seo = _area("seo")
         if not seo:
@@ -144,7 +147,10 @@ def refresh(source, account=None, **ctx):
         bad = [p for p in parts if p not in SEO_PARTS]
         if bad:
             raise ValueError(f"SEO part must be one of {', '.join(SEO_PARTS)}")
+        t0 = time.time()
         out.append({"source": "seo", **seo.refresh({"parts": parts})})
+        for p in parts:  # Overview rebuilds the SEO block from these (overview._refresh_areas); copies written since t0 stay fresh
+            datapolicy.invalidate(f"seo.{p}", at=t0)
     elif source == "social":
         so = _area("social")
         if not so or not hasattr(so, "_published"):
@@ -159,13 +165,19 @@ def refresh(source, account=None, **ctx):
         errs = [f"{x['account']}: {x['error']}" for k in ("google", "meta") for x in r.get(k, []) if x.get("error")]
         out.append({"source": "activity", "google": r.get("google"), "meta": r.get("meta"), "warning": r["sync"].get("warning"), "errors": errs})
     elif source == "fx":
-        out.append({"source": "fx", "fetched_at": fx.info(force=True).get("fetched_at")})
+        i = fx.info(force=True)
+        errs = []
+        if i.get("fallback"):
+            errs.append("Exchange rates: could not reach the ECB rates service and none are saved, so rough built-in rates are used")
+        elif i.get("stale"):
+            errs.append(f"Exchange rates: could not reach the ECB rates service, still using the rates of {fx.nice_date(i.get('date'))}")
+        out.append({"source": "fx", "fetched_at": i.get("fetched_at"), "stale": bool(i.get("stale")), "errors": errs})
     elif source == "overview":
         days = str(ctx.get("days") or "7")
         o = overview.build(days, "own", force=True)
         out.append({"source": "overview", "days": o["days"], "errors": o.get("errors", [])})
     else:
         raise ValueError("source must be all, google, meta, email, seo, social, activity, fx or overview")
-    if source in ("email", "seo", "social"):
-        datapolicy.invalidate("overview")
+    # Email / SEO / SoMe: the Overview is not rebuilt (that would ask Google and Meta again); it rebuilds only that
+    # area's block from the fresh area cache next time it opens (overview._refresh_areas)
     return {"results": out}

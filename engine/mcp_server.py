@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Marketing Studio MCP server (stdio). Gives Claude the same view and the same drafts as the Marketing Studio UI
-(Ads, Email, SEO, SoMe). Ads: read everything Google Ads Editor holds, add/remove draft changes (they show up live in
-the UI), check the draft against a copy of Editor's data, and - only after the user says so - send the draft into Editor.
-Email, SEO, SoMe: read tools plus list/add draft tools only. There are no tools to send, schedule, publish, post,
-delete or undo anything: live actions are only ever the user's own buttons in the Studio page.
+(Ads, Email, SEO, SoMe, Activity, Alerts). Ads: read Google Ads (from the Google Ads API by default, or Google Ads
+Editor's copy when the user picked Editor for an account) and Meta, add/remove draft changes (they show up live in the
+UI), check the draft, preview a live push (validate only) and - only after the user says so - send the draft into Editor.
+Email, SEO, SoMe: read tools plus draft tools only. Team tools comment, ask for a review and sync drafts with the team.
+There are no tools to push live, send, schedule, publish, post, delete or undo anything: live actions are only ever
+the user's own buttons in the Studio page.
+
+Read tools use what Studio has cached; refresh_data (or refresh=true on the few tools that have it) fetches again,
+read-only. Google Ads Editor is optional: without it the server keeps running and only the Editor tools say so.
 
 No dependencies: plain JSON-RPC 2.0 over stdin/stdout, one message per line (the MCP stdio transport).
 """
@@ -13,6 +18,8 @@ import appconfig  # noqa: F401  (keys + vendor modules; same Keychain and data f
 
 import core
 import datasources
+import demandgen
+import gae
 import gapi
 import meta_ads as meta
 import meta_tests
@@ -21,22 +28,37 @@ import meta_audiences  # [audiences]
 import areas
 
 PROTOCOL = "2025-06-18"
-ACCT = {"type": "string", "description": "Google Ads account key or id (see list_accounts; the first one is the default) or meta / meta_<id> for a Meta ad account"}
+INSTRUCTIONS = (
+    "Marketing Studio (the Mac app on 127.0.0.1:4830). Areas: Ads (Google Ads through the Google Ads API, Google Ads Editor "
+    "optional; Meta ad accounts; a shared draft per account), Email (campaigns on the connected email platform), SEO "
+    "(WordPress posts, Search Console, GA4, topical map), SoMe (organic Facebook, Instagram, LinkedIn posts), Activity and "
+    "Alerts. Drafts and team comments only: you read, add to drafts the user reviews in Studio, and - when the user asks - "
+    "comment for the team, ask for a review or sync drafts with the team. Nothing goes live from here: push live, send, "
+    "schedule, publish, post, delete and undo are only ever the user's own buttons in Studio; there are no tools for them. "
+    "Account keys come from list_accounts. Read tools use Studio's cache and say when nothing is cached; refresh_data "
+    "fetches again (read-only) when the user wants fresh data. Never send to Editor without the user's explicit go.")
+ACCT = {"type": "string", "description": "account key from list_accounts (its key or id): a Google Ads account, or a Meta ad account "
+                                         "(meta / meta_<id>). Default: the first Google Ads account"}
 GOOGLE_KINDS = tuple(gapi.KINDS) + tuple(gapi.EXTRA_KINDS)
 KINDS = sorted(set(GOOGLE_KINDS) | set(meta.GRIDS))
+CACHE_NOTE = "Reads Studio's cache only: when nothing is cached it says so and fetches nothing."
 
 TOOLS = [
-    {"name": "list_accounts", "description": "Google Ads accounts downloaded in Editor (with when Editor last downloaded each) and the Meta ad account.",
+    {"name": "list_accounts", "description": "Every ad account Studio knows: Google Ads accounts (read through the Google Ads API; "
+                                             "last_download is Editor's download time when Google Ads Editor also holds the account) and "
+                                             "Meta ad accounts (cached_only = no Meta token on this Mac, cached data still readable). Use "
+                                             "these keys for account everywhere. Reads local files only.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_entities",
      "description": "Rows of one entity type, with any draft changes overlaid (_draft = pending draft value, _new = row added "
-                    "in the draft). Google (read from the Google Ads API, or Editor's copy if the account is set to Editor in Studio "
-                    "Settings), with stats for the period: cost, impressions, clicks, ctr, cpc, conversions, conv_value, cost_per_conv. "
-                    "Google kinds: " + ", ".join(GOOGLE_KINDS) + " (asset_group_assets, user_lists and recommendations are API only). "
-                    "Meta kinds (from the Meta API, cached until a refresh_data): " + ", ".join(meta.GRIDS) + "; stats for the period on spend, "
-                    "impressions, reach, frequency, clicks, ctr, cpc, cpm, results, cost_per_result. audiences and leadforms are read "
-                    "only and personal data: UK GDPR check needed before any upload/download; never download leads. "
-                    "Scope with campaign / ad_group names (substring match on campaign if not exact); for Meta ad_group = ad set.",
+                    "in the draft). Google: from Studio's Google Ads API cache (or Editor's copy if the user set the account to Editor "
+                    "in Studio Settings), with stats for the period: cost, impressions, clicks, ctr, cpc, conversions, conv_value, "
+                    "cost_per_conv. Google kinds: " + ", ".join(GOOGLE_KINDS) + " (asset_group_assets, user_lists and recommendations are "
+                    "API only). Meta kinds: " + ", ".join(meta.GRIDS) + "; stats for the period on spend, impressions, reach, frequency, "
+                    "clicks, ctr, cpc, cpm, results, cost_per_result. audiences and leadforms are read only and personal data: UK GDPR "
+                    "check needed before any upload/download; never download leads. The account's structure comes from the cache only "
+                    "(nothing cached: call refresh_data first); stats for a period nobody has viewed yet are fetched once, read-only, "
+                    "then cached. Scope with campaign / ad_group names (substring match on campaign if not exact); for Meta ad_group = ad set.",
      "inputSchema": {"type": "object", "properties": {
          "kind": {"type": "string", "enum": KINDS}, "account": ACCT,
          "campaign": {"type": "string"}, "ad_group": {"type": "string"},
@@ -46,11 +68,15 @@ TOOLS = [
          "end": {"type": "string", "description": "custom stats period end YYYY-MM-DD"},
          "search": {"type": "string", "description": "case-insensitive text filter over all columns"},
          "limit": {"type": "integer", "description": "default 200"}}, "required": ["kind"]}},
-    {"name": "get_draft", "description": "The shared draft (changes not yet sent to Editor), with problems and warnings per item.",
+    {"name": "get_draft", "description": "The account's shared draft: changes the user has not pushed live (or sent to Editor) yet, "
+                                         "with problems and warnings per item.",
      "inputSchema": {"type": "object", "properties": {"account": ACCT}}},
     {"name": "add_to_draft",
-     "description": "Add changes to the shared draft. They appear live in the user's Ads Studio for review. Nothing is written "
-                    "to Editor, Google or Meta. Items with problems must be fixed (remove + re-add) before the draft can be sent.\n\n"
+     "description": "Add changes to the shared draft. They appear live in the user's Ads Studio for review; the user pushes them "
+                    "live through the Google Ads / Meta API with their own Push live button. Nothing is written to Google, Meta or "
+                    "Editor from here. A change that can't be read (unknown type, missing required field, not an object) is refused "
+                    "and nothing from that call is added; a change that reads fine but breaks a rule (length, banned word ...) is "
+                    "added with its problems listed: fix it (remove + re-add) before the user can push it.\n\n"
                     + core.CHANGE_REFERENCE + "\n\n" + meta.CHANGE_REFERENCE + "\n\n" + meta_tests.CHANGE_REFERENCE,
      "inputSchema": {"type": "object", "properties": {
          "account": ACCT, "changes": {"type": "array", "items": {"type": "object"}},
@@ -58,13 +84,15 @@ TOOLS = [
     {"name": "remove_from_draft", "description": "Remove draft items by id.",
      "inputSchema": {"type": "object", "properties": {"account": ACCT, "ids": {"type": "array", "items": {"type": "string"}}},
                      "required": ["ids"]}},
-    {"name": "check_draft", "description": "Google: dry run of every draft item on a throwaway copy of Editor's database. Meta: re-run Studio's checks (copy rules, dead links, prices vs the linked page) on fresh data.",
+    {"name": "check_draft", "description": "Google: dry run of every draft item on a throwaway copy of Google Ads Editor's database "
+                                           "(needs Editor on this Mac; without it use preview_live_push, which asks Google). Meta: re-run "
+                                           "Studio's checks (copy rules, dead links, prices vs the linked page) on the cached Meta data.",
      "inputSchema": {"type": "object", "properties": {"account": ACCT}}},
     {"name": "send_draft_to_editor",
-     "description": "Write the whole draft into Google Ads Editor as pending changes (closes and reopens Editor, ~15s). Only call "
-                    "this when the user has explicitly said to send it in this conversation. Nothing goes live until they Post in Editor. "
-                    "In a team: needs the user's one-line why, and when the team requires approval for Ads only approved "
-                    "changes are sent.",
+     "description": "Optional Editor route (Google only, needs Google Ads Editor on this Mac): write the whole draft into Editor as "
+                    "pending changes (closes and reopens Editor, ~15s). Only call this when the user has explicitly said to send it "
+                    "to Editor in this conversation. Nothing goes live until they Post in Editor. In a team: needs the user's one-line "
+                    "why, and when the team requires approval for Ads only approved changes are sent.",
      "inputSchema": {"type": "object", "properties": {"account": ACCT, "title": {"type": "string"},
                                                       "why": {"type": "string", "description": "the user's one-line why (team)"},
                                                       "user_confirmed": {"type": "boolean", "description": "must be true"}},
@@ -76,7 +104,8 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {"account": ACCT, "enable_new": {"type": "boolean"}}}},
     {"name": "live_push_history", "description": "Recent live pushes from Ads Studio (what went live, when, undone or not).",
      "inputSchema": {"type": "object", "properties": {"account": ACCT}}},
-    {"name": "find_location", "description": "Look up Google Ads location IDs by name (from Editor's location data).",
+    {"name": "find_location", "description": "Look up Google Ads location IDs by name (Editor's location data when the account reads "
+                                             "from Editor, else a read-only Google Ads API lookup).",
      "inputSchema": {"type": "object", "properties": {"account": ACCT, "name": {"type": "string"}}, "required": ["name"]}},
 ]
 
@@ -181,21 +210,26 @@ DATA_TOOLS = [
     # Studio keeps what it fetched until someone refreshes (datapolicy, "manual" mode): every read tool above uses the cache.
     {"name": "data_status", "description": "When Studio last fetched each source (Google Ads per account, Meta per ad account, Email, "
                                            "SEO: Search Console / GA4 / WordPress, SoMe, Activity archive, exchange rates) and any Activity "
-                                           "warning (Google keeps change history about 30 days). Read tools use this cached data.",
+                                           "warning (Google keeps change history about 30 days). Read tools use this cached data. Reads local files only.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "refresh_data", "description": "Fetch one source again, read-only (no writes anywhere): google (account ml or mluk, none = both), "
-                                            "meta (account e.g. meta, none = every Meta account), email, seo (account gsc, ga4 or wp, none = all), "
-                                            "social, activity (syncs the archive), fx, or all. Use when the user asks for fresh data.",
+    {"name": "refresh_data", "description": "Fetch one source again, read-only towards every service (it only updates Studio's own cache): "
+                                            "google (account: a Google key from list_accounts, none = every Google account), meta (account: "
+                                            "a Meta key from list_accounts, none = every Meta account), email, seo (account gsc, ga4 or wp, "
+                                            "none = all), social, activity (syncs the archive), fx, or all. Each result says what failed "
+                                            "(error / errors); a failed source keeps its old data. Use when the user asks for fresh data "
+                                            "or a read tool says nothing is cached.",
      "inputSchema": {"type": "object", "properties": {
          "source": {"type": "string", "enum": ["all", "google", "meta", "email", "seo", "social", "activity", "fx"]},
-         "account": {"type": "string", "description": "optional: one account or SEO part"},
-         "days": {"type": "integer", "description": "stats window to fetch with Google (default 7)"}}, "required": ["source"]}},
+         "account": {"type": "string", "description": "optional: one account key (see list_accounts) or SEO part"},
+         "days": {"type": "integer", "description": "stats window to fetch with Google (default 7)"},
+         "start": {"type": "string", "description": "custom Google stats window start YYYY-MM-DD (with end, instead of days)"},
+         "end": {"type": "string", "description": "custom Google stats window end YYYY-MM-DD"}}, "required": ["source"]}},
 ]
 SETUP_TOOLS = [
     {"name": "setup_status", "description": "Which keys Marketing Studio has (Meta, Google Ads, Google sign-in, Email, WordPress, LinkedIn): set or not set per key. Never returns a value.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "setup_import_env_file",
-     "description": "Load Marketing Studio's keys from a .env file on this Mac (KEY=value lines, e.g. META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, "
+     "description": "Writes keys: load Marketing Studio's keys from a .env file on this Mac (KEY=value lines, e.g. META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, "
                     "GADS_DEVELOPER_TOKEN, GADS_LOGIN_CUSTOMER_ID, GADS_OPERATING_CUSTOMER_ID, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, "
                     "GOOGLE_REFRESH_TOKEN, GOOGLE_SERVICE_ACCOUNT_FILE=<path to a service-account json>, EMAIL_*, WP_STUDIO_*, LINKEDIN_*). "
                     "Secrets go into the macOS Keychain. Returns only which keys were imported and which lines were ignored, never values. "
@@ -206,16 +240,16 @@ TEAM_TOOLS = [
     {"name": "team_status", "description": "Team sync status: whether this Studio is in a team, the team and your role, last sync, local "
                                            "changes waiting to be sent, remote changes waiting, open conflicts, the active changeset.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "team_sync", "description": "Sync the drafts with the team server: send local draft changes, receive teammates' draft changes "
-                                         "(field-level merge; clashing edits become conflicts the user resolves in Studio). Draft level only: "
-                                         "nothing goes live anywhere.",
+    {"name": "team_sync", "description": "Sync the drafts with the team server: sends this Mac's draft changes to the team and receives "
+                                         "teammates' draft changes (field-level merge; clashing edits become conflicts the user resolves in "
+                                         "Studio). Draft level only: nothing goes live anywhere. Only when the user asks.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "reviews_list", "description": "Team reviews (approvals): ones waiting for the user (to_me), the user's own requests "
                                             "(mine) or all, with status (open, approved, changes requested, withdrawn) and which "
                                             "items went stale (changed after approval). Read-only.",
      "inputSchema": {"type": "object", "properties": {"filter": {"type": "string", "enum": ["to_me", "mine", "all"]}}}},
     {"name": "review_request", "description": "Send the user's own changeset (the active one, or changeset_id) for approval to "
-                                              "named reviewers (member ids or names; approvers, admins or owners). Syncs first. "
+                                              "named reviewers (member ids or names; approvers, admins or owners); they are notified. Syncs first. "
                                               "Only when the user asks. You can't approve or decide reviews: reviewers do that "
                                               "in Studio.",
      "inputSchema": {"type": "object", "properties": {
@@ -236,6 +270,89 @@ SHARED_TOOLS = [
      "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["headline", "cta", "image", "utm", "email_block"]},
                                                       "q": {"type": "string", "description": "text to look for"}}}},
 ]
+
+
+class NotCached(ValueError):
+    """A read tool found nothing in Studio's cache. Read tools never fetch on their own: the message says how to."""
+
+
+def _key_of(cid):
+    """The list_accounts key of a Google customer id (for messages)."""
+    return next((k for k, v in gae.ACCOUNTS.items() if v == cid), cid)
+
+
+def _need_google_cache(cid):
+    if gapi._read(cid, "base") is None:
+        k = _key_of(cid)
+        raise NotCached(f"Nothing cached for Google Ads account {k} yet, so nothing was read. Call refresh_data with source "
+                        f"google and account {k} (read-only), or ask the user to press Refresh in Studio.")
+
+
+def _need_meta_cache(key=None):
+    """After meta.use(): the account's structure must be cached (meta.load() would otherwise pull it from Meta)."""
+    if meta._cached_copy(None)[0] is None:
+        try:
+            k = key or meta.key_for(meta.act())
+        except Exception:  # noqa: BLE001
+            k = key or "meta"
+        raise NotCached(f"Nothing cached for Meta account {k} yet, so nothing was read. Call refresh_data with source meta "
+                        f"and account {k} (read-only), or ask the user to press Refresh in Studio.")
+
+
+# [U28] add_to_draft: a change Studio can't read is refused (never stored); one that reads but breaks a rule is stored
+# with its problems, as before.
+GOOGLE_TYPES = tuple(sorted(set(gae.SUPPORTED) | {"pmax_asset", audiences.TYPE} | set(demandgen.TYPES)))
+
+
+def _changes_list(changes):
+    if isinstance(changes, dict):
+        changes = [changes]
+    if isinstance(changes, str):
+        try:
+            changes = json.loads(changes)
+        except ValueError:
+            raise ValueError("changes must be a list of change objects (JSON), not text") from None
+        changes = [changes] if isinstance(changes, dict) else changes
+    if not isinstance(changes, list) or not changes:
+        raise ValueError("changes must be a non-empty list of change objects")
+    return changes
+
+
+def _unreadable(changes, types, read):
+    """-> one plain line per change that can't be read (not an object, no / unknown type, a required field missing)."""
+    out = []
+    for i, c in enumerate(changes, 1):
+        n = f"change {i}"
+        if not isinstance(c, dict):
+            out.append(f"{n} is not an object")
+            continue
+        t = c.get("type")
+        if not t:
+            out.append(f"{n} has no type")
+            continue
+        if t not in types:
+            out.append(f"{n}: unknown type {t!r}")
+            continue
+        try:
+            read(c)
+        except KeyError as ex:
+            out.append(f"{n} ({t}): required field {ex} is missing")
+        except Exception as ex:  # noqa: BLE001 - anything else that stops Studio reading it
+            out.append(f"{n} ({t}): can't be read ({ex})")
+    return out
+
+
+def _refuse_unreadable(changes, types, read):
+    bad = _unreadable(changes, types, read)
+    if bad:
+        typ = any("type" in x and "(" not in x for x in bad)  # a missing / unknown type: list the ones Studio knows
+        raise ValueError("Nothing added to the draft: " + "; ".join(bad) + (". Types: " + ", ".join(types) if typ else "")
+                         + ". Fix these and send the changes again.")
+
+
+def _google_read(c):
+    if not core.live_only(c):
+        gae.plan_rows(c)
 
 
 def call_shared(name, a):
@@ -264,7 +381,8 @@ TEAM_LIVE_TOOLS = [
                                                       "limit": {"type": "integer"}}}},
     {"name": "comments_list", "description": "The comment thread on one item (comments, replies, resolved or not, @mentions).",
      "inputSchema": {"type": "object", "properties": ITEM_REF, "required": ["coll", "id"]}},
-    {"name": "comment_add", "description": "Add a comment (or a reply with parent) to an item for the team, on the user's behalf. "
+    {"name": "comment_add", "description": "Post a comment (or a reply with parent) on an item to the team server, on the user's behalf; "
+                                           "teammates see it and anyone mentioned is notified. "
                                            "Mention people with @name (their name without spaces) or @ the part of their email before the @. "
                                            "The comment is marked as written by Claude.",
      "inputSchema": {"type": "object", "properties": {**ITEM_REF, "body": {"type": "string"}, "parent": {"type": "integer"}},
@@ -333,15 +451,17 @@ META_TEST_TOOLS = [  # [meta tests] meta_tests.py: two reads and one draft tool;
     {"name": "meta_tests_list",
      "description": "Meta A/B tests and creative tests on the business that owns the ad account (Meta calls them ad studies): "
                     "id, name, label (A/B test or Creative test), status (Scheduled, Running, Ended, Cancelled), start, end, "
-                    "cells (name, share, level, ids, names). Read-only, cached until a refresh.",
+                    "cells (name, share, level, ids, names). " + CACHE_NOTE + " refresh=true fetches the list from Meta again (read-only).",
      "inputSchema": {"type": "object", "properties": {"account": META_ACCT,
-                                                      "refresh": {"type": "boolean", "description": "fetch again (read-only)"}}}},
+                                                      "refresh": {"type": "boolean", "description": "fetch from Meta now (read-only); default false = cache only"}}}},
     {"name": "meta_test_results",
      "description": "Results of one Meta test: per cell spend, impressions, clicks, CTR, results and cost per result over the test "
                     "dates; for creative tests Meta's high performers with confidence; a plain verdict and notes (thin data, what "
-                    "is compared). A/B tests have no Meta winner in the API: the verdict compares cost per result. Read-only.",
+                    "is compared). A/B tests have no Meta winner in the API: the verdict compares cost per result. " + CACHE_NOTE +
+                    " refresh=true fetches this test's results from Meta (read-only).",
      "inputSchema": {"type": "object", "properties": {"account": META_ACCT, "study_id": {"type": "string"},
-                                                      "refresh": {"type": "boolean"}}, "required": ["study_id"]}},
+                                                      "refresh": {"type": "boolean", "description": "fetch from Meta now (read-only); default false = cache only"}},
+                     "required": ["study_id"]}},
     {"name": "meta_test_add_to_draft",
      "description": "Draft a Meta test (nothing reaches Meta until the user presses Push live; team approval applies). mode:\n"
                     "  split: test = {name, level: adset|campaign, end_date, start_date?, cells: [{name, ids, percent?}]} "
@@ -364,10 +484,10 @@ DG_TOOLS = [
      "description": "YouTube videos of a Google Ads account: video assets in its asset library (asset id, YouTube id, title, "
                     "duration where Google Ads knows it), YouTube uploads made through Google Ads (state, YouTube id), and the "
                     "Demand Gen campaigns, ad groups (with channel controls) and ads (type, status, texts, videos), plus square "
-                    "logo images usable in a Demand Gen video ad. Read-only, cached until refresh=true. With video (an id or "
-                    "YouTube URL): checks it and says what Google Ads knows about that one video.",
+                    "logo images usable in a Demand Gen video ad. " + CACHE_NOTE + " refresh=true reads it from the Google Ads API "
+                    "again (read-only). With video (an id or YouTube URL): asks Google Ads now (read-only) what it knows about that one video.",
      "inputSchema": {"type": "object", "properties": {
-         "account": ACCT, "refresh": {"type": "boolean", "description": "read again now (read-only); default false"},
+         "account": ACCT, "refresh": {"type": "boolean", "description": "read again from Google Ads now (read-only); default false = cache only"},
          "video": {"type": "string", "description": "one YouTube id or URL to check"},
          "part": {"type": "string", "enum": ["videos", "uploads", "campaigns", "ad_groups", "ads", "logos", "all"],
                   "description": "only this part (default all)"}}}},
@@ -375,7 +495,7 @@ DG_TOOLS = [
      "description": "Add Demand Gen / YouTube video ad changes to the Google Ads draft. Draft only: nothing reaches Google until the "
                     "user previews (Google validates) and presses Push live; team approval applies; new campaigns are always Paused, "
                     "new ad groups and ads Paused unless the user ticks otherwise. Experiment trial campaigns are refused. "
-                    "Uploading a video file is not possible from here.\n\n" + __import__("demandgen").CHANGE_REFERENCE,
+                    "Uploading a video file is not possible from here.\n\n" + demandgen.CHANGE_REFERENCE,
      "inputSchema": {"type": "object", "properties": {
          "account": ACCT, "changes": {"type": "array", "items": {"type": "object"}},
          "note": {"type": "string", "description": "why - shown to the user next to each change"}}, "required": ["changes"]}},
@@ -388,7 +508,8 @@ AUDIENCE_TOOLS = [  # [audiences] one read and one draft tool; audiences reach G
                     "and range), membership days, the rule in words, where it is used (campaigns, ad groups, combined lists) and "
                     "whether Studio can edit it. Meta: every custom audience with type, size (Meta shows small audiences only as a "
                     "floor value), retention, lookalike seed and size, where it is used (ad sets, lookalike seeds), status. "
-                    "Customer lists are shown read-only: Studio never uploads, reads or changes customer data. Read-only, cached.",
+                    "Customer lists are shown read-only: Studio never uploads, reads or changes customer data. " + CACHE_NOTE +
+                    " Fresh data: refresh_data for the account.",
      "inputSchema": {"type": "object", "properties": {"account": ACCT}}},
     {"name": "audience_add_to_draft",
      "description": "Draft audience changes (nothing reaches Google or Meta until the user presses Push live; team approval applies). "
@@ -408,13 +529,15 @@ DG_NAMES = {t["name"] for t in DG_TOOLS}
 
 
 def call_demandgen(name, a):
-    import demandgen  # noqa: PLC0415
     if meta.is_meta(a.get("account")):
         raise ValueError("Demand Gen is Google Ads: give a Google Ads account")
     acct = core.resolve(a.get("account"))
     if name == "video_assets_list":
         if a.get("video"):
             return demandgen.video_info(acct, a["video"])
+        if not a.get("refresh") and not demandgen._cache(acct).exists():
+            raise NotCached("The video library of this account has not been read yet. Call video_assets_list with "
+                            "refresh=true (read-only) or ask the user to open the Videos tab.")
         v = demandgen.library(acct, refresh=bool(a.get("refresh")))
         part = a.get("part") or "all"
         return v if part == "all" else {"account": v["account"], "fetched_at": v["fetched_at"], "errors": v["errors"], part: v[part]}
@@ -438,6 +561,7 @@ def call_audiences(name, a):
     if meta.is_meta(a.get("account")):
         meta.use(a.get("account"))
         if name == "audiences_list":
+            _need_meta_cache(a.get("account"))
             return meta_audiences.rows(meta.load())
         bad = [c for c in changes if not (c.get("type") == meta_audiences.TYPE or (
             c.get("type") == "meta_targeting" and any(c.get(k) for k in meta_audiences.AUD_KEYS)
@@ -448,6 +572,7 @@ def call_audiences(name, a):
         return meta.add(changes, by="claude", note=a.get("note"))
     acct = core.resolve(a.get("account"))
     if name == "audiences_list":
+        _need_google_cache(acct)
         return audiences.rows(acct)
     bad = [c for c in changes if c.get("type") not in AUDIENCE_GOOGLE_TYPES or (c.get("type") == "audience" and c.get("mode"))]
     if bad:
@@ -587,12 +712,39 @@ def call_area(name, a):
 AREA_NAMES = {t["name"] for t in AREA_TOOLS}
 
 
+def _meta_tests_cache(name):
+    """What meta_tests has cached under name for the current Meta account (memory, then disk), else None. No API calls."""
+    hit = meta_tests._mem.get((meta.acct(), name))
+    if hit:
+        return hit[1]
+    try:
+        return json.loads(meta_tests._cache_path(name).read_text())["data"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def call_meta_tests(name, a):
     meta.use(a.get("account") or "meta")
+    refresh = bool(a.get("refresh"))
     if name == "meta_tests_list":
-        return meta_tests.studies(refresh=bool(a.get("refresh")))
+        if refresh:
+            return meta_tests.studies(refresh=True)
+        raw = _meta_tests_cache("list")
+        if raw is None:
+            raise NotCached("Meta tests have not been read yet. Call meta_tests_list with refresh=true (read-only) "
+                            "or ask the user to open Meta tests in Studio.")
+        local = meta_tests._local()
+        return sorted((meta_tests._row(x, local) for x in raw), key=lambda r: r.get("start_time") or "", reverse=True)
     if name == "meta_test_results":
-        return meta_tests.results(a["study_id"], refresh=bool(a.get("refresh")))
+        if refresh:
+            return meta_tests.results(a["study_id"], refresh=True)
+        sid = str(a.get("study_id") or "")
+        if not sid.isdigit():
+            raise ValueError("study_id is a Meta test id (digits)")
+        data = _meta_tests_cache(f"r{sid}")
+        if data is None:
+            raise NotCached(f"Results of test {sid} have not been read yet. Call again with refresh=true (read-only).")
+        return {**data, **meta_tests.verdict(data)}
     return meta_tests.add(a["mode"], a.get("test") or {}, by="claude", note=a.get("note"))
 
 
@@ -621,21 +773,24 @@ def call(name, a):
     if name == "setup_status":
         st = appconfig.status()
         return {"keys": {k["name"]: k["set"] for k in st["keys"]}, "google_signed_in": st["google_signed_in"],
-                "google_service_account": st["google_service_account"], "ready": st["ready"], "data_folder": str(appconfig.DATA)}
+                "google_service_account": st["google_service_account"], "ready": st["ready"], "data_folder": str(appconfig.DATA),
+                "keychain_error": st.get("keychain_error")}
     if name == "setup_import_env_file":
         return appconfig.import_env_file(a["path"])
     if name == "data_status":
         return datasources.status()
     if name == "refresh_data":
-        return datasources.refresh(a.get("source"), a.get("account") or None, **({"days": a["days"]} if a.get("days") else {}))
+        return datasources.refresh(a.get("source"), a.get("account") or None, **{k: a[k] for k in ("days", "start", "end") if a.get(k)})
     if name == "list_accounts":
-        return core.accounts() + meta.accounts()
+        return list_accounts()
     if meta.is_meta(a.get("account")):
         return call_meta(name, a)
     acct = core.resolve(a.get("account"))
     if name == "list_entities":
         if a["kind"] not in GOOGLE_KINDS:
             raise ValueError(f"Google kinds: {', '.join(GOOGLE_KINDS)}")
+        if a["kind"] in gapi.EXTRA_KINDS or gapi.use_api(acct):
+            _need_google_cache(acct)
         cid, gid = _scope(acct, a.get("campaign"), a.get("ad_group"), gapi.tree_any(acct, "all"))
         rows = gapi.grid_any(acct, a["kind"], cid, gid, a.get("status", "active"), a.get("search"), None,
                              a.get("days"), a.get("start"), a.get("end"))
@@ -644,7 +799,9 @@ def call(name, a):
     if name == "get_draft":
         return core.draft(acct)
     if name == "add_to_draft":
-        return core.add(acct, a["changes"], by="claude", note=a.get("note"))
+        changes = _changes_list(a.get("changes"))
+        _refuse_unreadable(changes, GOOGLE_TYPES, _google_read)
+        return core.add(acct, changes, by="claude", note=a.get("note"))
     if name == "remove_from_draft":
         return {"removed": core.remove(acct, a["ids"])}
     if name == "check_draft":
@@ -662,7 +819,7 @@ def call(name, a):
         import live
         return live.history(acct)
     if name == "find_location":
-        return core.geo_search(acct, a["name"])
+        return gapi.geo_any(acct, a["name"])
     raise ValueError(f"unknown tool {name}")
 
 
@@ -671,6 +828,7 @@ def call_meta(name, a):
     if name == "list_entities":
         if a["kind"] not in meta.GRIDS:
             raise ValueError(f"Meta kinds: {', '.join(meta.GRIDS)}")
+        _need_meta_cache(a.get("account"))
         cid, sid = _scope(None, a.get("campaign"), a.get("ad_group"), meta.tree("all"))
         win = {"since": a.get("start"), "until": a.get("end")} if a.get("start") or a.get("end") else {"window": a.get("days") or 7}
         rows = meta.grid(a["kind"], cid, sid, a.get("status", "active"), a.get("search"), **win)
@@ -681,7 +839,9 @@ def call_meta(name, a):
     if name == "get_draft":
         return core.draft(meta.acct())
     if name == "add_to_draft":
-        return meta.add(a["changes"], by="claude", note=a.get("note"))
+        changes = _changes_list(a.get("changes"))
+        _refuse_unreadable(changes, tuple(meta.TYPES), meta._normalise)
+        return meta.add(changes, by="claude", note=a.get("note"))
     if name == "remove_from_draft":
         return {"removed": core.remove(meta.acct(), a["ids"])}
     if name == "check_draft":
@@ -695,16 +855,43 @@ def call_meta(name, a):
     raise ValueError(f"{name} is not available for Meta")
 
 
+def list_accounts():
+    """Google accounts (API list, Editor's download time when Editor has them) + Meta accounts. Without a Meta token the
+    Meta accounts whose data is cached are still listed (cached_only), since the read tools can use that cache."""
+    out = gapi.accounts_any()
+    ms = meta.accounts()
+    if not ms:
+        try:
+            for x in meta.settings().get("meta_accounts") or []:
+                aid = f"meta_{x['act'].replace('act_', '')}"
+                c = core.STUDIO_DIR / f"meta_cache_{aid}.json"
+                if c.exists():
+                    ms.append({"id": aid, "key": meta.key_for(x["act"]), "act": x["act"], "name": x.get("name") or x["act"],
+                               "channel": "meta", "last_download": (json.loads(c.read_text()) or {}).get("fetched_at"),
+                               "cached_only": True})
+        except Exception:  # noqa: BLE001 - no Meta settings at all
+            pass
+    return out + ms
+
+
+EDITOR_HINT = {"check_draft": "Use preview_live_push instead: Google checks the draft there without changing anything.",
+               "send_draft_to_editor": "The user can push the draft live with their own Push live button in Studio instead."}
+
+
+def _tool_error(name, ex):
+    if isinstance(ex, gae.NoEditor):
+        return (f"Error: {name} needs Google Ads Editor on this Mac, and Studio can't find it (not installed, or no account "
+                f"downloaded in it). " + EDITOR_HINT.get(name, "Studio reads Google from the Google Ads API without Editor."))
+    msg = ex.code if isinstance(ex, SystemExit) and not isinstance(ex.code, int) else ex
+    return f"Error: {msg}"
+
+
 def handle(msg):
     m, mid = msg.get("method"), msg.get("id")
     if m == "initialize":
         return {"protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL), "capabilities": {"tools": {}},
-                "serverInfo": {"name": "marketing-studio", "version": "1.2"},
-                "instructions": "Marketing Studio (localhost:4830), four areas: Ads (Google Ads Editor data, the Meta ad account and a "
-                                "shared draft per account), Email (campaigns on the connected email platform), SEO (WordPress posts + Search Console) and SoMe "
-                                "(organic Facebook, Instagram, LinkedIn posts). Drafts only: you read and add to drafts the user reviews "
-                                "in Studio. Never send to Editor without the user's explicit go. Live actions (push live, send, schedule, "
-                                "publish, post, delete, undo) are only ever the user's own buttons in Studio; there are no tools for them."}
+                "serverInfo": {"name": "marketing-studio", "version": "1.3"},
+                "instructions": INSTRUCTIONS}
     if m == "tools/list":
         return {"tools": TOOLS}
     if m == "tools/call":
@@ -712,8 +899,8 @@ def handle(msg):
         try:
             out = call(p["name"], p.get("arguments") or {})
             return {"content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False, default=str)}]}
-        except Exception as ex:  # noqa: BLE001 - tool errors go back to the model, not the transport
-            return {"content": [{"type": "text", "text": f"Error: {ex}"}], "isError": True}
+        except (Exception, SystemExit) as ex:  # noqa: BLE001 - tool errors (gae's sys.exit too) go back to the model, never end the server
+            return {"content": [{"type": "text", "text": _tool_error(p.get("name"), ex)}], "isError": True}
     if m == "ping":
         return {}
     if mid is not None:
@@ -737,7 +924,7 @@ def main():
             res = {"jsonrpc": "2.0", "id": msg["id"], "result": handle(msg)}
         except LookupError as ex:
             res = {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": f"method not found: {ex}"}}
-        except Exception as ex:  # noqa: BLE001
+        except (Exception, SystemExit) as ex:  # noqa: BLE001 - one bad request never ends the server
             traceback.print_exc(file=sys.stderr)
             res = {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32603, "message": str(ex)}}
         sys.stdout.write(json.dumps(res, ensure_ascii=False, default=str) + "\n")

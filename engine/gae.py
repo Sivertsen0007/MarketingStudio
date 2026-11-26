@@ -51,10 +51,15 @@ LOW32 = 0xFFFFFFFF
 
 # ---------- reading Editor's database ----------
 
+class NoEditor(SystemExit, RuntimeError):
+    """Editor isn't installed (or has no account downloaded). A SystemExit so the gae CLI still just prints the message
+    and stops; a RuntimeError so long-running callers (the MCP server, the web server) catch it like any other error."""
+
+
 def editor_version_dir():
     dirs = [d for d in EDITOR_DIR.iterdir() if d.name.isdigit() and (d / "ape.db").exists()] if EDITOR_DIR.exists() else []
     if not dirs:
-        sys.exit("Google Ads Editor data not found. Is Editor installed and has it downloaded an account?")
+        raise NoEditor("Google Ads Editor data not found. Is Editor installed and has it downloaded an account?")
     return max(dirs, key=lambda d: int(d.name))
 
 

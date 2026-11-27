@@ -206,7 +206,7 @@ class Checks(Base):
         self.assertIn("{{first name}} is not valid", msgs(p, "error"))
         fine = GOOD_HTML.replace("<p>", "<style>p{color:red}</style><!-- {{old_tag}} --><p>", 1)
         self.assertEqual(em.run_checks(good(html=fine, text="Hi {{{first_name}}}"), links=False, tags=listed), [])
-        # ML Suite has no fallback syntax: "|there" would go out as text
+        # The email platform has no fallback syntax: "|there" would go out as text
         p = em.run_checks(good(html=GOOD_HTML.replace("{{first_name}}", "{{first_name|there}}")), links=False, tags=listed)
         self.assertIn("no fallback syntax", msgs(p, "warn"))
         self.assertEqual(msgs(p, "error"), "")
@@ -231,7 +231,7 @@ class Checks(Base):
         self.assertIn("first_name", k)
         self.assertFalse(k.listed)
 
-    def test_ml_suite_merge_tag_list(self):  # the shape ML Suite's email.list_merge_tags returns
+    def test_platform_merge_tag_list(self):  # the shape the platform's email.list_merge_tags returns
         r = {"note": "Tokens are Mustache-style ...", "mergeTags": [
             {"token": "{{first_name}}", "label": "First name", "fallback": "there"}, {"token": "{{trip}}", "label": "Trip"},
             {"token": "{{departure}}", "label": "Departure"}, {"token": "{{boat}}", "label": "Boat"},
